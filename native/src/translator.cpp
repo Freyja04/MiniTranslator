@@ -10,7 +10,6 @@
 #include <chrono>
 #include <cwctype>
 #include <functional>
-#include <regex>
 #include <set>
 
 namespace screentrans {
@@ -132,45 +131,6 @@ std::wstring nonempty(std::wstring value, std::wstring_view label) {
         throw TranslateError(wide_to_utf8(label) + " returned an empty translation");
     }
     return value;
-}
-
-std::vector<std::wstring> google_free_translate(
-    HttpClient& http, const std::vector<std::wstring>& texts,
-    std::wstring_view target, const std::optional<std::wstring>& source,
-    std::stop_token stop) {
-    constexpr std::array codes{
-        std::pair{std::wstring_view(L"zh-Hans"), std::wstring_view(L"zh-CN")},
-        std::pair{std::wstring_view(L"zh-Hant"), std::wstring_view(L"zh-TW")},
-        std::pair{std::wstring_view(L"en"), std::wstring_view(L"en")},
-    };
-    std::vector<std::wstring> output;
-    for (const auto& text : texts) {
-        HttpRequest request;
-        request.url = append_query(
-            L"https://translate.googleapis.com/translate_a/single",
-            {{L"client", L"gtx"},
-             {L"sl", source && *source != L"other" ? mapped_code(*source, codes) : L"auto"},
-             {L"tl", mapped_code(target, codes)}, {L"dt", L"t"}, {L"q", text}});
-        const auto response = http.send(request, stop);
-        require_success(response, L"Google free translator");
-        try {
-            const auto root = parse_array(response, L"Google free translator");
-            const auto segments = root.GetArrayAt(0);
-            std::wstring translated;
-            for (std::uint32_t index = 0; index < segments.Size(); ++index) {
-                const auto segment = segments.GetArrayAt(index);
-                if (segment.Size() && segment.GetAt(0).ValueType() == JsonValueType::String) {
-                    translated += segment.GetStringAt(0).c_str();
-                }
-            }
-            output.push_back(nonempty(std::move(translated), L"Google free translator"));
-        } catch (const TranslateError&) {
-            throw;
-        } catch (...) {
-            throw TranslateError("Google 免密翻译返回格式异常");
-        }
-    }
-    return output;
 }
 
 std::vector<std::wstring> deepl_translate(
@@ -610,9 +570,6 @@ std::vector<std::wstring> TranslatorService::translate_batch(
     std::wstring_view provider, const JsonObject& options,
     const std::vector<std::wstring>& texts, std::wstring_view target,
     const std::optional<std::wstring>& source, std::stop_token stop) {
-    if (provider == L"google_free") {
-        return google_free_translate(http_, texts, target, source, stop);
-    }
     if (provider == L"deepl") {
         return deepl_translate(http_, options, texts, target, source, stop);
     }
@@ -628,89 +585,10 @@ std::vector<std::wstring> TranslatorService::translate_batch(
     if (provider == L"iciba_free") {
         return iciba_free_translate(http_, texts, target, source, stop);
     }
-    if (provider == L"bing_free") {
-        std::vector<std::wstring> output;
-        for (const auto& text : texts) {
-            auto token = bing_token(stop);
-            HttpRequest request;
-            request.method = L"POST";
-            request.url = append_query(token.host + L"/ttranslatev3",
-                                       {{L"isVertical", L"1"}, {L"IG", token.ig}, {L"IID", token.iid}});
-            request.headers = {{L"Referer", token.host + L"/translator"},
-                               {L"Origin", token.host},
-                               {L"Content-Type", L"application/x-www-form-urlencoded"}};
-            const auto source_code = source_value(source) == L"auto" ? L"auto-detect" : source_value(source);
-            const auto target_code = target == L"auto" ? L"auto-detect" : std::wstring(target);
-            request.body = form_body({{L"fromLang", source_code}, {L"to", target_code},
-                                      {L"text", text}, {L"token", token.token}, {L"key", token.key}});
-            const auto response = http_.send(request, stop);
-            if (response.status == 401 || response.status == 403 || response.status == 429) {
-                std::lock_guard lock(bing_mutex_);
-                bing_token_.reset();
-            }
-            require_success(response, L"Bing translator");
-            try {
-                const auto root = parse_array(response, L"Bing translator");
-                output.push_back(nonempty(root.GetObjectAt(0).GetNamedArray(L"translations")
-                    .GetObjectAt(0).GetNamedString(L"text").c_str(), L"Bing translator"));
-            } catch (const TranslateError&) {
-                throw;
-            } catch (...) {
-                std::lock_guard lock(bing_mutex_);
-                bing_token_.reset();
-                throw TranslateError("必应翻译返回格式已经变化");
-            }
-        }
-        return output;
-    }
     if (provider == L"ai") {
         return translate_ai(options, texts, target, stop);
     }
     throw TranslateError("未知的翻译引擎：" + wide_to_utf8(provider));
-}
-
-TranslatorService::BingToken TranslatorService::bing_token(std::stop_token stop) {
-    std::lock_guard lock(bing_mutex_);
-    if (bing_token_) return *bing_token_;
-    auto fetch = [&](std::wstring host) {
-        HttpRequest request;
-        request.url = host + L"/translator";
-        request.headers = {{L"User-Agent", browser_user_agent}};
-        request.max_response_bytes = max_text_response;
-        const auto response = http_.send(request, stop);
-        require_success(response, L"Bing translator");
-        const auto html = response.text();
-        const std::wregex token_pattern(
-            LR"re(params_AbusePreventionHelper\s*=\s*\[\s*([^,\]]+)\s*,\s*"([^"]+)")re");
-        const std::wregex ig_pattern(LR"re(IG:"([^"]+)")re");
-        const std::wregex iid_pattern(LR"re(data-iid="([^"]+)")re");
-        std::wsmatch token_match;
-        std::wsmatch ig_match;
-        std::wsmatch iid_match;
-        if (!std::regex_search(html, token_match, token_pattern) ||
-            !std::regex_search(html, ig_match, ig_pattern)) {
-            throw TranslateError("必应网页令牌格式已经变化");
-        }
-        auto key = trim(token_match[1].str());
-        if (key.size() >= 2 && key.front() == L'"' && key.back() == L'"') {
-            key = key.substr(1, key.size() - 2);
-        }
-        BingToken value;
-        value.key = std::move(key);
-        value.token = token_match[2].str();
-        value.ig = ig_match[1].str();
-        value.iid = std::regex_search(html, iid_match, iid_pattern)
-            ? iid_match[1].str()
-            : L"translator.5023";
-        value.host = std::move(host);
-        return value;
-    };
-    try {
-        bing_token_ = fetch(L"https://cn.bing.com");
-    } catch (...) {
-        bing_token_ = fetch(L"https://www.bing.com");
-    }
-    return *bing_token_;
 }
 
 std::wstring TranslatorService::ai_call(

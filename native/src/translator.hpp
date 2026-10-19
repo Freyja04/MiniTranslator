@@ -5,7 +5,6 @@
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.Collections.h>
 
-#include <mutex>
 #include <optional>
 #include <stop_token>
 #include <string>
@@ -35,14 +34,6 @@ public:
         std::stop_token stop = {});
 
 private:
-    struct BingToken {
-        std::wstring token;
-        std::wstring key;
-        std::wstring ig;
-        std::wstring iid;
-        std::wstring host;
-    };
-
     std::vector<std::wstring> translate_batch(
         std::wstring_view provider,
         const winrt::Windows::Data::Json::JsonObject& options,
@@ -60,11 +51,7 @@ private:
         const std::vector<std::wstring>& texts,
         std::wstring_view target,
         std::stop_token stop);
-    BingToken bing_token(std::stop_token stop);
-
     HttpClient http_;
-    std::mutex bing_mutex_;
-    std::optional<BingToken> bing_token_;
 };
 
 }  // namespace screentrans

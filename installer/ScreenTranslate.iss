@@ -53,7 +53,7 @@ Source: "..\native\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; DestName: "THIRD_
 
 [Icons]
 Name: "{group}\ScreenTranslate"; Filename: "{app}\versions\{#AppVersion}\{#AppExeName}"; WorkingDir: "{app}\versions\{#AppVersion}"
-Name: "{autodesktop}\ScreenTranslate"; Filename: "{app}\versions\{#AppVersion}\{#AppExeName}"; WorkingDir: "{app}\versions\{#AppVersion}"; Tasks: desktopicon
+Name: "{autodesktop}\ScreenTranslate"; Filename: "{app}\versions\{#AppVersion}\{#AppExeName}"; Parameters: "--text-translation"; WorkingDir: "{app}\versions\{#AppVersion}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\versions\{#AppVersion}\{#AppExeName}"; Description: "启动 ScreenTranslate"; Flags: nowait postinstall skipifsilent

@@ -7,8 +7,10 @@
 #include <winrt/Windows.Foundation.Collections.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
+#include <string_view>
 
 #ifndef SCREENTRANS_UPDATE_MANIFEST_URL
 #define SCREENTRANS_UPDATE_MANIFEST_URL L""
@@ -163,8 +165,8 @@ JsonObject ConfigStore::defaults() {
       },
       "translator":{
         "provider":"microsoft_free",
-        "google_free":{},"bing_free":{},"microsoft_free":{},
-        "tencent_free":{},"yandex_free":{},"iciba_free":{},
+        "tencent_free":{},"microsoft_free":{},"iciba_free":{},
+        "yandex_free":{},
         "deepl":{"key":"","free_plan":true},
         "ai_profiles":[],
         "ai_selected":""
@@ -200,6 +202,22 @@ void ConfigStore::load() {
     root_.SetNamedValue(L"updates", defaults().GetNamedObject(L"updates"));
     transform_secrets(root_, false);
 
+    // A config written by an older build may name an engine that no longer
+    // exists. Keep such files usable by falling back to the default engine.
+    constexpr std::array<std::wstring_view, 6> supported_providers{
+        L"tencent_free", L"microsoft_free", L"iciba_free",
+        L"yandex_free", L"deepl", L"ai",
+    };
+    if (const auto translators = root_.GetNamedObject(L"translator", nullptr)) {
+        const std::wstring configured_provider =
+            translators.GetNamedString(L"provider", L"").c_str();
+        if (std::find(supported_providers.begin(), supported_providers.end(),
+                      configured_provider) == supported_providers.end()) {
+            translators.SetNamedValue(
+                L"provider", JsonValue::CreateStringValue(L"microsoft_free"));
+            rewrite_migrated_values = true;
+        }
+    }
     // Match the retained Python client's one-time migrations.  The old blue
     // value was never user-selectable when it was the default, so carrying it
     // forever would make upgraded installs look different from fresh ones.

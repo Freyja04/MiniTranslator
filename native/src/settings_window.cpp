@@ -37,7 +37,6 @@ constexpr wchar_t class_name[] = L"ScreenTranslate.Native.SettingsWindow.v1";
 constexpr int id_nav_first = 7001;
 constexpr int id_nav_last = id_nav_first + 5;
 constexpr int id_provider = 7010;
-constexpr int id_ocr_engine = 7011;
 constexpr int id_close_mode = 7012;
 constexpr int id_test = 7013;
 constexpr int id_open_config = 7014;
@@ -75,6 +74,9 @@ constexpr COLORREF color_ok = RGB(78, 209, 139);
 constexpr int logical_sidebar_width = 166;
 constexpr int logical_page_margin = 28;
 constexpr int logical_content_top = 90;
+constexpr int logical_field_min_offset = 56;
+constexpr int logical_field_max_offset = 180;
+constexpr int logical_label_gap = 10;
 constexpr int logical_setting_row_height = 43;
 constexpr int logical_control_height = 34;
 constexpr int logical_edit_inset_x = 3;
@@ -96,18 +98,19 @@ constexpr std::array<std::wstring_view, 6> page_subtitles{
     L"输入或粘贴文字，停止输入 500 毫秒后自动翻译。",
 };
 
-// Keep the existing settings page indices stable while presenting text
-// translation next to the keyboard shortcut that opens it.
-constexpr std::array<int, 6> navigation_page_order{0, 5, 1, 2, 3, 4};
+// Keep the existing settings page indices stable while presenting the two
+// translation entry points first, followed by configuration pages.
+constexpr std::array<int, 6> navigation_page_order{5, 2, 1, 0, 3, 4};
 
 // These code points are shared by Segoe Fluent Icons and Segoe MDL2 Assets.
+// Indexed by settings page rather than sidebar position.
 constexpr std::array<wchar_t, 6> navigation_glyphs{
-    0xE765,  // Keyboard
-    0xE8C1,  // Message
-    0xE8AB,  // Switch
-    0xE7C3,  // Page
-    0xE7F4,  // Monitor
-    0xE713,  // Settings
+    0xE765,  // Keyboard -> 快捷键
+    0xE8AB,  // Switch   -> 翻译接口
+    0xE7C3,  // Page     -> 截图识别
+    0xE7F4,  // Monitor  -> 显示
+    0xE713,  // Settings -> 其他
+    0xE8C1,  // Message  -> 文字翻译
 };
 
 std::size_t navigation_index_for_page(int page) noexcept {
@@ -406,13 +409,11 @@ struct ProviderInfo {
     enum class Kind { free, deepl, ai } kind;
 };
 
-constexpr std::array<ProviderInfo, 8> providers{{
-    {L"microsoft_free", L"微软翻译（免密钥）", ProviderInfo::Kind::free},
-    {L"google_free", L"谷歌翻译（免密钥）", ProviderInfo::Kind::free},
-    {L"bing_free", L"必应翻译（免密钥）", ProviderInfo::Kind::free},
+constexpr std::array<ProviderInfo, 6> providers{{
     {L"tencent_free", L"腾讯交互翻译（免密钥）", ProviderInfo::Kind::free},
-    {L"yandex_free", L"Yandex 翻译（免密钥）", ProviderInfo::Kind::free},
+    {L"microsoft_free", L"微软翻译（免密钥）", ProviderInfo::Kind::free},
     {L"iciba_free", L"词霸翻译（免密钥）", ProviderInfo::Kind::free},
+    {L"yandex_free", L"Yandex 翻译（免密钥）", ProviderInfo::Kind::free},
     {L"deepl", L"DeepL", ProviderInfo::Kind::deepl},
     {L"ai", L"大模型翻译", ProviderInfo::Kind::ai},
 }};
@@ -635,7 +636,6 @@ SettingsWindow::~SettingsWindow() {
     if (window_ && IsWindow(window_)) DestroyWindow(window_);
     if (font_) DeleteObject(font_);
     if (title_font_) DeleteObject(title_font_);
-    if (brand_font_) DeleteObject(brand_font_);
     if (small_font_) DeleteObject(small_font_);
     if (icon_font_) DeleteObject(icon_font_);
     if (background_) DeleteObject(background_);
@@ -729,10 +729,20 @@ void SettingsWindow::self_test(HWND owner) {
     if (window_) throw AppError("settings self-test window already exists");
     create_window(owner);
     if (!window_ || !capture_hotkey_ || !toggle_hotkey_ || !text_hotkey_ ||
-        !provider_ || !ocr_engine_ || !navigation_[0] || !navigation_[1] ||
+        !provider_ || !ocr_engine_value_ || !navigation_[0] || !navigation_[1] ||
         !text_session_ || !text_target_ || !text_input_ || !text_output_ ||
         !text_translate_ || !text_clear_ || !text_copy_) {
         throw AppError("settings self-test did not create required controls");
+    }
+    constexpr std::array<std::wstring_view, 6> expected_navigation{
+        L"文字翻译", L"截图识别", L"翻译接口",
+        L"快捷键", L"显示", L"其他",
+    };
+    for (std::size_t index = 0; index < expected_navigation.size(); ++index) {
+        if (!navigation_[index] ||
+            text_of(navigation_[index]) != expected_navigation[index]) {
+            throw AppError("settings self-test navigation order mismatch");
+        }
     }
     constexpr LONG_PTR required_extended_style = WS_EX_APPWINDOW | WS_EX_COMPOSITED;
     if ((GetWindowLongPtrW(window_, GWL_EXSTYLE) & required_extended_style) !=
@@ -761,11 +771,17 @@ void SettingsWindow::self_test(HWND owner) {
         static_cast<LRESULT>(providers.size() - 1)) {
         throw AppError("settings self-test provider count mismatch");
     }
-    wchar_t provider_label[128]{};
-    SendMessageW(provider_, CB_GETLBTEXT, 0,
-                 reinterpret_cast<LPARAM>(provider_label));
-    if (std::wstring_view(provider_label) != L"微软翻译（免密钥）") {
-        throw AppError("settings self-test provider ordering mismatch");
+    constexpr std::array<std::wstring_view, 5> expected_providers{
+        L"腾讯交互翻译（免密钥）", L"微软翻译（免密钥）", L"词霸翻译（免密钥）",
+        L"Yandex 翻译（免密钥）", L"DeepL",
+    };
+    for (std::size_t index = 0; index < expected_providers.size(); ++index) {
+        wchar_t label[128]{};
+        SendMessageW(provider_, CB_GETLBTEXT, static_cast<WPARAM>(index),
+                     reinterpret_cast<LPARAM>(label));
+        if (std::wstring_view(label) != expected_providers[index]) {
+            throw AppError("settings self-test provider ordering mismatch");
+        }
     }
     if (SendMessageW(translator_class_, CB_GETCOUNT, 0, 0) != 2) {
         throw AppError("settings self-test translator class count mismatch");
@@ -774,8 +790,12 @@ void SettingsWindow::self_test(HWND owner) {
         static_cast<LRESULT>(ai_protocols.size())) {
         throw AppError("settings self-test large-model protocol count mismatch");
     }
-    if (SendMessageW(ocr_engine_, CB_GETCOUNT, 0, 0) != 1) {
-        throw AppError("settings self-test OCR engine count mismatch");
+    wchar_t ocr_engine_class[16]{};
+    if (!GetClassNameW(ocr_engine_value_, ocr_engine_class,
+                       static_cast<int>(std::size(ocr_engine_class))) ||
+        std::wstring_view(ocr_engine_class) != L"Static" ||
+        text_of(ocr_engine_value_) != L"系统自带 OCR") {
+        throw AppError("settings self-test OCR engine display mismatch");
     }
     show_page(0);
     if (page_controls_[0].size() < 3 ||
@@ -832,8 +852,7 @@ void SettingsWindow::self_test(HWND owner) {
         throw AppError("settings self-test edit field did not receive rounded corners");
     }
     show_page(5);
-    if (text_of(navigation_[1]) != L"文字翻译" ||
-        SendMessageW(text_target_, CB_GETCOUNT, 0, 0) != 10) {
+    if (SendMessageW(text_target_, CB_GETCOUNT, 0, 0) != 10) {
         throw AppError("settings self-test text translation page is incomplete");
     }
     COMBOBOXINFO text_target_info{sizeof(text_target_info)};
@@ -933,7 +952,7 @@ void SettingsWindow::self_test(HWND owner) {
     SendMessageW(translator_class_, CB_SETCURSEL, 0, 0);
     SendMessageW(provider_, CB_SETCURSEL, 0, 0);
     refresh_provider_fields(true);
-    SendMessageW(provider_, CB_SETCURSEL, 5, 0);
+    SendMessageW(provider_, CB_SETCURSEL, 2, 0);
     refresh_provider_fields(true);
     if ((GetWindowLongPtrW(provider_key_, GWL_STYLE) & WS_VISIBLE) != 0 ||
         (GetWindowLongPtrW(provider_model_, GWL_STYLE) & WS_VISIBLE) != 0 ||
@@ -1077,7 +1096,7 @@ HWND SettingsWindow::add_label(int page, const wchar_t* text) {
 }
 
 void SettingsWindow::create_theme_resources() {
-    for (auto** font : {&font_, &title_font_, &brand_font_, &small_font_, &icon_font_}) {
+    for (auto** font : {&font_, &title_font_, &small_font_, &icon_font_}) {
         if (*font) DeleteObject(*font);
         *font = nullptr;
     }
@@ -1094,7 +1113,6 @@ void SettingsWindow::create_theme_resources() {
     };
     font_ = make_font(13, FW_NORMAL);
     title_font_ = make_font(18, FW_SEMIBOLD);
-    brand_font_ = make_font(14, FW_SEMIBOLD);
     small_font_ = make_font(11, FW_NORMAL);
     icon_font_ = create_icon_font(dpi_);
     background_ = CreateSolidBrush(color_page);
@@ -1428,9 +1446,7 @@ void SettingsWindow::create_controls() {
             BS_OWNERDRAW | BS_NOTIFY | WS_TABSTOP, id_nav_first + static_cast<int>(index));
     }
     status_ = add_control(-1, 0, L"STATIC", L"", SS_LEFT, 0);
-    side_footer_ = add_control(-1, 0, L"STATIC", L"", SS_LEFT, 0);
     set_font(status_, small_font_);
-    set_font(side_footer_, small_font_);
     ShowWindow(status_, SW_HIDE);
     create_hotkey_page();
     create_translation_page();
@@ -1440,7 +1456,9 @@ void SettingsWindow::create_controls() {
     create_text_translation_page();
     load_values();
     refresh_text_translation();
-    show_page(0);
+    // Open on the sidebar's first entry so the highlighted button always
+    // matches the page the user sees.
+    show_page(navigation_page_order.front());
     layout_controls();
 }
 
@@ -1535,12 +1553,10 @@ void SettingsWindow::create_translation_page() {
 
 void SettingsWindow::create_ocr_page() {
     add_label(2, L"引擎");
-    ocr_engine_ = add_control(2, 0, L"COMBOBOX", L"",
-                              CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
-                              WS_VSCROLL | WS_TABSTOP,
-                              id_ocr_engine);
-    SendMessageW(ocr_engine_, CB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>(L"系统自带 OCR（离线，推荐）"));
+    // Windows OCR is the only engine, so present it as a plain value instead of
+    // a one-item drop-down that implies a choice.
+    ocr_engine_value_ = add_control(
+        2, 0, L"STATIC", L"系统自带 OCR", SS_LEFT | SS_CENTERIMAGE, 0);
     ocr_engine_note_ = add_label(2, L"截图只在本地识别，不会上传到任何服务器。");
     set_font(ocr_engine_note_, small_font_);
     add_label(2, L"识别语言");
@@ -1680,7 +1696,6 @@ void SettingsWindow::load_values() {
     SetWindowTextW(toggle_hotkey_, config_.string(L"hotkey_toggle", L"Ctrl+Alt+W").c_str());
     SetWindowTextW(text_hotkey_, config_.string(
         L"hotkey_text_translate", L"Ctrl+Alt+Space").c_str());
-    SetWindowTextW(side_footer_, (L"框选  " + capture_hotkey).c_str());
     const auto configured_provider = config_.string(L"translator.provider", L"microsoft_free");
     const bool large_model = configured_provider == L"ai";
     int provider_position = 0;
@@ -1703,7 +1718,6 @@ void SettingsWindow::load_values() {
     }
     select_combo(chinese_target_, zh_index);
 
-    select_combo(ocr_engine_, 0);
     const auto saved_languages = config_.strings(L"ocr.languages");
     int language_index = 0;
     bool language_found = false;
@@ -2149,7 +2163,6 @@ bool SettingsWindow::save_values(bool) {
         }
         config_.save();
         if (settings_changed_callback_) settings_changed_callback_();
-        SetWindowTextW(side_footer_, (L"框选  " + capture).c_str());
         set_status(L"");
         return true;
     } catch (const std::exception& error) {
@@ -2404,11 +2417,9 @@ void SettingsWindow::layout_controls() {
     const int height = client.bottom;
     const int sidebar = px(logical_sidebar_width, dpi_);
     for (std::size_t index = 0; index < navigation_.size(); ++index) {
-        MoveWindow(navigation_[index], px(12, dpi_), px(76 + static_cast<int>(index) * 42, dpi_),
+        MoveWindow(navigation_[index], px(12, dpi_), px(18 + static_cast<int>(index) * 42, dpi_),
                    px(152, dpi_), px(38, dpi_), FALSE);
     }
-    MoveWindow(side_footer_, px(18, dpi_), height - px(34, dpi_),
-               px(146, dpi_), px(20, dpi_), FALSE);
     MoveWindow(status_, sidebar + px(logical_page_margin, dpi_), height - px(31, dpi_),
                std::max(1, width - sidebar - px(logical_page_margin * 2, dpi_)),
                px(20, dpi_), FALSE);
@@ -2418,8 +2429,63 @@ void SettingsWindow::layout_controls() {
     const int inner_left = card_left + px(18, dpi_);
     const int inner_right = card_right - px(18, dpi_);
     const int available_width = std::max(1, inner_right - inner_left);
-    const int label_width = px(84, dpi_);
-    const int field_left = inner_left + label_width + px(10, dpi_);
+    const int label_gap = px(logical_label_gap, dpi_);
+    // Size the caption column from the labels actually shown on this page.
+    // A fixed, generous column made short captions float towards the middle of
+    // the card and left a large blank gutter on the left.
+    std::vector<HWND> labels;
+    const auto collect_label = [&](HWND label) {
+        if (!label ||
+            (GetWindowLongPtrW(label, GWL_STYLE) & WS_VISIBLE) == 0) {
+            return;
+        }
+        labels.push_back(label);
+    };
+    if (current_page_ == 0 && page_controls_[0].size() >= 5) {
+        collect_label(page_controls_[0][0]);
+        collect_label(page_controls_[0][2]);
+        collect_label(page_controls_[0][4]);
+    } else if (current_page_ == 1) {
+        const auto& controls = page_controls_[1];
+        for (const std::size_t index : {0U, 2U, 4U, 8U, 10U, 12U, 14U, 20U}) {
+            if (index < controls.size()) collect_label(controls[index]);
+        }
+    } else if (current_page_ == 2) {
+        const auto& controls = page_controls_[2];
+        if (controls.size() > 3) {
+            collect_label(controls[0]);
+            collect_label(controls[3]);
+        }
+    } else if (current_page_ == 3) {
+        const auto& controls = page_controls_[3];
+        for (const std::size_t index : {0U, 2U, 4U, 9U}) {
+            if (index < controls.size()) collect_label(controls[index]);
+        }
+        collect_label(timeout_label_);
+    }
+    int label_text_width = px(logical_field_min_offset, dpi_) - label_gap;
+    if (!labels.empty()) {
+        HDC dc = GetDC(window_);
+        if (dc) {
+            const HGDIOBJ previous = SelectObject(dc, font_);
+            for (const HWND label : labels) {
+                const std::wstring caption = text_of(label);
+                SIZE measured{};
+                GetTextExtentPoint32W(dc, caption.c_str(),
+                                      static_cast<int>(caption.size()), &measured);
+                label_text_width = std::max(label_text_width,
+                                            static_cast<int>(measured.cx));
+            }
+            SelectObject(dc, previous);
+            ReleaseDC(window_, dc);
+        }
+    }
+    field_offset_ = std::clamp(
+        label_text_width + label_gap,
+        px(logical_field_min_offset, dpi_),
+        px(logical_field_max_offset, dpi_));
+    const int label_width = std::max(1, field_offset_ - label_gap);
+    const int field_left = inner_left + field_offset_;
     const int field_width = std::max(1, inner_right - field_left);
     const int control_height = px(logical_control_height, dpi_);
 
@@ -2447,7 +2513,7 @@ void SettingsWindow::layout_controls() {
         const auto label_style = GetWindowLongPtrW(label, GWL_STYLE);
         SetWindowLongPtrW(label, GWL_STYLE,
                           (label_style & ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
-                          SS_RIGHT | SS_CENTERIMAGE);
+                          SS_LEFT | SS_CENTERIMAGE);
         const int label_top = px(logical_top + 13, dpi_);
         MoveWindow(label, inner_left, label_top, label_width,
                    control_height, FALSE);
@@ -2472,8 +2538,8 @@ void SettingsWindow::layout_controls() {
                 const auto label_style = GetWindowLongPtrW(label, GWL_STYLE);
                 SetWindowLongPtrW(label, GWL_STYLE,
                                   (label_style & ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
-                                      SS_RIGHT | SS_CENTERIMAGE);
-                MoveWindow(label, inner_left, px(top, dpi_), px(84, dpi_),
+                                      SS_LEFT | SS_CENTERIMAGE);
+                MoveWindow(label, inner_left, px(top, dpi_), label_width,
                            px(34, dpi_), FALSE);
                 const int inset_x = std::max(
                     1, px(logical_edit_inset_x, dpi_));
@@ -2481,7 +2547,7 @@ void SettingsWindow::layout_controls() {
                     1, px(logical_edit_inset_top, dpi_));
                 const int inset_bottom = std::max(
                     1, px(logical_edit_inset_bottom, dpi_));
-                MoveWindow(edit, inner_left + px(94, dpi_) + inset_x,
+                MoveWindow(edit, field_left + inset_x,
                            px(top, dpi_) + inset_top,
                            px(240, dpi_) - inset_x * 2,
                            px(34, dpi_) - inset_top - inset_bottom, FALSE);
@@ -2559,19 +2625,20 @@ void SettingsWindow::layout_controls() {
         // has to reach a little past the row band before it can close below the
         // buttons. paint() recomputes the same figure from the row count.
         const int main_bottom = y + 8;
-        place_hint(provider_hint_, main_bottom + 6, 34, true);
+        MoveWindow(provider_hint_, field_left, px(main_bottom + 6, dpi_),
+                   field_width, px(34, dpi_), FALSE);
         const int language_top = main_bottom + 52;
         place(c[20], chinese_target_, language_top + 47);
     } else if (current_page_ == 2) {
         auto& c = page_controls_[2];
         if (c.size() >= 7) {
-            place(c[0], ocr_engine_, 90);
+            place(c[0], ocr_engine_value_, 90);
             MoveWindow(ocr_engine_note_, field_left, px(133, dpi_),
                        field_width, px(24, dpi_), FALSE);
             place(c[3], ocr_languages_, 165);
             MoveWindow(c[6], field_left, px(221, dpi_), field_width,
                        px(24, dpi_), FALSE);
-            MoveWindow(ocr_upscale_, inner_left, px(253, dpi_), px(230, dpi_),
+            MoveWindow(ocr_upscale_, field_left, px(253, dpi_), px(230, dpi_),
                        control_height, FALSE);
         }
     } else if (current_page_ == 3) {
@@ -2683,23 +2750,15 @@ void SettingsWindow::paint() {
     SelectObject(dc, old_pen);
     DeleteObject(divider);
 
-    RECT mark{px(18, dpi_), px(18, dpi_), px(44, dpi_), px(44, dpi_)};
-    fill_round_rect(dc, mark, px(7, dpi_), accent, accent);
-    draw_text(dc, L"S", mark, brand_font_, RGB(14, 16, 19),
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, L"划词截屏翻译",
-               RECT{px(53, dpi_), px(16, dpi_), px(168, dpi_), px(37, dpi_)},
-              brand_font_, color_text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_text(dc, L"设置",
-               RECT{px(53, dpi_), px(36, dpi_), px(168, dpi_), px(54, dpi_)},
-              small_font_, color_text_faint, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
     const int card_left = sidebar + px(logical_page_margin, dpi_);
     const int card_right = client.right - px(logical_page_margin, dpi_);
     const int inner_left = card_left + px(18, dpi_);
     const int inner_right = card_right - px(18, dpi_);
-    const int field_left = inner_left + px(94, dpi_);
-    const int text_right = field_left - px(10, dpi_);
+    const int field_offset = field_offset_ > 0
+        ? field_offset_
+        : px(logical_field_min_offset, dpi_);
+    const int field_left = inner_left + field_offset;
+    const int text_right = field_left - px(logical_label_gap, dpi_);
     draw_text(dc, page_names[static_cast<std::size_t>(current_page_)],
               RECT{card_left, px(20, dpi_), card_right, px(48, dpi_)},
               title_font_, RGB(242, 243, 246), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -2729,8 +2788,41 @@ void SettingsWindow::paint() {
     };
     const auto section = [&](std::wstring_view text, int top) {
         draw_text(dc, text,
-                  RECT{card_left + px(2, dpi_), px(top, dpi_), card_right, px(top + 24, dpi_)},
+                  RECT{card_left + px(2, dpi_), px(top, dpi_),
+                       card_right, px(top + 24, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    };
+    // Key/description lists get a column sized to their longest key instead of
+    // a fixed 132px block, so short keys do not leave a wide empty gap.
+    const auto key_column_width = [&](const auto& rows) {
+        const HGDIOBJ previous = SelectObject(dc, small_font_);
+        int width = 0;
+        for (const auto& row : rows) {
+            SIZE measured{};
+            GetTextExtentPoint32W(dc, row.first.c_str(),
+                                  static_cast<int>(row.first.size()), &measured);
+            width = std::max(width, static_cast<int>(measured.cx));
+        }
+        SelectObject(dc, previous);
+        return std::clamp(width + px(14, dpi_),
+                          px(84, dpi_), px(180, dpi_));
+    };
+    const auto draw_key_rows = [&](const auto& rows, int top, int step) {
+        const int keys_width = key_column_width(rows);
+        int y = top;
+        for (const auto& row : rows) {
+            draw_text(dc, row.first,
+                      RECT{inner_left, px(y, dpi_),
+                           inner_left + keys_width, px(y + step, dpi_)},
+                      small_font_, color_text,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            draw_text(dc, row.second,
+                      RECT{inner_left + keys_width + px(8, dpi_), px(y, dpi_),
+                           inner_right, px(y + step, dpi_)},
+                      small_font_, color_text_dim,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            y += step;
+        }
     };
     const auto row_copy = [&](std::wstring_view title, std::wstring_view description,
                               int top, bool paint_title) {
@@ -2752,38 +2844,28 @@ void SettingsWindow::paint() {
     if (current_page_ == 0) {
         card(90, 341);
         draw_text(dc, L"按下后拉框，松手立刻翻译",
-                  RECT{inner_left + px(94, dpi_), px(143, dpi_), inner_right,
+                  RECT{field_left, px(143, dpi_), inner_right,
                        px(162, dpi_)},
                   small_font_, color_text_dim,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         draw_text(dc, L"同一个键来回切：译文开着就收进托盘，收着就叫回来",
-                  RECT{inner_left + px(94, dpi_), px(220, dpi_), inner_right,
+                  RECT{field_left, px(220, dpi_), inner_right,
                        px(239, dpi_)},
                   small_font_, color_text_dim,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         draw_text(dc, L"弹出聚焦式输入框；Esc 或再次按快捷键隐藏",
-                  RECT{inner_left + px(94, dpi_), px(297, dpi_), inner_right,
+                  RECT{field_left, px(297, dpi_), inner_right,
                        px(316, dpi_)},
                   small_font_, color_text_dim,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         section(L"框选时", 361);
         card(387, 448);
-        draw_text(dc, L"拖动鼠标",
-                  RECT{inner_left, px(400, dpi_), inner_left + px(132, dpi_),
-                       px(418, dpi_)},
-                  small_font_, color_text, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, L"画出要翻译的区域，松手立刻识别并翻译",
-                  RECT{inner_left + px(142, dpi_), px(400, dpi_), inner_right,
-                       px(418, dpi_)},
-                  small_font_, color_text_dim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, L"Esc / 右键",
-                  RECT{inner_left, px(418, dpi_), inner_left + px(132, dpi_),
-                       px(436, dpi_)},
-                  small_font_, color_text, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, L"取消这次框选",
-                  RECT{inner_left + px(142, dpi_), px(418, dpi_), inner_right,
-                       px(436, dpi_)},
-                  small_font_, color_text_dim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        const std::array<std::pair<std::wstring_view, std::wstring_view>, 2>
+            selection_rows{{
+                {L"拖动鼠标", L"画出要翻译的区域，松手立刻识别并翻译"},
+                {L"Esc / 右键", L"取消这次框选"},
+            }};
+        draw_key_rows(selection_rows, 400, 18);
     } else if (current_page_ == 1) {
         const bool large_model = selected_index(translator_class_) == 1;
         const auto chosen = std::find_if(
@@ -2846,21 +2928,7 @@ void SettingsWindow::paint() {
             {L"Ctrl+C / Ctrl+A", L"复制全部译文"},
             {L"按住空格 / 右键", L"临时看回原文"},
         }};
-        const int operation_step = timeout ? 14 : 18;
-        int operation_y = operations_section + 33;
-        for (const auto& [keys, description] : operations) {
-            draw_text(dc, keys,
-                      RECT{inner_left, px(operation_y, dpi_),
-                           inner_left + px(132, dpi_), px(operation_y + operation_step, dpi_)},
-                      small_font_, color_text,
-                      DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, description,
-                      RECT{inner_left + px(142, dpi_), px(operation_y, dpi_),
-                           inner_right, px(operation_y + operation_step, dpi_)},
-                      small_font_, color_text_dim,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            operation_y += operation_step;
-        }
+        draw_key_rows(operations, operations_section + 33, timeout ? 14 : 18);
     } else if (current_page_ == 4) {
         card(90, 238);
         separator(156);
@@ -3040,7 +3108,7 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
         const int icon_top = rect.top + (rect.bottom - rect.top - icon_size) / 2;
         RECT icon_rect{rect.left + px(13, dpi_), icon_top,
                        rect.left + px(13, dpi_) + icon_size, icon_top + icon_size};
-        draw_settings_nav_icon(dc, navigation_index, icon_rect, icon_color, icon_font_);
+        draw_settings_nav_icon(dc, page, icon_rect, icon_color, icon_font_);
         RECT text_rect{rect.left + px(43, dpi_), rect.top, rect.right - px(8, dpi_), rect.bottom};
         draw_text(dc, page_names[static_cast<std::size_t>(page)], text_rect, font_, text_color,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -3191,7 +3259,6 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         create_theme_resources();
         for (const auto button : navigation_) set_font(button, font_);
         set_font(status_, small_font_);
-        set_font(side_footer_, small_font_);
         for (auto& controls : page_controls_) {
             for (const auto control : controls) {
                 set_font(control, font_);
@@ -3365,13 +3432,6 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             remove_profile();
             return 0;
         }
-        if (id == id_ocr_engine && notification == CBN_SELCHANGE) {
-            save_values(false);
-            layout_controls();
-            RedrawWindow(window_, nullptr, nullptr,
-                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-            return 0;
-        }
         if (id == id_close_mode && notification == CBN_SELCHANGE) {
             refresh_close_fields();
             save_values(false);
@@ -3484,10 +3544,6 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             return reinterpret_cast<LRESULT>(input_background_);
         }
         SetBkMode(dc, TRANSPARENT);
-        if (control == side_footer_) {
-            SetTextColor(dc, color_text_faint);
-            return reinterpret_cast<LRESULT>(sidebar_background_);
-        }
         if (control == status_) {
             SetTextColor(dc, status_error_ ? color_bad : color_ok);
             return reinterpret_cast<LRESULT>(background_);

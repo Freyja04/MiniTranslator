@@ -92,7 +92,10 @@ public:
 
     void toggle(HWND owner);
     void show(HWND owner);
+    void show_near(POINT anchor);
+    void toggle_from_tray(POINT anchor);
     void hide();
+    void hide_if_popup();
     void refresh();
     void refresh_appearance();
     void self_test(HWND owner);
@@ -149,6 +152,9 @@ private:
     int dpi_{96};
     bool syncing_{};
     bool status_error_{};
+    bool popup_mode_{};
+    bool composing_{};
+    ULONGLONG auto_hidden_at_{};
 };
 
 }  // namespace screentrans

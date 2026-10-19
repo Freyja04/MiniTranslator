@@ -218,6 +218,41 @@ HFONT create_font(int dpi, int logical_pixels, int weight,
                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, family.c_str());
 }
 
+int CALLBACK find_icon_font_family(const LOGFONTW*, const TEXTMETRICW*, DWORD,
+                                   LPARAM data) {
+    *reinterpret_cast<bool*>(data) = true;
+    return 0;
+}
+
+bool icon_font_family_available(HDC dc, const wchar_t* face) {
+    LOGFONTW query{};
+    query.lfCharSet = DEFAULT_CHARSET;
+    if (wcsncpy_s(query.lfFaceName, LF_FACESIZE, face, _TRUNCATE) != 0) {
+        return false;
+    }
+    bool found = false;
+    EnumFontFamiliesExW(dc, &query, find_icon_font_family,
+                        reinterpret_cast<LPARAM>(&found), 0);
+    return found;
+}
+
+HFONT create_icon_font(int dpi) {
+    // Segoe Fluent Icons only ships with newer Windows builds. Fall back to
+    // Segoe MDL2 Assets so the icon buttons also render on Windows 10.
+    constexpr std::array<const wchar_t*, 3> faces{
+        L"Segoe Fluent Icons", L"Segoe MDL2 Assets", L"Segoe UI Symbol",
+    };
+    HDC dc = GetDC(nullptr);
+    for (const auto* face : faces) {
+        if (!dc || icon_font_family_available(dc, face)) {
+            if (dc) ReleaseDC(nullptr, dc);
+            return create_font(dpi, 15, FW_NORMAL, face);
+        }
+    }
+    if (dc) ReleaseDC(nullptr, dc);
+    return nullptr;
+}
+
 void set_control_font(HWND control, HFONT font) {
     if (control && font) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
 }
@@ -415,10 +450,13 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
             SetDCBrushColor(item.hDC, color_background);
             FillRect(item.hDC, &item.rcItem,
                      reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+            // Keep the idle buttons visible as tiles: using the window
+            // background for the fill and border hides them completely when
+            // the icon font falls back to a face without the glyph.
             const COLORREF fill = selected ? color_hover
-                                  : hot ? color_surface : color_background;
+                                  : hot ? RGB(39, 42, 50) : color_surface;
             draw_rounded_control(item.hDC, item.rcItem, fill,
-                                 focused ? accent : fill, 7);
+                                 focused ? accent : color_border, 7);
             const wchar_t glyph = identifier == id_copy ? 0xE8C8
                                   : identifier == id_settings ? 0xE713
                                                               : 0xE711;
@@ -517,6 +555,41 @@ void position_quick(HWND window) {
     const int x = info.rcWork.left + (work_width - width) / 2;
     const int y = info.rcWork.top + std::max(scaled(36, dpi), (work_height - height) / 6);
     SetWindowPos(window, HWND_TOPMOST, x, y, width, height,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+
+void position_near_anchor(HWND window, POINT anchor) {
+    const HMONITOR monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info{sizeof(info)};
+    GetMonitorInfoW(monitor, &info);
+    const int dpi = static_cast<int>(GetDpiForWindow(window));
+    const int width = scaled(720, dpi);
+    const int height = scaled(300, dpi);
+    const int work_left = info.rcWork.left;
+    const int work_top = info.rcWork.top;
+    const int work_right = info.rcWork.right;
+    const int work_bottom = info.rcWork.bottom;
+    const int work_width = work_right - work_left;
+    const int work_height = work_bottom - work_top;
+
+    // Grow away from the edge that holds the tray icon so the panel never
+    // overlaps the taskbar.
+    const int gap = scaled(10, dpi);
+    const int panel_width = std::min(
+        width, std::max(scaled(320, dpi), work_width - gap * 2));
+    const int panel_height = std::min(
+        height, std::max(scaled(200, dpi), work_height - gap * 2));
+    const bool anchor_bottom = anchor.y > work_top + work_height / 2;
+    const bool anchor_top = anchor.y < work_top + work_height / 4;
+    int x = anchor.x - panel_width / 2;
+    int y = anchor_bottom ? anchor.y - panel_height - gap : anchor.y + gap;
+    if (anchor_top && !anchor_bottom) y = std::max(work_top + gap, y);
+    x = std::clamp(x, work_left + gap,
+                   std::max(work_left + gap, work_right - panel_width - gap));
+    y = std::clamp(y, work_top + gap,
+                   std::max(work_top + gap, work_bottom - panel_height - gap));
+
+    SetWindowPos(window, HWND_TOPMOST, x, y, panel_width, panel_height,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
@@ -999,7 +1072,7 @@ void QuickTranslateWindow::create_theme_resources() {
     font_ = create_font(dpi_, 14, FW_NORMAL, family);
     title_font_ = create_font(dpi_, 15, FW_SEMIBOLD, family);
     small_font_ = create_font(dpi_, 12, FW_NORMAL, family);
-    icon_font_ = create_font(dpi_, 15, FW_NORMAL, L"Segoe Fluent Icons");
+    icon_font_ = create_icon_font(dpi_);
     background_ = CreateSolidBrush(color_background);
     surface_ = CreateSolidBrush(color_surface);
     input_background_ = CreateSolidBrush(color_surface);
@@ -1151,6 +1224,7 @@ void QuickTranslateWindow::refresh_appearance() {
 }
 
 void QuickTranslateWindow::show(HWND owner) {
+    popup_mode_ = false;
     create_window(owner);
     refresh();
     position_on_active_monitor();
@@ -1158,6 +1232,31 @@ void QuickTranslateWindow::show(HWND owner) {
     SetForegroundWindow(window_);
     SetFocus(input_);
     SendMessageW(input_, EM_SETSEL, 0, -1);
+}
+
+void QuickTranslateWindow::show_near(POINT anchor) {
+    popup_mode_ = true;
+    create_window(nullptr);
+    refresh();
+    position_near_anchor(window_, anchor);
+    ShowWindow(window_, SW_SHOW);
+    SetForegroundWindow(window_);
+    SetFocus(input_);
+}
+
+void QuickTranslateWindow::toggle_from_tray(POINT anchor) {
+    constexpr ULONGLONG reveal_guard_ms = 250;
+    if (visible()) {
+        hide();
+        auto_hidden_at_ = GetTickCount64();
+        return;
+    }
+    // The tray reports a click through more than one message on some shells.
+    // Ignore the duplicate right after the panel was dismissed.
+    if (auto_hidden_at_ && GetTickCount64() - auto_hidden_at_ < reveal_guard_ms) {
+        return;
+    }
+    show_near(anchor);
 }
 
 void QuickTranslateWindow::toggle(HWND owner) {
@@ -1168,6 +1267,14 @@ void QuickTranslateWindow::toggle(HWND owner) {
 void QuickTranslateWindow::hide() {
     if (window_) ShowWindow(window_, SW_HIDE);
     if (callbacks_.composition_changed) callbacks_.composition_changed(false);
+    composing_ = false;
+}
+
+void QuickTranslateWindow::hide_if_popup() {
+    if (window_ && popup_mode_ && !composing_) {
+        hide();
+        auto_hidden_at_ = GetTickCount64();
+    }
 }
 
 void QuickTranslateWindow::on_input_changed() {
@@ -1418,8 +1525,10 @@ LRESULT CALLBACK QuickTranslateWindow::input_proc(HWND control, UINT message,
                                                   UINT_PTR subclass_id, DWORD_PTR reference) {
     auto* self = reinterpret_cast<QuickTranslateWindow*>(reference);
     if (self && message == WM_IME_STARTCOMPOSITION && self->callbacks_.composition_changed) {
+        self->composing_ = true;
         self->callbacks_.composition_changed(true);
     } else if (self && message == WM_IME_ENDCOMPOSITION && self->callbacks_.composition_changed) {
+        self->composing_ = false;
         self->callbacks_.composition_changed(false);
     }
     if (self && (message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
@@ -1479,6 +1588,11 @@ LRESULT CALLBACK QuickTranslateWindow::window_proc(HWND window, UINT message,
 
 LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
+    case WM_ACTIVATE:
+        // A tray panel behaves like a menu: clicking anywhere else dismisses
+        // it, but IME candidates must not be mistaken for focus loss.
+        if (LOWORD(wparam) == WA_INACTIVE) hide_if_popup();
+        break;
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case id_input:

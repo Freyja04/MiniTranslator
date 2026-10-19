@@ -86,9 +86,12 @@ void wait_for_restart_parent() {
     }
 }
 
-void signal_existing_instance() noexcept {
+void signal_existing_instance(bool text_translation) noexcept {
     if (const HWND window = FindWindowW(screentrans::AppHost::window_class_name(), nullptr)) {
-        PostMessageW(window, screentrans::AppHost::activate_message, 0, 0);
+        PostMessageW(window, screentrans::AppHost::activate_message,
+                     text_translation
+                         ? screentrans::AppHost::activate_text_translation : 0,
+                     0);
     }
 }
 
@@ -100,6 +103,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
     const bool self_test =
         has_argument(L"--self-test") || has_argument(L"--selftest");
     const bool update_self_test = has_argument(L"--update-self-test");
+    const bool text_translation = has_argument(L"--text-translation");
     bool update_helper = false;
     try {
         update_helper = screentrans::is_update_helper_request();
@@ -120,7 +124,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
                 screentrans::throw_last_error("create mutex", mutex_error);
             }
             if (!mutex || mutex_error == ERROR_ALREADY_EXISTS) {
-                signal_existing_instance();
+                signal_existing_instance(text_translation);
                 return EXIT_SUCCESS;
             }
         }
@@ -129,7 +133,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
             screentrans::WinrtApartment apartment(winrt::apartment_type::single_threaded);
             {
                 screentrans::AppHost app(instance);
-                result = app.run(self_test, update_self_test);
+                result = app.run(self_test, update_self_test, text_translation);
             }
         }
         return result;

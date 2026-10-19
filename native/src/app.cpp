@@ -732,6 +732,7 @@ void AppHost::show_tray_menu(POINT location) {
 
     const auto capture = config_.string(L"hotkey", L"Ctrl+Alt+Q");
     const auto toggle = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
+    const auto text = config_.string(L"hotkey_text_translate", L"Ctrl+Alt+Space");
     const bool can_restore = last_image_ && !result_.visible();
     std::vector<TrayMenuItem> items;
     items.reserve(7);
@@ -748,7 +749,7 @@ void AppHost::show_tray_menu(POINT location) {
         items.push_back(std::move(item));
     };
     add_item(command_capture, TrayMenuIcon::capture, L"框选翻译", capture);
-    add_item(command_text_translate, TrayMenuIcon::text, L"文字翻译…");
+    add_item(command_text_translate, TrayMenuIcon::text, L"文字翻译", text);
     add_item(command_restore, TrayMenuIcon::restore, L"显示上次译文", toggle, can_restore);
     TrayMenuItem separator;
     separator.separator = true;
@@ -756,6 +757,7 @@ void AppHost::show_tray_menu(POINT location) {
     separator.dpi = dpi;
     separator.font = menu_font;
     items.push_back(std::move(separator));
+    add_item(command_settings, TrayMenuIcon::settings, L"设置");
     add_item(command_restart, TrayMenuIcon::restart, L"重启");
     add_item(command_exit, TrayMenuIcon::exit, L"退出");
     items.front().first = true;
@@ -1385,9 +1387,13 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         try {
             add_tray_icon();
             apply_hotkeys(false);
-            notify(L"划词截屏翻译",
-                   L"已启动，左键打开设置，按 " + config_.string(L"hotkey", L"Ctrl+Alt+Q") +
-                   L" 框选翻译");
+            if (text_translation_on_start_) {
+                open_text_translation();
+            } else {
+                notify(L"划词截屏翻译",
+                       L"已启动，左键打开快速翻译，右键菜单可进入设置；按 " +
+                       config_.string(L"hotkey", L"Ctrl+Alt+Q") + L" 框选翻译");
+            }
             SetTimer(window_, update_timer, 1500, nullptr);
         } catch (const std::exception& error) {
             const auto message_text = L"ScreenTranslate 无法初始化通知区域图标。\n\n" +
@@ -1397,7 +1403,10 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             quit();
         }
         return 0;
-    case activate_message: toggle_result(); return 0;
+    case activate_message:
+        if (wparam == activate_text_translation) open_text_translation();
+        else toggle_result();
+        return 0;
     case WM_HOTKEY:
         if (wparam == hotkey_capture) start_capture();
         else if (wparam == hotkey_toggle) toggle_result();
@@ -1407,7 +1416,16 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         const UINT event = LOWORD(lparam);
         if (event == WM_LBUTTONUP || event == NIN_SELECT || event == NIN_KEYSELECT ||
             event == WM_LBUTTONDBLCLK) {
-            open_settings();
+            POINT point{};
+            GetCursorPos(&point);
+            if (quick_window_ && !overlay_.active()) {
+                try {
+                    quick_window_->toggle_from_tray(point);
+                } catch (const std::exception& error) {
+                    notify(L"划词截屏翻译",
+                           L"无法打开快速翻译：" + utf8_to_wide(error.what()));
+                }
+            }
         } else if (event == WM_RBUTTONUP || event == WM_CONTEXTMENU) {
             POINT point{}; GetCursorPos(&point); show_tray_menu(point);
         }
@@ -1482,9 +1500,11 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     return DefWindowProcW(window_, message, wparam, lparam);
 }
 
-int AppHost::run(bool self_test, bool update_self_test) {
+int AppHost::run(bool self_test, bool update_self_test,
+                 bool text_translation_on_start) {
     self_test_mode_ = self_test || update_self_test;
     update_self_test_mode_ = update_self_test;
+    text_translation_on_start_ = text_translation_on_start;
     if (update_self_test) {
         start_silent_update_check();
     }

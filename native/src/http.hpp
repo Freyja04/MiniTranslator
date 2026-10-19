@@ -17,7 +17,6 @@
 namespace screentrans {
 
 inline constexpr std::size_t max_json_response = 4 * 1024 * 1024;
-inline constexpr std::size_t max_text_response = 2 * 1024 * 1024;
 
 class HttpError : public AppError {
 public:

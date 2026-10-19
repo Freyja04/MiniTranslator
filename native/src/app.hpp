@@ -31,12 +31,14 @@ public:
     AppHost(const AppHost&) = delete;
     AppHost& operator=(const AppHost&) = delete;
 
-    int run(bool self_test = false, bool update_self_test = false);
+    int run(bool self_test = false, bool update_self_test = false,
+            bool text_translation_on_start = false);
     [[nodiscard]] HWND handle() const noexcept { return window_; }
     static constexpr const wchar_t* window_class_name() noexcept {
         return L"ScreenTranslate.Native.MessageWindow.v1";
     }
     static constexpr UINT activate_message = WM_APP + 1;
+    static constexpr WPARAM activate_text_translation = 1;
 
 private:
     static LRESULT CALLBACK window_proc(HWND window, UINT message,
@@ -122,6 +124,7 @@ private:
     bool shutting_down_{};
     bool self_test_mode_{};
     bool update_self_test_mode_{};
+    bool text_translation_on_start_{};
 };
 
 }  // namespace screentrans

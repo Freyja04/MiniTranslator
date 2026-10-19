@@ -137,7 +137,6 @@ private:
     HWND window_{};
     std::array<HWND, 6> navigation_{};
     HWND status_{};
-    HWND side_footer_{};
     HWND capture_hotkey_{};
     HWND toggle_hotkey_{};
     HWND text_hotkey_{};
@@ -161,7 +160,7 @@ private:
     HWND test_status_{};
     HWND provider_hint_{};
     HWND chinese_target_{};
-    HWND ocr_engine_{};
+    HWND ocr_engine_value_{};
     HWND ocr_engine_note_{};
     HWND ocr_languages_{};
     HWND ocr_upscale_{};
@@ -185,7 +184,6 @@ private:
     HWND text_copy_{};
     HFONT font_{};
     HFONT title_font_{};
-    HFONT brand_font_{};
     HFONT small_font_{};
     HFONT icon_font_{};
     HBRUSH background_{};
@@ -197,6 +195,7 @@ private:
     std::string window_error_;
     std::wstring loaded_provider_;
     std::wstring loaded_profile_;
+    int field_offset_{};
     int dpi_{96};
     int current_page_{};
     bool finished_{};
