@@ -29,8 +29,6 @@ constexpr int logical_bar_gap = 5;
 constexpr int logical_grip_width = 10;
 constexpr int logical_button_spacing = 2;
 constexpr int logical_border_hit = 8;
-constexpr UINT_PTR close_timer = 3;
-constexpr UINT_PTR leave_timer = 4;
 constexpr UINT_PTR progress_timer = 5;
 constexpr UINT_PTR recapture_restore_timer = 6;
 constexpr COLORREF resize_transparent_key = RGB(1, 2, 3);
@@ -821,8 +819,6 @@ void ResultWindow::show_loading(const RECT& physical_rect,
                                 ResultAppearance appearance) {
     create_window();
     if (refreshing_) {
-        KillTimer(window_, close_timer);
-        KillTimer(window_, leave_timer);
         KillTimer(window_, recapture_restore_timer);
         SetTimer(window_, progress_timer, 16, nullptr);
         pending_source_ = PendingSource{
@@ -846,8 +842,6 @@ void ResultWindow::show_loading(const RECT& physical_rect,
     pending_source_.reset();
     refresh_surface_ = {};
     const bool same_source = original_ && original && original_.get() == original.get();
-    KillTimer(window_, close_timer);
-    KillTimer(window_, leave_timer);
     original_ = std::move(original);
     translated_surface_ = {};
     appearance_ = std::move(appearance);
@@ -870,7 +864,6 @@ void ResultWindow::show_loading(const RECT& physical_rect,
     loading_ = true;
     progress_phase_ = 0.0;
     SetTimer(window_, progress_timer, 16, nullptr);
-    successful_ = false;
     editing_ = false;
     peek_ = false;
     closing_ = false;
@@ -893,8 +886,6 @@ void ResultWindow::show_loading(const RECT& physical_rect,
 
 void ResultWindow::show_retry_loading(ResultAppearance appearance) {
     if (!window_) return;
-    KillTimer(window_, close_timer);
-    KillTimer(window_, leave_timer);
     KillTimer(window_, recapture_restore_timer);
     recapturing_ = false;
     if (pending_source_) {
@@ -915,7 +906,6 @@ void ResultWindow::show_retry_loading(ResultAppearance appearance) {
     appearance_ = std::move(appearance);
     loading_ = true;
     SetTimer(window_, progress_timer, 16, nullptr);
-    successful_ = false;
     editing_ = false;
     peek_ = false;
     error_.clear();
@@ -944,7 +934,6 @@ void ResultWindow::set_result(PipelineResult result) {
     build_repaired_background();
     plain_text_ = result_.plain_text;
     loading_ = false;
-    successful_ = true;
     editable_result_ = !result_.blocks.empty();
     error_.clear();
     refreshing_ = false;
@@ -957,14 +946,11 @@ void ResultWindow::set_result(PipelineResult result) {
         resizing_ ? (LWA_ALPHA | LWA_COLORKEY) : LWA_ALPHA);
     sync_control_bar();
     if (control_bar_) InvalidateRect(control_bar_, nullptr, FALSE);
-    arm_close_timer();
 }
 
 void ResultWindow::set_error(std::wstring message) {
     if (!window_) return;
     KillTimer(window_, progress_timer);
-    KillTimer(window_, close_timer);
-    KillTimer(window_, leave_timer);
     KillTimer(window_, recapture_restore_timer);
     if (refreshing_) {
         recapturing_ = false;
@@ -983,7 +969,6 @@ void ResultWindow::set_error(std::wstring message) {
         UpdateWindow(window_);
         sync_control_bar();
         if (control_bar_) InvalidateRect(control_bar_, nullptr, FALSE);
-        arm_close_timer();
         return;
     }
     if (recapturing_) {
@@ -994,7 +979,6 @@ void ResultWindow::set_error(std::wstring message) {
     }
     translated_surface_ = {};
     loading_ = false;
-    successful_ = false;
     error_ = std::move(message);
     InvalidateRect(window_, nullptr, FALSE);
     if (control_bar_) InvalidateRect(control_bar_, nullptr, FALSE);
@@ -1003,8 +987,6 @@ void ResultWindow::set_error(std::wstring message) {
 void ResultWindow::close() {
     if (!window_ || closing_) return;
     closing_ = true;
-    KillTimer(window_, close_timer);
-    KillTimer(window_, leave_timer);
     KillTimer(window_, progress_timer);
     content_dragging_ = false;
     destroy_control_bar();
@@ -1038,8 +1020,6 @@ void ResultWindow::close() {
 
 void ResultWindow::minimize() {
     if (window_) {
-        KillTimer(window_, close_timer);
-        KillTimer(window_, leave_timer);
         if (!recapturing_) KillTimer(window_, recapture_restore_timer);
         ShowWindow(window_, SW_HIDE);
         if (control_bar_) ShowWindow(control_bar_, SW_HIDE);
@@ -1057,18 +1037,11 @@ void ResultWindow::restore() {
     SetForegroundWindow(window_);
     SetFocus(window_);
     sync_control_bar();
-    arm_close_timer();
 }
 
 void ResultWindow::set_editing(bool value) {
     editing_ = value;
     if (!window_) return;
-    if (value) {
-        KillTimer(window_, close_timer);
-        KillTimer(window_, leave_timer);
-    } else {
-        arm_close_timer();
-    }
     if (control_bar_) InvalidateRect(control_bar_, nullptr, FALSE);
 }
 
@@ -1132,7 +1105,6 @@ void ResultWindow::reset_geometry() {
         update_window_region();
         sync_control_bar();
         RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
-        arm_close_timer();
         return;
     }
     freeze_current_surface();
@@ -1221,20 +1193,6 @@ bool ResultWindow::set_capture_exclusion(bool exclude) noexcept {
     // The affinity must reach the compositor before GDI captures the desktop.
     DwmFlush();
     return true;
-}
-
-void ResultWindow::arm_close_timer() {
-    KillTimer(window_, close_timer);
-    KillTimer(window_, leave_timer);
-    if (!successful_ || editing_ || resizing_ || content_dragging_ ||
-        !IsWindowVisible(window_)) {
-        return;
-    }
-    if (appearance_.close_mode == L"timeout" && appearance_.timeout_ms > 0) {
-        SetTimer(window_, close_timer, appearance_.timeout_ms, nullptr);
-    } else if (appearance_.close_mode == L"leave") {
-        SetTimer(window_, leave_timer, 150, nullptr);
-    }
 }
 
 void ResultWindow::paint() {
@@ -1450,8 +1408,6 @@ LRESULT ResultWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
     case WM_LBUTTONDOWN:
         SetFocus(window_);
         if (!recapturing_ && !resizing_ && GetCursorPos(&content_drag_cursor_)) {
-            KillTimer(window_, close_timer);
-            KillTimer(window_, leave_timer);
             content_dragging_ = true;
             SetCapture(window_);
         }
@@ -1460,7 +1416,6 @@ LRESULT ResultWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
         if (content_dragging_) {
             content_dragging_ = false;
             if (GetCapture() == window_) ReleaseCapture();
-            arm_close_timer();
         }
         return 0;
     case WM_SETCURSOR:
@@ -1535,12 +1490,10 @@ LRESULT ResultWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
         content_dragging_ = false;
         if (GetCapture() == window_) ReleaseCapture();
         if (peek_) set_peek(false);
-        arm_close_timer();
         return 0;
     case WM_CAPTURECHANGED:
         if (content_dragging_) {
             content_dragging_ = false;
-            arm_close_timer();
         }
         return 0;
     case WM_GETMINMAXINFO: {
@@ -1579,8 +1532,6 @@ LRESULT ResultWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
         resizing_ = true;
         content_dragging_ = false;
         handles_alpha_ = 1.0;
-        KillTimer(window_, close_timer);
-        KillTimer(window_, leave_timer);
         set_capture_exclusion(false);
         SetLayeredWindowAttributes(window_, resize_transparent_key, 255,
                                    LWA_ALPHA | LWA_COLORKEY);
@@ -1670,7 +1621,6 @@ LRESULT ResultWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
             update_window_region();
             sync_control_bar();
             RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
-            arm_close_timer();
         }
         refresh_was_active_on_resize_ = false;
         return 0;
@@ -1697,23 +1647,6 @@ LRESULT ResultWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
             }
             return 0;
         }
-        if (wparam == close_timer) { close(); return 0; }
-        if (wparam == leave_timer) {
-            if (resizing_) return 0;
-            POINT cursor{};
-            RECT result_rect{};
-            RECT bar_rect{};
-            const bool have_cursor = GetCursorPos(&cursor) != FALSE;
-            const bool over_result = have_cursor && GetWindowRect(window_, &result_rect)
-                                  && PtInRect(&result_rect, cursor);
-            const bool over_bar = have_cursor && control_bar_ && IsWindowVisible(control_bar_)
-                               && GetWindowRect(control_bar_, &bar_rect)
-                               && PtInRect(&bar_rect, cursor);
-            if (have_cursor && !over_result && !over_bar) {
-                close();
-            }
-            return 0;
-        }
         break;
     case WM_DPICHANGED:
         update_control_bar_region();
@@ -1722,8 +1655,6 @@ LRESULT ResultWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
     case WM_CLOSE: close(); return 0;
     case WM_NCDESTROY: {
         const HWND old = window_;
-        KillTimer(old, close_timer);
-        KillTimer(old, leave_timer);
         KillTimer(old, recapture_restore_timer);
         if (control_bar_) destroy_control_bar();
         SetWindowLongPtrW(old, GWLP_USERDATA, 0);

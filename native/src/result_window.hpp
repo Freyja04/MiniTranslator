@@ -17,8 +17,6 @@ struct ResultAppearance {
     std::wstring font_family{L"Microsoft YaHei UI"};
     int minimum_font_pixels{9};
     COLORREF accent{RGB(40, 199, 111)};
-    std::wstring close_mode{L"click"};
-    int timeout_ms{5000};
 };
 
 class ResultWindow {
@@ -86,7 +84,6 @@ private:
     void freeze_current_surface() noexcept;
     void aim_handles(double target);
     bool set_capture_exclusion(bool exclude) noexcept;
-    void arm_close_timer();
 
     HINSTANCE instance_{};
     HWND window_{};
@@ -120,7 +117,6 @@ private:
     bool loading_{};
     bool peek_{};
     bool closing_{};
-    bool successful_{};
     bool editing_{};
     bool editable_result_{};
     bool home_initialized_{};

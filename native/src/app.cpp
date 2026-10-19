@@ -748,8 +748,8 @@ void AppHost::show_tray_menu(POINT location) {
         item.enabled = enabled;
         items.push_back(std::move(item));
     };
+    add_item(command_text_translate, TrayMenuIcon::text, L"文本翻译", text);
     add_item(command_capture, TrayMenuIcon::capture, L"框选翻译", capture);
-    add_item(command_text_translate, TrayMenuIcon::text, L"文字翻译", text);
     add_item(command_restore, TrayMenuIcon::restore, L"显示上次译文", toggle, can_restore);
     TrayMenuItem separator;
     separator.separator = true;
@@ -1250,8 +1250,6 @@ ResultAppearance AppHost::result_appearance() const {
     value.font_family = config_.string(L"appearance.font_family", L"Microsoft YaHei UI");
     value.minimum_font_pixels = config_.integer(L"appearance.min_font_px", 9);
     value.accent = parse_rgb_color(config_.string(L"appearance.accent", L"#28C76F"));
-    value.close_mode = config_.string(L"appearance.close_mode", L"click");
-    value.timeout_ms = config_.integer(L"appearance.timeout_ms", 5000);
     return value;
 }
 
@@ -1414,8 +1412,9 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return 0;
     case tray_message: {
         const UINT event = LOWORD(lparam);
-        if (event == WM_LBUTTONUP || event == NIN_SELECT || event == NIN_KEYSELECT ||
-            event == WM_LBUTTONDBLCLK) {
+        // NOTIFYICON_VERSION_4 reports a left click as NIN_SELECT; handling the
+        // raw mouse messages too would toggle the panel twice in one click.
+        if (event == NIN_SELECT || event == NIN_KEYSELECT) {
             POINT point{};
             GetCursorPos(&point);
             if (quick_window_ && !overlay_.active()) {

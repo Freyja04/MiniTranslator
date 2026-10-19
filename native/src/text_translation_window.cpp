@@ -1224,7 +1224,6 @@ void QuickTranslateWindow::refresh_appearance() {
 }
 
 void QuickTranslateWindow::show(HWND owner) {
-    popup_mode_ = false;
     create_window(owner);
     refresh();
     position_on_active_monitor();
@@ -1235,7 +1234,6 @@ void QuickTranslateWindow::show(HWND owner) {
 }
 
 void QuickTranslateWindow::show_near(POINT anchor) {
-    popup_mode_ = true;
     create_window(nullptr);
     refresh();
     position_near_anchor(window_, anchor);
@@ -1245,15 +1243,8 @@ void QuickTranslateWindow::show_near(POINT anchor) {
 }
 
 void QuickTranslateWindow::toggle_from_tray(POINT anchor) {
-    constexpr ULONGLONG reveal_guard_ms = 250;
     if (visible()) {
         hide();
-        auto_hidden_at_ = GetTickCount64();
-        return;
-    }
-    // The tray reports a click through more than one message on some shells.
-    // Ignore the duplicate right after the panel was dismissed.
-    if (auto_hidden_at_ && GetTickCount64() - auto_hidden_at_ < reveal_guard_ms) {
         return;
     }
     show_near(anchor);
@@ -1267,14 +1258,6 @@ void QuickTranslateWindow::toggle(HWND owner) {
 void QuickTranslateWindow::hide() {
     if (window_) ShowWindow(window_, SW_HIDE);
     if (callbacks_.composition_changed) callbacks_.composition_changed(false);
-    composing_ = false;
-}
-
-void QuickTranslateWindow::hide_if_popup() {
-    if (window_ && popup_mode_ && !composing_) {
-        hide();
-        auto_hidden_at_ = GetTickCount64();
-    }
 }
 
 void QuickTranslateWindow::on_input_changed() {
@@ -1525,10 +1508,8 @@ LRESULT CALLBACK QuickTranslateWindow::input_proc(HWND control, UINT message,
                                                   UINT_PTR subclass_id, DWORD_PTR reference) {
     auto* self = reinterpret_cast<QuickTranslateWindow*>(reference);
     if (self && message == WM_IME_STARTCOMPOSITION && self->callbacks_.composition_changed) {
-        self->composing_ = true;
         self->callbacks_.composition_changed(true);
     } else if (self && message == WM_IME_ENDCOMPOSITION && self->callbacks_.composition_changed) {
-        self->composing_ = false;
         self->callbacks_.composition_changed(false);
     }
     if (self && (message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
@@ -1588,11 +1569,6 @@ LRESULT CALLBACK QuickTranslateWindow::window_proc(HWND window, UINT message,
 
 LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
-    case WM_ACTIVATE:
-        // A tray panel behaves like a menu: clicking anywhere else dismisses
-        // it, but IME candidates must not be mistaken for focus loss.
-        if (LOWORD(wparam) == WA_INACTIVE) hide_if_popup();
-        break;
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case id_input:

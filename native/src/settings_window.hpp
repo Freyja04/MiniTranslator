@@ -118,7 +118,6 @@ private:
     void write_profiles(const std::vector<AiProfile>& list);
     [[nodiscard]] int profile_index() const noexcept;
     [[nodiscard]] std::wstring current_options_json() const;
-    void refresh_close_fields();
     void start_connection_test();
     void finish_connection_test(bool success, std::wstring message);
     void discard_connection_test_results(HWND target = nullptr) noexcept;
@@ -166,9 +165,7 @@ private:
     HWND ocr_upscale_{};
     HWND font_family_{};
     HWND accent_{};
-    HWND close_mode_{};
-    HWND timeout_label_{};
-    HWND timeout_seconds_{};
+    HWND close_value_{};
     HWND auto_copy_{};
     HWND autostart_{};
     HWND config_path_{};

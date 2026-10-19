@@ -37,7 +37,6 @@ constexpr wchar_t class_name[] = L"ScreenTranslate.Native.SettingsWindow.v1";
 constexpr int id_nav_first = 7001;
 constexpr int id_nav_last = id_nav_first + 5;
 constexpr int id_provider = 7010;
-constexpr int id_close_mode = 7012;
 constexpr int id_test = 7013;
 constexpr int id_open_config = 7014;
 constexpr int id_restart = 7015;
@@ -87,7 +86,7 @@ constexpr int logical_field_text_offset_y = 0;
 constexpr int logical_combo_edit_offset_y = 4;
 
 constexpr std::array<std::wstring_view, 6> page_names{
-    L"快捷键", L"翻译接口", L"截图识别", L"显示", L"其他", L"文字翻译",
+    L"快捷键", L"翻译接口", L"截图识别", L"显示", L"其他", L"文本翻译",
 };
 constexpr std::array<std::wstring_view, 6> page_subtitles{
     L"点一下输入框，然后直接按下想要的组合键。",
@@ -110,7 +109,7 @@ constexpr std::array<wchar_t, 6> navigation_glyphs{
     0xE7C3,  // Page     -> 截图识别
     0xE7F4,  // Monitor  -> 显示
     0xE713,  // Settings -> 其他
-    0xE8C1,  // Message  -> 文字翻译
+    0xE8C1,  // Message  -> 文本翻译
 };
 
 std::size_t navigation_index_for_page(int page) noexcept {
@@ -735,7 +734,7 @@ void SettingsWindow::self_test(HWND owner) {
         throw AppError("settings self-test did not create required controls");
     }
     constexpr std::array<std::wstring_view, 6> expected_navigation{
-        L"文字翻译", L"截图识别", L"翻译接口",
+        L"文本翻译", L"截图识别", L"翻译接口",
         L"快捷键", L"显示", L"其他",
     };
     for (std::size_t index = 0; index < expected_navigation.size(); ++index) {
@@ -824,12 +823,17 @@ void SettingsWindow::self_test(HWND owner) {
     GetWindowRect(capture_hotkey_, &hotkey_rect);
     const int hotkey_width = hotkey_rect.right - hotkey_rect.left;
     const int hotkey_height = hotkey_rect.bottom - hotkey_rect.top;
-    const int expected_hotkey_width = px(240, dpi_) -
-        std::max(1, px(logical_edit_inset_x, dpi_)) * 2;
     const int expected_hotkey_height = px(34, dpi_) -
         std::max(1, px(logical_edit_inset_top, dpi_)) -
         std::max(1, px(logical_edit_inset_bottom, dpi_));
-    if (std::abs(hotkey_width - expected_hotkey_width) > 2 ||
+    RECT toggle_rect{};
+    RECT text_rect{};
+    if (!GetWindowRect(toggle_hotkey_, &toggle_rect) ||
+        !GetWindowRect(text_hotkey_, &text_rect) ||
+        std::abs(hotkey_width - (toggle_rect.right - toggle_rect.left)) > 1 ||
+        std::abs(hotkey_width - (text_rect.right - text_rect.left)) > 1 ||
+        std::abs(hotkey_rect.right - toggle_rect.right) > 1 ||
+        std::abs(hotkey_rect.right - text_rect.right) > 1 ||
         std::abs(hotkey_height - expected_hotkey_height) > 2) {
         throw AppError("settings self-test hotkey text inset mismatch");
     }
@@ -965,36 +969,21 @@ void SettingsWindow::self_test(HWND owner) {
         throw AppError("settings self-test hid the offline OCR language list");
     }
     show_page(3);
-    SendMessageW(close_mode_, CB_SETCURSEL, 0, 0);
-    refresh_close_fields();
     layout_controls();
     RECT copy_label_rect{};
     RECT copy_control_rect{};
     RECT close_control_rect{};
-    if (page_controls_[3].size() < 10 ||
-        text_of(page_controls_[3][9]) != L"复制译文" ||
-        !GetWindowRect(page_controls_[3][9], &copy_label_rect) ||
+    if (page_controls_[3].size() < 8 ||
+        text_of(page_controls_[3][7]) != L"复制译文" ||
+        !GetWindowRect(page_controls_[3][7], &copy_label_rect) ||
         !GetWindowRect(auto_copy_, &copy_control_rect) ||
-        !GetWindowRect(close_mode_, &close_control_rect) ||
+        !GetWindowRect(close_value_, &close_control_rect) ||
+        text_of(close_value_) != L"点击关闭或按ESC" ||
         std::abs(copy_label_rect.top - copy_control_rect.top) > 1 ||
         std::abs(copy_label_rect.bottom - copy_control_rect.bottom) > 1 ||
         copy_control_rect.left != close_control_rect.left ||
         copy_control_rect.top <= close_control_rect.bottom) {
         throw AppError("settings self-test appearance rows are not aligned");
-    }
-    SendMessageW(close_mode_, CB_SETCURSEL, 1, 0);
-    refresh_close_fields();
-    layout_controls();
-    RECT timeout_control_rect{};
-    RECT timed_copy_control_rect{};
-    RECT appearance_window_rect{};
-    GetWindowRect(window_, &appearance_window_rect);
-    if ((GetWindowLongPtrW(timeout_seconds_, GWL_STYLE) & WS_VISIBLE) == 0 ||
-        !GetWindowRect(timeout_seconds_, &timeout_control_rect) ||
-        !GetWindowRect(auto_copy_, &timed_copy_control_rect) ||
-        timed_copy_control_rect.top <= timeout_control_rect.bottom ||
-        timed_copy_control_rect.bottom > appearance_window_rect.bottom) {
-        throw AppError("settings self-test timed appearance rows overlap");
     }
     show_page(4);
     if (text_of(diagnostic_command_) != L"ScreenTranslate.exe --selftest") {
@@ -1061,7 +1050,7 @@ void SettingsWindow::create_window(HWND owner) {
     const int y = owner_rect.top + std::max(0L, (owner_rect.bottom - owner_rect.top - height) / 2);
     window_error_.clear();
     window_ = CreateWindowExW(
-        extended_style, class_name, L"划词截屏翻译 · 设置",
+        extended_style, class_name, L"划词截屏翻译",
         style,
         x, y, width, height, nullptr, nullptr, instance_, this);
     if (!window_) {
@@ -1618,16 +1607,10 @@ void SettingsWindow::create_appearance_page() {
     add_label(3, L"强调色");
     accent_ = add_control(3, 0, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, id_accent);
     add_label(3, L"关闭方式");
-    close_mode_ = add_control(3, 0, L"COMBOBOX", L"",
-                              CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED |
-                              CBS_HASSTRINGS | WS_TABSTOP,
-                              id_close_mode);
-    for (const auto* mode : {L"只在点关闭或按 Esc 时", L"几秒后自动消失", L"鼠标移开后消失"}) {
-        SendMessageW(close_mode_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(mode));
-    }
-    timeout_label_ = add_label(3, L"停留秒数");
-    timeout_seconds_ = add_control(3, 0, L"EDIT", L"",
-                                   ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP);
+    // Only one close behavior is offered, so render it as a value instead of
+    // a one-item drop-down.
+    close_value_ = add_control(
+        3, 0, L"STATIC", L"点击关闭或按ESC", SS_LEFT | SS_CENTERIMAGE, 0);
     auto_copy_ = add_control(3, 0, L"BUTTON", L"自动复制到剪贴板",
                              BS_OWNERDRAW | WS_TABSTOP);
     add_label(3, L"复制译文");
@@ -1746,12 +1729,7 @@ void SettingsWindow::load_values() {
     select_combo_text(font_family_,
                       config_.string(L"appearance.font_family", L"Microsoft YaHei UI"));
     SetWindowTextW(accent_, config_.string(L"appearance.accent", L"#28C76F").c_str());
-    const auto close_mode = config_.string(L"appearance.close_mode", L"click");
-    select_combo(close_mode_, close_mode == L"timeout" ? 1 : close_mode == L"leave" ? 2 : 0);
-    SetWindowTextW(timeout_seconds_, std::to_wstring(
-        std::max(1, config_.integer(L"appearance.timeout_ms", 5000) / 1000)).c_str());
     set_checkbox(auto_copy_, config_.boolean(L"appearance.auto_copy", true));
-    refresh_close_fields();
     set_checkbox(autostart_, autostart_enabled());
     SetWindowTextW(config_path_, config_.path().c_str());
     loading_ = false;
@@ -2069,12 +2047,6 @@ void SettingsWindow::refresh_provider_fields(bool load) {
     }
 }
 
-void SettingsWindow::refresh_close_fields() {
-    const bool timeout = selected_index(close_mode_) == 1;
-    ShowWindow(timeout_label_, timeout ? SW_SHOW : SW_HIDE);
-    ShowWindow(timeout_seconds_, timeout ? SW_SHOW : SW_HIDE);
-}
-
 bool SettingsWindow::save_values(bool) {
     if (loading_) return true;
     const auto old_capture = config_.string(L"hotkey", L"Ctrl+Alt+Q");
@@ -2139,11 +2111,6 @@ bool SettingsWindow::save_values(bool) {
             throw AppError("强调色必须写成 #RRGGBB");
         }
         config_.set_string(L"appearance.accent", accent);
-        const int mode = selected_index(close_mode_);
-        config_.set_string(L"appearance.close_mode", mode == 1 ? L"timeout" : mode == 2 ? L"leave" : L"click");
-        int seconds = 5;
-        try { seconds = std::stoi(text_of(timeout_seconds_)); } catch (...) {}
-        config_.set_integer(L"appearance.timeout_ms", std::clamp(seconds, 1, 60) * 1000);
         config_.set_boolean(L"appearance.auto_copy", checkbox_checked(auto_copy_));
         const bool autostart = checkbox_checked(autostart_);
         if (autostart != old_autostart) set_autostart(autostart);
@@ -2394,7 +2361,6 @@ void SettingsWindow::show_page(int index) {
             }
         }
         if (current_page_ == 1) refresh_provider_fields(false);
-        if (current_page_ == 3) refresh_close_fields();
         if (current_page_ == 5) refresh_text_translation();
         layout_controls();
         clear_combo_edit_selection(provider_model_);
@@ -2418,7 +2384,7 @@ void SettingsWindow::layout_controls() {
     const int sidebar = px(logical_sidebar_width, dpi_);
     for (std::size_t index = 0; index < navigation_.size(); ++index) {
         MoveWindow(navigation_[index], px(12, dpi_), px(18 + static_cast<int>(index) * 42, dpi_),
-                   px(152, dpi_), px(38, dpi_), FALSE);
+                   std::max(1, sidebar - px(24, dpi_)), px(38, dpi_), FALSE);
     }
     MoveWindow(status_, sidebar + px(logical_page_margin, dpi_), height - px(31, dpi_),
                std::max(1, width - sidebar - px(logical_page_margin * 2, dpi_)),
@@ -2458,10 +2424,9 @@ void SettingsWindow::layout_controls() {
         }
     } else if (current_page_ == 3) {
         const auto& controls = page_controls_[3];
-        for (const std::size_t index : {0U, 2U, 4U, 9U}) {
+        for (const std::size_t index : {0U, 2U, 4U, 7U}) {
             if (index < controls.size()) collect_label(controls[index]);
         }
-        collect_label(timeout_label_);
     }
     int label_text_width = px(logical_field_min_offset, dpi_) - label_gap;
     if (!labels.empty()) {
@@ -2549,7 +2514,7 @@ void SettingsWindow::layout_controls() {
                     1, px(logical_edit_inset_bottom, dpi_));
                 MoveWindow(edit, field_left + inset_x,
                            px(top, dpi_) + inset_top,
-                           px(240, dpi_) - inset_x * 2,
+                           std::max(1, field_width - inset_x * 2),
                            px(34, dpi_) - inset_top - inset_bottom, FALSE);
             };
             place_hotkey(c[0], capture_hotkey_, 103);
@@ -2643,16 +2608,11 @@ void SettingsWindow::layout_controls() {
         }
     } else if (current_page_ == 3) {
         auto& c = page_controls_[3];
-        if (c.size() >= 10) {
+        if (c.size() >= 8) {
             place(c[0], font_family_, 90);
             place(c[2], accent_, 163);
-            place(c[4], close_mode_, 250);
-            int y = 293;
-            if (selected_index(close_mode_) == 1) {
-                place(timeout_label_, timeout_seconds_, y, 128);
-                y += 43;
-            }
-            place(c[9], auto_copy_, y);
+            place(c[4], close_value_, 250);
+            place(c[7], auto_copy_, 293);
         }
     } else if (current_page_ == 4) {
         auto& c = page_controls_[4];
@@ -2898,8 +2858,7 @@ void SettingsWindow::paint() {
                        px(392, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else if (current_page_ == 3) {
-        const bool timeout = selected_index(close_mode_) == 1;
-        const int main_bottom = timeout ? 397 : 354;
+        const int main_bottom = 354;
         card(90, main_bottom);
         draw_text(dc,
                   L"只列出能显示中文的字体——没有汉字的字体会让译文退化成系统替换字，很难看。",
@@ -2912,23 +2871,6 @@ void SettingsWindow::paint() {
                   small_font_, color_text_dim, DT_LEFT | DT_TOP | DT_WORDBREAK);
         separator(247);
 
-        const int operations_section = main_bottom + 14;
-        section(L"译文窗口怎么用", operations_section);
-        card(operations_section + 25, 602);
-        const auto toggle_key = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
-        const std::array<std::pair<std::wstring, std::wstring>, 10> operations{{
-            {L"右下角 —", L"收到托盘，按 " + toggle_key + L" 或托盘菜单叫回来"},
-            {L"右下角 ✕ / Esc", L"关闭"},
-            {L"M", L"收到托盘"},
-            {L"拖动译文区域 / 控制条", L"移动窗口，画面内容和窗口大小保持不变"},
-            {L"方向键", L"微调位置，按住 Shift 步子更大"},
-            {L"拖动边框 / 四个角", L"改成框住屏幕上的另一块，松手就重新识别并翻译；画面不会被拉伸变形"},
-            {L"拖动时按住 Shift", L"锁住长宽比"},
-            {L"双击空白处 / Home", L"回到刚框选时的范围（也会重新翻一次）"},
-            {L"Ctrl+C / Ctrl+A", L"复制全部译文"},
-            {L"按住空格 / 右键", L"临时看回原文"},
-        }};
-        draw_key_rows(operations, operations_section + 33, timeout ? 14 : 18);
     } else if (current_page_ == 4) {
         card(90, 238);
         separator(156);
@@ -3430,14 +3372,6 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         }
         if (id == id_profile_remove && notification == BN_CLICKED) {
             remove_profile();
-            return 0;
-        }
-        if (id == id_close_mode && notification == CBN_SELCHANGE) {
-            refresh_close_fields();
-            save_values(false);
-            layout_controls();
-            RedrawWindow(window_, nullptr, nullptr,
-                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
             return 0;
         }
         if (id == id_test && notification == BN_CLICKED) {

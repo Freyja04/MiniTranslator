@@ -174,7 +174,7 @@ JsonObject ConfigStore::defaults() {
       "lang":{"zh_target":"en"},
       "appearance":{
         "font_family":"Microsoft YaHei UI","min_font_px":9,"auto_copy":true,
-        "close_mode":"click","timeout_ms":5000,"accent":"#28C76F"
+        "accent":"#28C76F"
       },
       "updates":{"manifest_url":"","repository_url":"","channel":"stable"},
       "autostart":false
@@ -226,6 +226,16 @@ void ConfigStore::load() {
         root_.GetNamedObject(L"appearance").SetNamedValue(
             L"accent", JsonValue::CreateStringValue(L"#28C76F"));
         rewrite_migrated_values = true;
+    }
+    // The result window no longer has configurable close behavior, so drop
+    // the retired keys instead of carrying them in every rewritten config.
+    const auto appearance = root_.GetNamedObject(L"appearance");
+    for (const auto* retired : {L"close_mode", L"timeout_ms"}) {
+        const winrt::hstring key(retired);
+        if (appearance.HasKey(key)) {
+            appearance.Remove(key);
+            rewrite_migrated_values = true;
+        }
     }
     if (rewrite_migrated_values) {
         try {
