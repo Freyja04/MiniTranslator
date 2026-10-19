@@ -118,7 +118,6 @@ private:
     std::wstring registered_capture_hotkey_;
     std::wstring registered_toggle_hotkey_;
     std::wstring registered_text_hotkey_;
-    std::wstring available_update_version_;
     bool text_composing_{};
     bool shutting_down_{};
     bool self_test_mode_{};

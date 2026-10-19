@@ -30,11 +30,14 @@ public:
     [[nodiscard]] std::vector<std::wstring> strings(std::wstring_view path) const;
     [[nodiscard]] winrt::Windows::Data::Json::JsonObject object(
         std::wstring_view path) const;
+    [[nodiscard]] winrt::Windows::Data::Json::JsonArray array(std::wstring_view path) const;
 
     void set_string(std::wstring_view path, std::wstring_view value);
     void set_boolean(std::wstring_view path, bool value);
     void set_integer(std::wstring_view path, int value);
     void set_strings(std::wstring_view path, const std::vector<std::wstring>& values);
+    void set_json(std::wstring_view path,
+                  const winrt::Windows::Data::Json::IJsonValue& value);
 
     [[nodiscard]] const winrt::Windows::Data::Json::JsonObject& root() const noexcept {
         return root_;

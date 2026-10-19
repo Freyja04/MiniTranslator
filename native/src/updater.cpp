@@ -787,18 +787,18 @@ void updater_self_test() {
     try { (void)parse_semver(L"1.2.3-"); } catch (const UpdateError&) { rejected = true; }
     if (!rejected) throw UpdateError("invalid SemVer was accepted");
 
-    const Repository repository{L"reevebyte", L"ScreenTranslate"};
+    const Repository repository{L"Freyja04", L"ScreenTranslate"};
     constexpr std::string_view manifest = R"json({
       "schema_version":2,
       "product":"ScreenTranslate",
       "version":"1.0.3",
       "channel":"stable",
       "published_at":"2026-07-29T12:00:00Z",
-      "release_url":"https://github.com/reevebyte/ScreenTranslate/releases/tag/v1.0.3",
+      "release_url":"https://github.com/Freyja04/ScreenTranslate/releases/tag/v1.0.3",
       "platform":{"os":"windows","arch":"x86_64","minimum":"10"},
       "artifact":{
         "name":"ScreenTranslate-1.0.3-setup-x64.exe",
-        "url":"https://github.com/reevebyte/ScreenTranslate/releases/download/v1.0.3/ScreenTranslate-1.0.3-setup-x64.exe",
+        "url":"https://github.com/Freyja04/ScreenTranslate/releases/download/v1.0.3/ScreenTranslate-1.0.3-setup-x64.exe",
         "size":123456,
         "sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       }

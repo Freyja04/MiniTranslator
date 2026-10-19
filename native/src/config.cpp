@@ -64,21 +64,29 @@ void transform_key(JsonObject options, bool encrypting) {
 }
 
 void transform_secrets(JsonObject root, bool encrypting) {
-    if (root.HasKey(L"translator")) {
-        const auto translator = root.GetNamedObject(L"translator", nullptr);
-        if (translator) {
-            for (const auto& entry : translator) {
-                const auto value = entry.Value();
-                if (value && value.ValueType() == JsonValueType::Object) {
-                    transform_key(value.GetObject(), encrypting);
-                }
-            }
+    if (!root.HasKey(L"translator")) {
+        return;
+    }
+    const auto translator = root.GetNamedObject(L"translator", nullptr);
+    if (!translator) {
+        return;
+    }
+    for (const auto& entry : translator) {
+        const auto value = entry.Value();
+        if (value && value.ValueType() == JsonValueType::Object) {
+            transform_key(value.GetObject(), encrypting);
         }
     }
-    if (root.HasKey(L"ocr")) {
-        const auto ocr = root.GetNamedObject(L"ocr", nullptr);
-        if (ocr && ocr.HasKey(L"azure_vision")) {
-            transform_key(ocr.GetNamedObject(L"azure_vision", nullptr), encrypting);
+    // Every user-defined large-model endpoint stores its own key, so the array
+    // has to be walked element by element.
+    const auto profiles = translator.GetNamedArray(L"ai_profiles", nullptr);
+    if (!profiles) {
+        return;
+    }
+    for (std::uint32_t index = 0; index < profiles.Size(); ++index) {
+        const auto item = profiles.GetAt(index);
+        if (item && item.ValueType() == JsonValueType::Object) {
+            transform_key(item.GetObject(), encrypting);
         }
     }
 }
@@ -102,13 +110,16 @@ bool contains_plaintext_secrets(const JsonObject& root) {
                     return true;
                 }
             }
-        }
-    }
-    if (root.HasKey(L"ocr")) {
-        const auto ocr = root.GetNamedObject(L"ocr", nullptr);
-        if (ocr && ocr.HasKey(L"azure_vision") &&
-            contains_plaintext_key(ocr.GetNamedObject(L"azure_vision", nullptr))) {
-            return true;
+            const auto profiles = translator.GetNamedArray(L"ai_profiles", nullptr);
+            if (profiles) {
+                for (std::uint32_t index = 0; index < profiles.Size(); ++index) {
+                    const auto item = profiles.GetAt(index);
+                    if (item && item.ValueType() == JsonValueType::Object &&
+                        contains_plaintext_key(item.GetObject())) {
+                        return true;
+                    }
+                }
+            }
         }
     }
     return false;
@@ -148,19 +159,15 @@ JsonObject ConfigStore::defaults() {
       "ocr":{
         "engine":"windows",
         "languages":["zh-Hans-CN","en-US"],
-        "upscale":true,
-        "azure_vision":{"endpoint":"","key":""}
+        "upscale":true
       },
       "translator":{
-        "provider":"microsoft",
-        "microsoft":{"key":"","region":"eastasia","endpoint":"https://api.cognitive.microsofttranslator.com"},
-        "google":{"key":""},
+        "provider":"microsoft_free",
         "google_free":{},"bing_free":{},"microsoft_free":{},
         "tencent_free":{},"yandex_free":{},"iciba_free":{},
         "deepl":{"key":"","free_plan":true},
-        "openai":{"base_url":"https://api.deepseek.com/v1","key":"","model":"deepseek-chat"},
-        "nvidia":{"base_url":"https://integrate.api.nvidia.com/v1","key":"","model":""},
-        "anthropic":{"base_url":"https://api.anthropic.com","key":"","model":"claude-sonnet-5"}
+        "ai_profiles":[],
+        "ai_selected":""
       },
       "lang":{"zh_target":"en"},
       "appearance":{
@@ -300,6 +307,17 @@ JsonObject ConfigStore::object(std::wstring_view path) const {
     return JsonObject{};
 }
 
+JsonArray ConfigStore::array(std::wstring_view path) const {
+    try {
+        const auto value = lookup(path);
+        if (value && value.ValueType() == JsonValueType::Array) {
+            return value.GetArray();
+        }
+    } catch (...) {
+    }
+    return JsonArray{};
+}
+
 JsonObject ConfigStore::parent_for(std::wstring_view path, std::wstring& leaf) {
     const auto parts = split_path(path);
     if (parts.empty()) {
@@ -340,6 +358,11 @@ void ConfigStore::set_strings(std::wstring_view path,
     }
     std::wstring leaf;
     parent_for(path, leaf).SetNamedValue(leaf, array);
+}
+
+void ConfigStore::set_json(std::wstring_view path, const IJsonValue& value) {
+    std::wstring leaf;
+    parent_for(path, leaf).SetNamedValue(leaf, value);
 }
 
 }  // namespace screentrans

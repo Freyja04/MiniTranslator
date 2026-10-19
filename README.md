@@ -13,7 +13,7 @@ ScreenTranslate 使用 **C++20 + 原生 Win32/C++/WinRT** 实现。发布产物�
 
 ## 下载与启动
 
-从本仓库的 [GitHub Releases](https://github.com/reevebyte/ScreenTranslate/releases) 下载：
+从本仓库的 [GitHub Releases](https://github.com/Freyja04/ScreenTranslate/releases) 下载：
 
 - `ScreenTranslate-<版本>-setup-x64.exe`：安装版，可从应用内直接更新；
 - `ScreenTranslate-<版本>-windows-x64.exe`：便携版，下载后直接运行。
@@ -28,7 +28,7 @@ Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是�
 | `Ctrl+Alt+W` | 收起或重新显示上一次译文 |
 | `Ctrl+Alt+Space` | 显示或隐藏快速文字翻译框 |
 
-左键单击托盘图标可以开始框选；右键菜单提供文字翻译、设置、检查更新、重启和退出。快捷键可在设置中修改，三个快捷键不能重复。快速文字翻译也可以改成 `Ctrl+Space`，但可能与输入法切换冲突。
+左键单击托盘图标直接打开设置；右键菜单提供框选翻译、文字翻译、显示上次译文、重启和退出，检查更新在「设置 → 其他」里。快捷键可在设置中修改，三个快捷键不能重复。快速文字翻译也可以改成 `Ctrl+Space`，但可能与输入法切换冲突。
 
 本项目目前不使用 Authenticode 证书。Windows SmartScreen 可能显示“未知发布者”或首次下载警告，请只从上面的官方 Releases 页面下载。
 
@@ -36,8 +36,8 @@ Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是�
 
 - 多显示器、物理像素坐标和 Per-Monitor V2 DPI 支持；
 - 框选结束后重新截取干净画面，避免把选区遮罩截进 OCR 图片；
-- Windows、Azure AI Vision 和有道云端 OCR；
-- 12 个翻译后端，包括官方 API、免密网页接口和大模型接口；
+- Windows 系统自带 OCR（本地、离线）；
+- 六个免密钥传统翻译接口、DeepL，以及可添加多个自定义端点的大模型翻译接口；
 - 结果窗口可移动、缩放、收起、复制、查看原文和重新翻译；
 - 分块 OCR 校对，可只重译修改过的文本块；
 - 托盘菜单提供双栏文字翻译窗口，输入停止 500 毫秒后自动翻译；
@@ -48,39 +48,39 @@ Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是�
 
 框选时按 `Esc` 或右键可取消。结果窗口支持 `E` 打开校对、`R` 重新翻译、`M` 收起、`Esc` 关闭；方向键可微调位置，按住 `Shift` 时步长为 10 像素。
 
-## 翻译引擎
+## 翻译接口
 
-设置中的翻译接口可以随时切换：
+设置中的翻译接口分为两类，可以随时切换：
+
+**传统翻译 API**
 
 | 接口 | 配置 | 说明 |
 | --- | --- | --- |
-| Microsoft Translator（官方） | Key、Region，可选 Endpoint | Azure 正式 API |
-| Google Cloud Translation（官方） | API Key | Google Cloud 正式 API |
+| Microsoft 移动接口（免密） | 无 | 模拟官方客户端请求 |
 | Google 网页翻译（免密） | 无 | 开箱即用，网络可用性因地区而异 |
 | Bing 网页翻译（免密） | 无 | 非正式开发者 API |
-| Microsoft 移动接口（免密） | 无 | 模拟官方客户端请求 |
 | 腾讯交互翻译（免密） | 无 | 网页接口 |
 | Yandex 移动接口（免密） | 无 | 客户端接口 |
 | 金山词霸（免密） | 无 | 适合中英文短文本 |
 | DeepL | Key | 支持免费版和正式版 Endpoint |
-| OpenAI 兼容接口 | Base URL、Key、Model | 可连接 DeepSeek、智谱、通义、Ollama 等兼容服务 |
-| NVIDIA NIM | API Key、Model | NVIDIA 模型接口 |
-| Anthropic | API Key、Model | Claude Messages API |
 
-免密接口不等于服务商承诺稳定的公开 API，可能限流、改版或停止工作。正式或高频用途应优先选择官方 API。
+**大模型翻译 API**
+
+可添加任意多个接口，每个接口自定义名称，并各自填写 Base URL、API Key 和模型。接口协议三选一：
+
+| 接口类型 | 请求格式 |
+| --- | --- |
+| OpenAI Chat Completions | `POST <base_url>/chat/completions` |
+| OpenAI Responses | `POST <base_url>/responses` |
+| Anthropic Messages | `POST <base_url>/v1/messages` |
+
+「获取模型」从当前接口拉取可用模型列表，与「测试连接」并排放在模型字段下一行。名称是大模型接口的唯一标识，管道按名称读取当前选中的那一个。
+
+免密接口不等于服务商承诺稳定的公开 API，可能限流、改版或停止工作。正式或高频用途应优先选择官方 API 或自建大模型端点。
 
 ## 文字识别
 
-| OCR 引擎 | 配置 | 数据与适用场景 |
-| --- | --- | --- |
-| Windows OCR | 无 | 本地、免费，常规界面和文档通常最快，默认选择 |
-| Azure AI Vision Read | Endpoint、Key | 上传选区截图，适合更多字体和语言 |
-| 有道云端 OCR | 无 | 上传选区截图，免密但属于非官方接口 |
-| RapidOCR | 可选插件 | 原生宿主接口已完成，但官方 Release 尚未捆绑 OCR 插件和模型 |
-
-Azure OCR 需要 Azure AI Vision 或支持 Vision 的多服务资源；单独的 Translator 密钥通常不能直接用于 Vision。云端 OCR 会发送完整框选截图，画面可能包含账号、聊天和文件名等敏感信息，敏感内容请使用 Windows OCR。
-
-Windows OCR 能识别的语言取决于系统已安装的 OCR 语言包。可在“Windows 设置 → 时间和语言 → 语言和区域 → 语言选项 → 可选功能”中添加。
+截图识别固定使用 Windows 系统自带 OCR：识别在本地完成，不上传截图，也不需要密钥。识别的语言取决于系统已安装的 OCR 语言包，可在“Windows 设置 → 时间和语言 → 语言和区域 → 语言选项 → 可选功能”中添加；装好后重启本程序即可在语言列表中选用。
 
 ## 配置与隐私
 
@@ -127,7 +127,7 @@ build\native\Release\ScreenTranslate.exe
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\release\check_native_binary.ps1 `
   -Path .\build\native\Release\ScreenTranslate.exe `
-  -ExpectedVersion 1.1.0
+  -ExpectedVersion 1.2.0
 ```
 
 Debug 构建：
@@ -140,18 +140,25 @@ Debug 构建：
 
 ## 自动构建与发布
 
-- `.github/workflows/windows-ci.yml`：提交和拉取请求时构建、自测并校验原生 x64 单 EXE；
+- `.github/workflows/windows-ci.yml`：推送到 `main` 或提交拉取请求时构建、自测并校验原生 x64 单 EXE，产物作为 Actions 构件保留 14 天；也可以在工作流页面手动触发；
 - `.github/workflows/windows-release.yml`：推送 `v<SemVer>` 标签后构建原生 EXE、Inno Setup 安装器和 `update-manifest.json`，再创建 GitHub Release。
 
-Release 工作流只允许从 `reevebyte/ScreenTranslate` 发布，因为程序内的更新信任根固定为这个仓库。版本同步、构建和产物检查均由仓库中的发布工具与工作流完成。
+发布新版本的流程：
+
+1. 同步修改 `native/CMakeLists.txt` 的 `project(... VERSION ...)` 与 `native/src/resource.h` 的 `SCREENTRANS_VERSION_*`，两处必须与标签一致；
+2. 提交并推送到 `main`，等 CI 变绿；
+3. 打标签并推送：`git tag v1.2.0` → `git push origin v1.2.0`；
+4. Release 工作流自动完成编译、校验、打包和 `gh release create`。
+
+工作流不接受任意仓库发布：`Validate release identity` 会从 `native/CMakeLists.txt` 读出更新信任根，要求 `GITHUB_REPOSITORY` 与之完全一致，否则直接失败。当前信任根是 `Freyja04/ScreenTranslate`。
 
 ## 应用内更新
 
 程序只信任：
 
 ```text
-https://github.com/reevebyte/ScreenTranslate
-https://github.com/reevebyte/ScreenTranslate/releases/latest/download/update-manifest.json
+https://github.com/Freyja04/ScreenTranslate
+https://github.com/Freyja04/ScreenTranslate/releases/latest/download/update-manifest.json
 ```
 
 下载地址必须与同一仓库、`v<version>` 标签和 `ScreenTranslate-<version>-setup-x64.exe` 文件名完全一致。安装前会校验清单结构、版本、通道、文件大小和 SHA-256；下载缓存和更新辅助进程还会再次校验路径及文件内容。
@@ -171,9 +178,8 @@ release/                版本、PE 和更新清单校验工具
 ## 已知限制
 
 - 只支持 Windows 10/11 x64；
-- RapidOCR 原生宿主接口已完成，但官方包尚无插件实现和模型；没有自行部署插件时应选择 Windows、Azure 或有道 OCR；
-- Windows OCR 依赖系统语言包，艺术字、竖排字和手写体的识别率有限；
-- 免密翻译和有道 OCR 不是稳定性受保证的开发者 API；
+- 文字识别只有 Windows 系统 OCR，依赖系统语言包，艺术字、竖排字和手写体的识别率有限；
+- 免密翻译接口不是稳定性受保证的开发者 API；
 - 复杂照片背景上的原文修补和译文排版仍可能不如纯色界面自然；
 - 当前发布包没有代码签名证书，SmartScreen 警告属于预期行为。
 

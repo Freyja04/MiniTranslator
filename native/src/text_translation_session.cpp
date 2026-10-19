@@ -57,10 +57,24 @@ std::wstring TextTranslationSession::effective_target() const {
 }
 
 std::wstring TextTranslationSession::configuration_signature() const {
-    const auto provider = config_.string(L"translator.provider", L"microsoft");
-    return provider + L"\n" +
-           std::wstring(config_.object(L"translator." + provider).Stringify().c_str()) +
-           L"\n" + config_.string(L"lang.zh_target", L"en");
+    const auto provider = config_.string(L"translator.provider", L"microsoft_free");
+    std::wstring options;
+    if (provider == L"ai") {
+        // The large-model endpoint is a user-defined profile, so the signature
+        // has to follow translator.ai_selected rather than a per-provider key.
+        const auto selected = config_.string(L"translator.ai_selected");
+        for (const auto& item : config_.array(L"translator.ai_profiles")) {
+            if (item.ValueType() != winrt::Windows::Data::Json::JsonValueType::Object) continue;
+            const auto candidate = item.GetObject();
+            if (std::wstring(candidate.GetNamedString(L"name", L"").c_str()) != selected) continue;
+            options.assign(candidate.Stringify().c_str());
+            break;
+        }
+    } else {
+        options.assign(config_.object(L"translator." + provider).Stringify().c_str());
+    }
+    return provider + L"\n" + options + L"\n" +
+           config_.string(L"lang.zh_target", L"en");
 }
 
 void TextTranslationSession::notify_changed() {

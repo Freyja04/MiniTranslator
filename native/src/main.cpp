@@ -1,5 +1,4 @@
 #include "app.hpp"
-#include "rapidocr_plugin.hpp"
 #include "result_renderer.hpp"
 #include "updater.hpp"
 #include "util.hpp"
@@ -108,7 +107,6 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
         if (self_test) {
             screentrans::util_self_test();
             screentrans::updater_self_test();
-            screentrans::rapidocr_plugin_self_test();
             screentrans::result_renderer_self_test();
         }
         screentrans::UniqueHandle mutex;

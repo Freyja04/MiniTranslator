@@ -41,14 +41,28 @@ public:
     void set_settings_changed_callback(std::function<void()> callback) {
         settings_changed_callback_ = std::move(callback);
     }
+    void set_updates_callback(std::function<void()> callback) {
+        updates_callback_ = std::move(callback);
+    }
 
 private:
     struct ModelListResult {
         std::uint64_t generation{};
         std::wstring provider;
+        std::wstring profile;
         std::vector<std::wstring> models;
         std::wstring error;
         bool cancelled{};
+    };
+
+    // One user-defined large-model endpoint. The name is the identity that
+    // translator.ai_selected points at, so it has to stay unique.
+    struct AiProfile {
+        std::wstring name;
+        std::wstring protocol;
+        std::wstring base_url;
+        std::wstring key;
+        std::wstring model;
     };
 
     static constexpr UINT test_completed_message = WM_APP + 61;
@@ -95,7 +109,15 @@ private:
     bool save_values(bool show_error = false);
     void save_provider_fields();
     void refresh_provider_fields(bool load);
-    void refresh_ocr_fields();
+    void save_profile_fields();
+    void populate_profile_names();
+    void select_profile(std::wstring_view name);
+    void add_profile();
+    void remove_profile();
+    [[nodiscard]] std::vector<AiProfile> read_profiles() const;
+    void write_profiles(const std::vector<AiProfile>& list);
+    [[nodiscard]] int profile_index() const noexcept;
+    [[nodiscard]] std::wstring current_options_json() const;
     void refresh_close_fields();
     void start_connection_test();
     void finish_connection_test(bool success, std::wstring message);
@@ -119,28 +141,30 @@ private:
     HWND capture_hotkey_{};
     HWND toggle_hotkey_{};
     HWND text_hotkey_{};
+    HWND translator_class_{};
+    HWND provider_label_{};
     HWND provider_{};
+    HWND profile_label_{};
+    HWND profile_select_{};
+    HWND profile_add_{};
+    HWND profile_remove_{};
+    HWND protocol_label_{};
+    HWND ai_protocol_{};
     HWND provider_key_label_{};
     HWND provider_key_{};
-    HWND provider_extra_label_{};
-    HWND provider_extra_{};
     HWND provider_endpoint_label_{};
     HWND provider_endpoint_{};
     HWND provider_model_label_{};
     HWND provider_model_{};
     HWND model_refresh_{};
-    HWND deepl_free_{};
     HWND test_button_{};
     HWND test_status_{};
+    HWND provider_hint_{};
     HWND chinese_target_{};
     HWND ocr_engine_{};
-    HWND ocr_cloud_note_{};
+    HWND ocr_engine_note_{};
     HWND ocr_languages_{};
     HWND ocr_upscale_{};
-    HWND azure_endpoint_label_{};
-    HWND azure_endpoint_{};
-    HWND azure_key_label_{};
-    HWND azure_key_{};
     HWND font_family_{};
     HWND accent_{};
     HWND close_mode_{};
@@ -151,6 +175,7 @@ private:
     HWND config_path_{};
     HWND open_config_{};
     HWND restart_{};
+    HWND check_updates_{};
     HWND diagnostic_command_{};
     HWND text_target_{};
     HWND text_input_{};
@@ -171,6 +196,7 @@ private:
     std::vector<std::vector<std::wstring>> ocr_language_options_;
     std::string window_error_;
     std::wstring loaded_provider_;
+    std::wstring loaded_profile_;
     int dpi_{96};
     int current_page_{};
     bool finished_{};
@@ -186,6 +212,7 @@ private:
     std::function<bool()> hotkeys_changed_callback_;
     std::function<void()> restart_callback_;
     std::function<void()> settings_changed_callback_;
+    std::function<void()> updates_callback_;
 };
 
 }  // namespace screentrans

@@ -88,14 +88,21 @@ std::size_t unicode_length(std::wstring_view value) {
 }
 
 std::pair<std::size_t, std::size_t> limits(std::wstring_view provider) {
-    if (provider == L"microsoft") return {100, 40000};
-    if (provider == L"google") return {100, 30000};
     if (provider == L"deepl") return {50, 30000};
-    if (provider == L"openai" || provider == L"nvidia" || provider == L"anthropic") {
-        return {40, 6000};
-    }
+    if (provider == L"ai") return {40, 6000};
     if (provider == L"iciba_free") return {50, 12000};
     return {20, 8000};
+}
+
+// Every user-defined large-model endpoint carries its own chat protocol.  The
+// three variants differ only in the wire format of a single request, so the
+// translation prompts stay shared.
+std::wstring ai_protocol(const JsonObject& options) {
+    const auto value = trim(json_string(options, L"protocol"));
+    if (value == L"openai_responses" || value == L"anthropic_messages") {
+        return value;
+    }
+    return L"openai_chat";
 }
 
 std::vector<std::wstring> json_string_array(const JsonArray& values,
@@ -125,106 +132,6 @@ std::wstring nonempty(std::wstring value, std::wstring_view label) {
         throw TranslateError(wide_to_utf8(label) + " returned an empty translation");
     }
     return value;
-}
-
-std::vector<std::wstring> microsoft_translate(
-    HttpClient& http, const JsonObject& options, const std::vector<std::wstring>& texts,
-    std::wstring_view target, const std::optional<std::wstring>& source,
-    std::stop_token stop) {
-    const auto key = trim(json_string(options, L"key"));
-    if (key.empty()) {
-        throw TranslateError("尚未填写 Azure 翻译密钥（设置 -> 翻译引擎）");
-    }
-    const auto endpoint = validate_api_base_url(
-        json_string(options, L"endpoint", L"https://api.cognitive.microsofttranslator.com"),
-        L"Azure Translator endpoint");
-    constexpr std::array codes{
-        std::pair{std::wstring_view(L"zh-Hans"), std::wstring_view(L"zh-Hans")},
-        std::pair{std::wstring_view(L"zh-Hant"), std::wstring_view(L"zh-Hant")},
-        std::pair{std::wstring_view(L"en"), std::wstring_view(L"en")},
-    };
-    std::vector<std::pair<std::wstring, std::wstring>> query{
-        {L"api-version", L"3.0"}, {L"to", mapped_code(target, codes)},
-        {L"textType", L"plain"},
-    };
-    if (source && *source != L"auto" && *source != L"other") {
-        query.emplace_back(L"from", *source);
-    }
-    JsonArray payload;
-    for (const auto& text : texts) {
-        JsonObject item;
-        item.SetNamedValue(L"Text", JsonValue::CreateStringValue(text));
-        payload.Append(item);
-    }
-    HttpRequest request;
-    request.method = L"POST";
-    request.url = append_query(endpoint + L"/translate", query);
-    request.headers = {
-        {L"Ocp-Apim-Subscription-Key", key},
-        {L"Content-Type", L"application/json; charset=utf-8"},
-    };
-    const auto region = trim(json_string(options, L"region"));
-    if (!region.empty()) {
-        request.headers.emplace_back(L"Ocp-Apim-Subscription-Region", region);
-    }
-    request.body = utf8_body(payload.Stringify().c_str());
-    const auto response = http.send(request, stop);
-    require_success(response, L"Azure Translator", std::span<const std::wstring>(&key, 1));
-    const auto root = parse_array(response, L"Azure Translator");
-    std::vector<std::wstring> output;
-    for (std::uint32_t index = 0; index < root.Size(); ++index) {
-        try {
-            const auto item = root.GetObjectAt(index);
-            const auto translations = item.GetNamedArray(L"translations");
-            output.emplace_back(translations.GetObjectAt(0).GetNamedString(L"text").c_str());
-        } catch (...) {
-            throw TranslateError("Azure Translator 返回格式异常");
-        }
-    }
-    return output;
-}
-
-std::vector<std::wstring> google_translate(
-    HttpClient& http, const JsonObject& options, const std::vector<std::wstring>& texts,
-    std::wstring_view target, const std::optional<std::wstring>& source,
-    std::stop_token stop) {
-    const auto key = trim(json_string(options, L"key"));
-    if (key.empty()) {
-        throw TranslateError("尚未填写 Google Cloud Translation API Key");
-    }
-    constexpr std::array codes{
-        std::pair{std::wstring_view(L"zh-Hans"), std::wstring_view(L"zh-CN")},
-        std::pair{std::wstring_view(L"zh-Hant"), std::wstring_view(L"zh-TW")},
-        std::pair{std::wstring_view(L"en"), std::wstring_view(L"en")},
-    };
-    JsonObject payload;
-    payload.SetNamedValue(L"q", make_string_array(texts));
-    payload.SetNamedValue(L"target", JsonValue::CreateStringValue(mapped_code(target, codes)));
-    payload.SetNamedValue(L"format", JsonValue::CreateStringValue(L"text"));
-    if (source && *source != L"auto" && *source != L"other") {
-        payload.SetNamedValue(L"source", JsonValue::CreateStringValue(mapped_code(*source, codes)));
-    }
-    HttpRequest request;
-    request.method = L"POST";
-    request.url = L"https://translation.googleapis.com/language/translate/v2";
-    request.headers = {{L"X-Goog-Api-Key", key}, {L"Content-Type", L"application/json"}};
-    request.body = utf8_body(payload.Stringify().c_str());
-    const auto response = http.send(request, stop);
-    require_success(response, L"Google Translator", std::span<const std::wstring>(&key, 1));
-    try {
-        const auto items = parse_object(response, L"Google Translator")
-            .GetNamedObject(L"data").GetNamedArray(L"translations");
-        std::vector<std::wstring> output;
-        for (std::uint32_t index = 0; index < items.Size(); ++index) {
-            output.push_back(html_unescape(
-                std::wstring(items.GetObjectAt(index).GetNamedString(L"translatedText").c_str())));
-        }
-        return output;
-    } catch (const TranslateError&) {
-        throw;
-    } catch (...) {
-        throw TranslateError("Google Translator 返回格式异常");
-    }
 }
 
 std::vector<std::wstring> google_free_translate(
@@ -703,12 +610,6 @@ std::vector<std::wstring> TranslatorService::translate_batch(
     std::wstring_view provider, const JsonObject& options,
     const std::vector<std::wstring>& texts, std::wstring_view target,
     const std::optional<std::wstring>& source, std::stop_token stop) {
-    if (provider == L"microsoft") {
-        return microsoft_translate(http_, options, texts, target, source, stop);
-    }
-    if (provider == L"google") {
-        return google_translate(http_, options, texts, target, source, stop);
-    }
     if (provider == L"google_free") {
         return google_free_translate(http_, texts, target, source, stop);
     }
@@ -762,8 +663,8 @@ std::vector<std::wstring> TranslatorService::translate_batch(
         }
         return output;
     }
-    if (provider == L"openai" || provider == L"nvidia" || provider == L"anthropic") {
-        return translate_ai(provider, options, texts, target, stop);
+    if (provider == L"ai") {
+        return translate_ai(options, texts, target, stop);
     }
     throw TranslateError("未知的翻译引擎：" + wide_to_utf8(provider));
 }
@@ -813,17 +714,27 @@ TranslatorService::BingToken TranslatorService::bing_token(std::stop_token stop)
 }
 
 std::wstring TranslatorService::ai_call(
-    std::wstring_view provider, const JsonObject& options,
-    std::wstring_view system, std::wstring_view user, std::stop_token stop) {
+    const JsonObject& options, std::wstring_view system, std::wstring_view user,
+    std::stop_token stop) {
     const auto key = trim(json_string(options, L"key"));
-    if (provider == L"anthropic") {
-        if (key.empty()) {
-            throw TranslateError("尚未填写 Anthropic API Key");
-        }
-        const auto base = validate_api_base_url(
-            json_string(options, L"base_url", L"https://api.anthropic.com"),
-            L"Anthropic endpoint");
-        const auto model = trim(json_string(options, L"model", L"claude-sonnet-5"));
+    const auto protocol = ai_protocol(options);
+    const auto model = trim(json_string(options, L"model"));
+    if (model.empty()) {
+        throw TranslateError("尚未选择模型，请先获取模型列表");
+    }
+    auto base = normalize_ai_root(json_string(options, L"base_url"));
+    if (base.empty()) {
+        throw TranslateError("尚未填写接口地址（Base URL）");
+    }
+    base = validate_api_base_url(base, L"接口地址", !key.empty(), true);
+    const auto secrets = key.empty() ? std::span<const std::wstring>()
+                                     : std::span<const std::wstring>(&key, 1);
+
+    HttpRequest request;
+    request.method = L"POST";
+    request.headers = {{L"Content-Type", L"application/json"}};
+
+    if (protocol == L"anthropic_messages") {
         JsonObject payload;
         payload.SetNamedValue(L"model", JsonValue::CreateStringValue(model));
         payload.SetNamedValue(L"max_tokens", JsonValue::CreateNumberValue(4096));
@@ -835,17 +746,15 @@ std::wstring TranslatorService::ai_call(
         JsonArray messages;
         messages.Append(message);
         payload.SetNamedValue(L"messages", messages);
-        HttpRequest request;
-        request.method = L"POST";
         request.url = base + L"/v1/messages";
-        request.headers = {{L"x-api-key", key},
-                           {L"anthropic-version", L"2023-06-01"},
-                           {L"Content-Type", L"application/json"}};
+        request.headers.emplace_back(L"anthropic-version", L"2023-06-01");
+        if (!key.empty()) request.headers.emplace_back(L"x-api-key", key);
         request.body = utf8_body(payload.Stringify().c_str());
         const auto response = http_.send(request, stop);
-        require_success(response, L"Anthropic", std::span<const std::wstring>(&key, 1));
+        require_success(response, L"Anthropic Messages", secrets);
         try {
-            const auto content = parse_object(response, L"Anthropic").GetNamedArray(L"content");
+            const auto content = parse_object(response, L"Anthropic Messages")
+                .GetNamedArray(L"content");
             std::wstring output;
             for (std::uint32_t index = 0; index < content.Size(); ++index) {
                 const auto block = content.GetObjectAt(index);
@@ -857,19 +766,53 @@ std::wstring TranslatorService::ai_call(
         } catch (const TranslateError&) {
             throw;
         } catch (...) {
-            throw TranslateError("Anthropic 返回格式异常");
+            throw TranslateError("Anthropic Messages 返回格式异常");
         }
     }
 
-    const auto default_base = provider == L"nvidia"
-        ? std::wstring_view(L"https://integrate.api.nvidia.com/v1")
-        : std::wstring_view();
-    auto base = normalize_ai_root(json_string(options, L"base_url", default_base));
-    base = validate_api_base_url(base, L"OpenAI compatible endpoint", !key.empty(), true);
-    const auto model = trim(json_string(options, L"model"));
-    if (model.empty()) {
-        throw TranslateError("尚未选择模型，请先刷新模型列表");
+    if (protocol == L"openai_responses") {
+        JsonObject payload;
+        payload.SetNamedValue(L"model", JsonValue::CreateStringValue(model));
+        payload.SetNamedValue(L"instructions", JsonValue::CreateStringValue(system));
+        payload.SetNamedValue(L"input", JsonValue::CreateStringValue(user));
+        payload.SetNamedValue(L"temperature", JsonValue::CreateNumberValue(0));
+        payload.SetNamedValue(L"stream", JsonValue::CreateBooleanValue(false));
+        request.url = base + L"/responses";
+        if (!key.empty()) request.headers.emplace_back(L"Authorization", L"Bearer " + key);
+        request.body = utf8_body(payload.Stringify().c_str());
+        const auto response = http_.send(request, stop);
+        require_success(response, L"OpenAI Responses", secrets);
+        try {
+            const auto root = parse_object(response, L"OpenAI Responses");
+            std::wstring output;
+            if (root.HasKey(L"output_text")) {
+                output = root.GetNamedString(L"output_text", L"").c_str();
+            }
+            if (output.empty() && root.HasKey(L"output")) {
+                const auto items = root.GetNamedArray(L"output");
+                for (std::uint32_t index = 0; index < items.Size(); ++index) {
+                    const auto item = items.GetObjectAt(index);
+                    if (item.GetNamedString(L"type", L"") != L"message" ||
+                        !item.HasKey(L"content")) {
+                        continue;
+                    }
+                    const auto parts = item.GetNamedArray(L"content");
+                    for (std::uint32_t part = 0; part < parts.Size(); ++part) {
+                        const auto block = parts.GetObjectAt(part);
+                        if (block.GetNamedString(L"type", L"") == L"output_text") {
+                            output += block.GetNamedString(L"text", L"").c_str();
+                        }
+                    }
+                }
+            }
+            return output;
+        } catch (const TranslateError&) {
+            throw;
+        } catch (...) {
+            throw TranslateError("OpenAI Responses 返回格式异常");
+        }
     }
+
     JsonObject payload;
     payload.SetNamedValue(L"model", JsonValue::CreateStringValue(model));
     payload.SetNamedValue(L"temperature", JsonValue::CreateNumberValue(0));
@@ -884,38 +827,30 @@ std::wstring TranslatorService::ai_call(
     user_message.SetNamedValue(L"content", JsonValue::CreateStringValue(user));
     messages.Append(user_message);
     payload.SetNamedValue(L"messages", messages);
-    HttpRequest request;
-    request.method = L"POST";
     request.url = base + L"/chat/completions";
-    request.headers = {{L"Content-Type", L"application/json"}};
-    if (!key.empty()) {
-        request.headers.emplace_back(L"Authorization", L"Bearer " + key);
-    }
+    if (!key.empty()) request.headers.emplace_back(L"Authorization", L"Bearer " + key);
     request.body = utf8_body(payload.Stringify().c_str());
     const auto response = http_.send(request, stop);
-    require_success(response, L"OpenAI compatible API",
-                    key.empty() ? std::span<const std::wstring>()
-                                : std::span<const std::wstring>(&key, 1));
+    require_success(response, L"OpenAI Chat Completions", secrets);
     try {
-        return parse_object(response, L"OpenAI compatible API")
+        return parse_object(response, L"OpenAI Chat Completions")
             .GetNamedArray(L"choices").GetObjectAt(0)
             .GetNamedObject(L"message").GetNamedString(L"content", L"").c_str();
     } catch (const TranslateError&) {
         throw;
     } catch (...) {
-        throw TranslateError("OpenAI 兼容接口返回格式异常");
+        throw TranslateError("OpenAI Chat Completions 返回格式异常");
     }
 }
 
 std::vector<std::wstring> TranslatorService::translate_ai(
-    std::wstring_view provider, const JsonObject& options,
-    const std::vector<std::wstring>& texts, std::wstring_view target,
-    std::stop_token stop) {
+    const JsonObject& options, const std::vector<std::wstring>& texts,
+    std::wstring_view target, std::stop_token stop) {
     if (texts.empty()) {
         return {};
     }
     auto call = [&](const std::vector<std::wstring>& input, bool retry) {
-        return ai_call(provider, options, ai_system_prompt(target, retry),
+        return ai_call(options, ai_system_prompt(target, retry),
                        make_string_array(input).Stringify().c_str(), stop);
     };
     auto parsed = parse_ai_array(call(texts, false), texts.size());
@@ -967,31 +902,25 @@ std::vector<std::wstring> TranslatorService::translate_ai(
 }
 
 std::vector<std::wstring> TranslatorService::list_models(
-    std::wstring_view provider, const JsonObject& options, std::stop_token stop) {
+    const JsonObject& options, std::stop_token stop) {
     const auto key = trim(json_string(options, L"key"));
+    const auto protocol = ai_protocol(options);
+    auto base = normalize_ai_root(json_string(options, L"base_url"));
+    if (base.empty()) throw TranslateError("尚未填写接口地址（Base URL）");
+    base = validate_api_base_url(base, L"接口地址", !key.empty(), true);
+    const auto secrets = key.empty() ? std::span<const std::wstring>()
+                                     : std::span<const std::wstring>(&key, 1);
     HttpRequest request;
-    if (provider == L"anthropic") {
-        if (key.empty()) throw TranslateError("尚未填写 Anthropic API Key");
-        const auto base = validate_api_base_url(
-            json_string(options, L"base_url", L"https://api.anthropic.com"),
-            L"Anthropic endpoint");
+    if (protocol == L"anthropic_messages") {
         request.url = append_query(base + L"/v1/models", {{L"limit", L"100"}});
-        request.headers = {{L"x-api-key", key}, {L"anthropic-version", L"2023-06-01"}};
-    } else if (provider == L"openai" || provider == L"nvidia") {
-        const auto default_base = provider == L"nvidia"
-            ? std::wstring_view(L"https://integrate.api.nvidia.com/v1")
-            : std::wstring_view();
-        auto base = normalize_ai_root(json_string(options, L"base_url", default_base));
-        base = validate_api_base_url(base, L"OpenAI compatible endpoint", !key.empty(), true);
+        request.headers = {{L"anthropic-version", L"2023-06-01"}};
+        if (!key.empty()) request.headers.emplace_back(L"x-api-key", key);
+    } else {
         request.url = base + L"/models";
         if (!key.empty()) request.headers.emplace_back(L"Authorization", L"Bearer " + key);
-    } else {
-        throw TranslateError("这个翻译引擎不提供模型列表");
     }
     const auto response = http_.send(request, stop);
-    require_success(response, L"模型列表",
-                    key.empty() ? std::span<const std::wstring>()
-                                : std::span<const std::wstring>(&key, 1));
+    require_success(response, L"模型列表", secrets);
     try {
         const auto values = parse_object(response, L"模型列表").GetNamedArray(L"data");
         std::vector<std::wstring> output;
@@ -1000,7 +929,7 @@ std::vector<std::wstring> TranslatorService::list_models(
             if (!id.empty()) output.emplace_back(id.c_str());
         }
         if (output.empty()) throw TranslateError("接口没有返回任何模型");
-        if (provider != L"anthropic") std::sort(output.begin(), output.end());
+        if (protocol != L"anthropic_messages") std::sort(output.begin(), output.end());
         return output;
     } catch (const TranslateError&) {
         throw;

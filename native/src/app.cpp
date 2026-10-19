@@ -340,7 +340,7 @@ void tray_menu_layout_self_test() {
     TrayMenuItem item;
     item.command = command_capture;
     item.icon = TrayMenuIcon::capture;
-    item.label = L"开始框选翻译";
+    item.label = L"框选翻译";
     item.secondary = L"Ctrl+Alt+Q";
     item.dpi = 96;
     item.font = create_tray_menu_font(item.dpi);
@@ -566,6 +566,7 @@ AppHost::AppHost(HINSTANCE instance)
     result_.set_recapture_callback([this](const RECT& rect) { request_recapture(rect); });
     settings_.set_hotkeys_changed_callback([this] { return apply_hotkeys(true); });
     settings_.set_restart_callback([this] { restart(); });
+    settings_.set_updates_callback([this] { open_updates(); });
     settings_.set_settings_changed_callback([this] {
         refresh_tray_tooltip();
         refresh_tray_icon();
@@ -733,7 +734,7 @@ void AppHost::show_tray_menu(POINT location) {
     const auto toggle = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
     const bool can_restore = last_image_ && !result_.visible();
     std::vector<TrayMenuItem> items;
-    items.reserve(9);
+    items.reserve(7);
     const auto add_item = [&](UINT command, TrayMenuIcon icon, std::wstring label,
                               std::wstring secondary = {}, bool enabled = true) {
         TrayMenuItem item;
@@ -746,7 +747,7 @@ void AppHost::show_tray_menu(POINT location) {
         item.enabled = enabled;
         items.push_back(std::move(item));
     };
-    add_item(command_capture, TrayMenuIcon::capture, L"开始框选翻译", capture);
+    add_item(command_capture, TrayMenuIcon::capture, L"框选翻译", capture);
     add_item(command_text_translate, TrayMenuIcon::text, L"文字翻译…");
     add_item(command_restore, TrayMenuIcon::restore, L"显示上次译文", toggle, can_restore);
     TrayMenuItem separator;
@@ -755,13 +756,6 @@ void AppHost::show_tray_menu(POINT location) {
     separator.dpi = dpi;
     separator.font = menu_font;
     items.push_back(std::move(separator));
-    add_item(command_settings, TrayMenuIcon::settings, L"设置…");
-    if (available_update_version_.empty()) {
-        add_item(command_updates, TrayMenuIcon::update, L"检查更新…");
-    } else {
-        add_item(command_updates, TrayMenuIcon::update, L"发现新版本",
-                 available_update_version_ + L"…");
-    }
     add_item(command_restart, TrayMenuIcon::restart, L"重启");
     add_item(command_exit, TrayMenuIcon::exit, L"退出");
     items.front().first = true;
@@ -1327,7 +1321,6 @@ std::optional<UpdateInfo> AppHost::process_silent_update_check() {
 }
 
 void AppHost::handle_update_available(const UpdateInfo& update) {
-    available_update_version_ = update.version;
     notify(L"划词截屏翻译 · 有新版本",
            L"ScreenTranslate " + update.version +
            L" 已发布，可从检查更新窗口直接下载并安装。");
@@ -1393,8 +1386,8 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             add_tray_icon();
             apply_hotkeys(false);
             notify(L"划词截屏翻译",
-                   L"已启动，按 " + config_.string(L"hotkey", L"Ctrl+Alt+Q") +
-                   L" 开始框选翻译");
+                   L"已启动，左键打开设置，按 " + config_.string(L"hotkey", L"Ctrl+Alt+Q") +
+                   L" 框选翻译");
             SetTimer(window_, update_timer, 1500, nullptr);
         } catch (const std::exception& error) {
             const auto message_text = L"ScreenTranslate 无法初始化通知区域图标。\n\n" +
@@ -1412,9 +1405,8 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return 0;
     case tray_message: {
         const UINT event = LOWORD(lparam);
-        if (event == WM_LBUTTONUP || event == NIN_SELECT || event == NIN_KEYSELECT) {
-            start_capture();
-        } else if (event == WM_LBUTTONDBLCLK) {
+        if (event == WM_LBUTTONUP || event == NIN_SELECT || event == NIN_KEYSELECT ||
+            event == WM_LBUTTONDBLCLK) {
             open_settings();
         } else if (event == WM_RBUTTONUP || event == WM_CONTEXTMENU) {
             POINT point{}; GetCursorPos(&point); show_tray_menu(point);

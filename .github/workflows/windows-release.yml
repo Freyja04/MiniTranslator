@@ -27,8 +27,14 @@ jobs:
       - name: Validate release identity
         shell: pwsh
         run: |
-          if ($env:GITHUB_REPOSITORY -cne "reevebyte/ScreenTranslate") {
-            throw "Native updates are pinned to reevebyte/ScreenTranslate; refusing to publish from $env:GITHUB_REPOSITORY"
+          $cmake = Get-Content -LiteralPath native/CMakeLists.txt -Raw
+          $pin = [regex]::Match($cmake, 'SCREENTRANS_UPDATE_REPOSITORY_URL\s+"https://github\.com/([^"/]+)/([^"/]+)"')
+          if (-not $pin.Success) {
+            throw "Could not read the updater trust root from native/CMakeLists.txt"
+          }
+          $pinnedRepository = "$($pin.Groups[1].Value)/$($pin.Groups[2].Value)"
+          if ($env:GITHUB_REPOSITORY -cne $pinnedRepository) {
+            throw "Native updates are pinned to $pinnedRepository; refusing to publish from $env:GITHUB_REPOSITORY"
           }
 
           $releaseVersion = $env:GITHUB_REF_NAME -replace '^v', ''

@@ -1,10 +1,8 @@
 #include "pipeline.hpp"
 
-#include "cloud_ocr.hpp"
 #include "language.hpp"
 #include "layout.hpp"
 #include "ocr.hpp"
-#include "rapidocr_plugin.hpp"
 
 #include <winrt/Windows.Data.Json.h>
 
@@ -14,6 +12,7 @@
 namespace screentrans {
 
 using winrt::Windows::Data::Json::JsonObject;
+using winrt::Windows::Data::Json::JsonValueType;
 
 namespace {
 
@@ -25,13 +24,39 @@ constexpr std::size_t lane_index(PipelineLane lane) noexcept {
 
 PipelineOptions PipelineOptions::from_config(const ConfigStore& config) {
     PipelineOptions result;
-    result.ocr_engine = config.string(L"ocr.engine", L"windows");
     result.ocr_languages = config.strings(L"ocr.languages");
     result.ocr_upscale = config.boolean(L"ocr.upscale", true);
-    result.azure_options_json = config.object(L"ocr.azure_vision").Stringify().c_str();
-    result.translator_provider = config.string(L"translator.provider", L"microsoft");
-    result.translator_options_json = config.object(
-        L"translator." + result.translator_provider).Stringify().c_str();
+    result.translator_provider = config.string(L"translator.provider", L"microsoft_free");
+    if (result.translator_provider == L"ai") {
+        // A large-model endpoint is a user-defined profile: the selected one
+        // lives in translator.ai_profiles instead of a per-provider object.
+        const auto profiles = config.array(L"translator.ai_profiles");
+        const auto selected = config.string(L"translator.ai_selected");
+        JsonObject options{nullptr};
+        for (const auto& item : profiles) {
+            if (item.ValueType() != JsonValueType::Object) continue;
+            auto candidate = item.GetObject();
+            if (std::wstring(candidate.GetNamedString(L"name", L"").c_str()) != selected) continue;
+            options = candidate;
+            break;
+        }
+        if (!options) {
+            // Fall back to the first profile so that removing the selected
+            // entry never leaves the pipeline without an endpoint to call.
+            for (const auto& item : profiles) {
+                if (item.ValueType() != JsonValueType::Object) continue;
+                options = item.GetObject();
+                break;
+            }
+        }
+        // An empty profile list still has to yield valid JSON, otherwise the
+        // worker fails while parsing instead of reporting a missing model.
+        result.translator_options_json =
+            options ? options.Stringify().c_str() : std::wstring(L"{}");
+    } else {
+        result.translator_options_json = config.object(
+            L"translator." + result.translator_provider).Stringify().c_str();
+    }
     result.chinese_target = config.string(L"lang.zh_target", L"en");
     return result;
 }
@@ -284,20 +309,8 @@ PipelineResult PipelineController::execute(const Request& request, std::stop_tok
     if (!request.image || request.image->empty()) {
         throw AppError("pipeline request has no screenshot");
     }
-    std::vector<OcrLine> lines;
-    if (options.ocr_engine == L"windows") {
-        lines = recognize_windows_ocr(*request.image, options.ocr_languages,
-                                      options.ocr_upscale, stop);
-    } else if (options.ocr_engine == L"azure_vision") {
-        lines = recognize_azure_vision(cloud_http_, *request.image,
-            JsonObject::Parse(options.azure_options_json), stop);
-    } else if (options.ocr_engine == L"youdao_cloud") {
-        lines = recognize_youdao_cloud(cloud_http_, *request.image, stop);
-    } else if (options.ocr_engine == L"rapidocr") {
-        lines = recognize_rapidocr_plugin(*request.image, stop);
-    } else {
-        throw OcrError("未知 OCR 引擎");
-    }
+    std::vector<OcrLine> lines = recognize_windows_ocr(
+        *request.image, options.ocr_languages, options.ocr_upscale, stop);
     if (stop.stop_requested()) throw AppError("request cancelled");
     auto blocks = group_lines(std::move(lines));
     if (blocks.empty()) throw OcrError("没有识别到文字");

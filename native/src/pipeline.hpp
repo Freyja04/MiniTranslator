@@ -29,10 +29,8 @@ enum class PipelineLane : std::size_t {
 };
 
 struct PipelineOptions {
-    std::wstring ocr_engine;
     std::vector<std::wstring> ocr_languages;
     bool ocr_upscale{true};
-    std::wstring azure_options_json;
     std::wstring translator_provider;
     std::wstring translator_options_json;
     std::wstring chinese_target{L"en"};
@@ -105,7 +103,6 @@ private:
     bool shutting_down_{};
     std::vector<std::jthread> workers_;
     TranslatorService translators_;
-    HttpClient cloud_http_;
 };
 
 }  // namespace screentrans

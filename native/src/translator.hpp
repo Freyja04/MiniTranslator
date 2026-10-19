@@ -31,7 +31,6 @@ public:
         std::stop_token stop = {});
 
     std::vector<std::wstring> list_models(
-        std::wstring_view provider,
         const winrt::Windows::Data::Json::JsonObject& options,
         std::stop_token stop = {});
 
@@ -52,13 +51,11 @@ private:
         const std::optional<std::wstring>& source,
         std::stop_token stop);
     std::wstring ai_call(
-        std::wstring_view provider,
         const winrt::Windows::Data::Json::JsonObject& options,
         std::wstring_view system,
         std::wstring_view user,
         std::stop_token stop);
     std::vector<std::wstring> translate_ai(
-        std::wstring_view provider,
         const winrt::Windows::Data::Json::JsonObject& options,
         const std::vector<std::wstring>& texts,
         std::wstring_view target,

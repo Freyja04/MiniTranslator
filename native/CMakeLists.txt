@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(ScreenTranslateNative VERSION 1.1.0 LANGUAGES CXX RC)
+project(ScreenTranslateNative VERSION 1.2.0 LANGUAGES CXX RC)
 
 set(SCREENTRANS_UPDATE_REPOSITORY_URL
-    "https://github.com/reevebyte/ScreenTranslate"
+    "https://github.com/Freyja04/ScreenTranslate"
     CACHE STRING "Immutable GitHub repository trusted by the native updater")
 set(SCREENTRANS_UPDATE_MANIFEST_URL
-    "https://github.com/reevebyte/ScreenTranslate/releases/latest/download/update-manifest.json"
+    "https://github.com/Freyja04/ScreenTranslate/releases/latest/download/update-manifest.json"
     CACHE STRING "Immutable GitHub Release manifest URL trusted by the native updater")
 set(SCREENTRANS_UPDATE_CHANNEL "stable" CACHE STRING "Native update channel")
 
@@ -27,8 +27,6 @@ add_executable(ScreenTranslate WIN32
     src/capture.hpp
     src/config.cpp
     src/config.hpp
-    src/cloud_ocr.cpp
-    src/cloud_ocr.hpp
     src/crypto.cpp
     src/crypto.hpp
     src/dpapi.cpp
@@ -48,8 +46,6 @@ add_executable(ScreenTranslate WIN32
     src/ocr.hpp
     src/pipeline.cpp
     src/pipeline.hpp
-    src/rapidocr_plugin.cpp
-    src/rapidocr_plugin.hpp
     src/resource.h
     src/result_renderer.cpp
     src/result_renderer.hpp

@@ -2,7 +2,6 @@
 
 #include "hotkey.hpp"
 #include "language.hpp"
-#include "rapidocr_plugin.hpp"
 #include "resource.h"
 #include "translator.hpp"
 #include "util.hpp"
@@ -27,6 +26,11 @@
 
 namespace screentrans {
 
+using winrt::Windows::Data::Json::JsonArray;
+using winrt::Windows::Data::Json::JsonObject;
+using winrt::Windows::Data::Json::JsonValue;
+using winrt::Windows::Data::Json::JsonValueType;
+
 namespace {
 
 constexpr wchar_t class_name[] = L"ScreenTranslate.Native.SettingsWindow.v1";
@@ -46,6 +50,11 @@ constexpr int id_text_output = 7020;
 constexpr int id_text_translate = 7021;
 constexpr int id_text_clear = 7022;
 constexpr int id_text_copy = 7023;
+constexpr int id_translator_class = 7024;
+constexpr int id_ai_protocol = 7026;
+constexpr int id_profile_add = 7027;
+constexpr int id_profile_remove = 7028;
+constexpr int id_check_updates = 7029;
 constexpr UINT_PTR combo_subclass_id = 1;
 constexpr UINT_PTR hotkey_subclass_id = 2;
 constexpr UINT_PTR edit_subclass_id = 3;
@@ -76,12 +85,12 @@ constexpr int logical_field_text_offset_y = 0;
 constexpr int logical_combo_edit_offset_y = 4;
 
 constexpr std::array<std::wstring_view, 6> page_names{
-    L"快捷键", L"翻译", L"文字识别", L"显示", L"其他", L"文字翻译",
+    L"快捷键", L"翻译接口", L"截图识别", L"显示", L"其他", L"文字翻译",
 };
 constexpr std::array<std::wstring_view, 6> page_subtitles{
     L"点一下输入框，然后直接按下想要的组合键。",
     L"识别到的文字送到哪个接口去翻。改完记得点一下「测试连接」。",
-    L"先把屏幕上的字读出来，才谈得上翻译。",
+    L"选择截图里的文字用什么方式读出来。",
     L"译文覆盖在原文上之后的样子和行为。",
     L"开机自启、配置文件和故障排查。",
     L"输入或粘贴文字，停止输入 500 毫秒后自动翻译。",
@@ -394,35 +403,31 @@ void enable_dark_frame(HWND window) noexcept {
 struct ProviderInfo {
     std::wstring_view id;
     std::wstring_view label;
-    enum class Kind { microsoft, google, free, deepl, ai } kind;
+    enum class Kind { free, deepl, ai } kind;
 };
 
-constexpr std::array<ProviderInfo, 12> providers{{
-    {L"microsoft", L"微软 Azure 翻译", ProviderInfo::Kind::microsoft},
+constexpr std::array<ProviderInfo, 8> providers{{
     {L"microsoft_free", L"微软翻译（免密钥）", ProviderInfo::Kind::free},
-    {L"google", L"谷歌翻译（官方 API）", ProviderInfo::Kind::google},
     {L"google_free", L"谷歌翻译（免密钥）", ProviderInfo::Kind::free},
     {L"bing_free", L"必应翻译（免密钥）", ProviderInfo::Kind::free},
     {L"tencent_free", L"腾讯交互翻译（免密钥）", ProviderInfo::Kind::free},
     {L"yandex_free", L"Yandex 翻译（免密钥）", ProviderInfo::Kind::free},
     {L"iciba_free", L"词霸翻译（免密钥）", ProviderInfo::Kind::free},
     {L"deepl", L"DeepL", ProviderInfo::Kind::deepl},
-    {L"openai", L"AI 大模型（OpenAI 兼容）", ProviderInfo::Kind::ai},
-    {L"nvidia", L"英伟达 NIM", ProviderInfo::Kind::ai},
-    {L"anthropic", L"Claude（Anthropic）", ProviderInfo::Kind::ai},
+    {L"ai", L"大模型翻译", ProviderInfo::Kind::ai},
+}};
+
+// The three wire formats a user-defined large-model endpoint can speak.
+constexpr std::array<std::pair<std::wstring_view, std::wstring_view>, 3> ai_protocols{{
+    {L"openai_chat", L"OpenAI Chat Completions"},
+    {L"openai_responses", L"OpenAI Responses"},
+    {L"anthropic_messages", L"Anthropic Messages"},
 }};
 
 constexpr std::array<std::pair<std::wstring_view, std::wstring_view>, 8> zh_targets{{
     {L"en", L"英语"}, {L"ja", L"日语"}, {L"ko", L"韩语"},
     {L"fr", L"法语"}, {L"de", L"德语"}, {L"es", L"西班牙语"},
     {L"ru", L"俄语"}, {L"zh-Hant", L"繁体中文"},
-}};
-
-constexpr std::array<std::pair<std::wstring_view, std::wstring_view>, 4> ocr_engines{{
-    {L"windows", L"系统自带 OCR（离线，推荐）"},
-    {L"azure_vision", L"Azure AI Vision OCR（官方云端）"},
-    {L"youdao_cloud", L"有道云端 OCR（截图会上传）"},
-    {L"rapidocr", L"RapidOCR（可选安装，多语言）"},
 }};
 
 std::wstring text_of(HWND control) {
@@ -559,19 +564,6 @@ std::wstring hotkey_key_name(UINT key) {
     case VK_LEFT: return L"Left";
     case VK_RIGHT: return L"Right";
     default: return {};
-    }
-}
-
-bool rapidocr_is_available() noexcept {
-    try {
-        std::error_code plugin_error;
-        std::error_code models_error;
-        return std::filesystem::is_regular_file(
-                   rapidocr_plugin_path(), plugin_error) && !plugin_error &&
-               std::filesystem::is_directory(
-                   rapidocr_model_directory(), models_error) && !models_error;
-    } catch (...) {
-        return false;
     }
 }
 
@@ -766,18 +758,24 @@ void SettingsWindow::self_test(HWND owner) {
         throw AppError("settings self-test cleared footer status remained visible");
     }
     if (SendMessageW(provider_, CB_GETCOUNT, 0, 0) !=
-        static_cast<LRESULT>(providers.size())) {
+        static_cast<LRESULT>(providers.size() - 1)) {
         throw AppError("settings self-test provider count mismatch");
     }
     wchar_t provider_label[128]{};
     SendMessageW(provider_, CB_GETLBTEXT, 0,
                  reinterpret_cast<LPARAM>(provider_label));
-    if (std::wstring_view(provider_label) != L"微软 Azure 翻译") {
+    if (std::wstring_view(provider_label) != L"微软翻译（免密钥）") {
         throw AppError("settings self-test provider ordering mismatch");
     }
-    const LRESULT expected_ocr_count = rapidocr_is_available() ? 4 : 3;
-    if (SendMessageW(ocr_engine_, CB_GETCOUNT, 0, 0) != expected_ocr_count) {
-        throw AppError("settings self-test OCR availability mismatch");
+    if (SendMessageW(translator_class_, CB_GETCOUNT, 0, 0) != 2) {
+        throw AppError("settings self-test translator class count mismatch");
+    }
+    if (SendMessageW(ai_protocol_, CB_GETCOUNT, 0, 0) !=
+        static_cast<LRESULT>(ai_protocols.size())) {
+        throw AppError("settings self-test large-model protocol count mismatch");
+    }
+    if (SendMessageW(ocr_engine_, CB_GETCOUNT, 0, 0) != 1) {
+        throw AppError("settings self-test OCR engine count mismatch");
     }
     show_page(0);
     if (page_controls_[0].size() < 3 ||
@@ -855,7 +853,7 @@ void SettingsWindow::self_test(HWND owner) {
         throw AppError("settings self-test text translation layout is invalid");
     }
     show_page(1);
-    SendMessageW(provider_, CB_SETCURSEL, 9, 0);
+    SendMessageW(translator_class_, CB_SETCURSEL, 1, 0);
     refresh_provider_fields(false);
     COMBOBOXINFO model_info{sizeof(model_info)};
     RECT model_combo_rect{};
@@ -932,7 +930,8 @@ void SettingsWindow::self_test(HWND owner) {
         selection_end != selection_test_model.size()) {
         throw AppError("settings self-test default model remained selected");
     }
-    SendMessageW(provider_, CB_SETCURSEL, 10, 0);
+    SendMessageW(translator_class_, CB_SETCURSEL, 0, 0);
+    SendMessageW(provider_, CB_SETCURSEL, 0, 0);
     refresh_provider_fields(true);
     SendMessageW(provider_, CB_SETCURSEL, 5, 0);
     refresh_provider_fields(true);
@@ -943,8 +942,8 @@ void SettingsWindow::self_test(HWND owner) {
         throw AppError("settings self-test retained AI fields for a free provider");
     }
     show_page(2);
-    if ((GetWindowLongPtrW(ocr_upscale_, GWL_STYLE) & WS_VISIBLE) != 0) {
-        throw AppError("settings self-test exposed a Python-hidden OCR option");
+    if ((GetWindowLongPtrW(ocr_languages_, GWL_STYLE) & WS_VISIBLE) == 0) {
+        throw AppError("settings self-test hid the offline OCR language list");
     }
     show_page(3);
     SendMessageW(close_mode_, CB_SETCURSEL, 0, 0);
@@ -981,6 +980,10 @@ void SettingsWindow::self_test(HWND owner) {
     show_page(4);
     if (text_of(diagnostic_command_) != L"ScreenTranslate.exe --selftest") {
         throw AppError("settings self-test diagnostic command mismatch");
+    }
+    if (!check_updates_ || text_of(check_updates_) != L"检查更新" ||
+        (GetWindowLongPtrW(check_updates_, GWL_STYLE) & WS_VISIBLE) == 0) {
+        throw AppError("settings self-test update command is missing");
     }
     DestroyWindow(window_);
     window_ = nullptr;
@@ -1396,8 +1399,8 @@ void SettingsWindow::draw_combo(HWND control, HDC dc) {
 }
 
 bool SettingsWindow::is_checkbox(HWND control) const noexcept {
-    return control && (control == deepl_free_ || control == ocr_upscale_ ||
-                       control == auto_copy_ || control == autostart_);
+    return control && (control == ocr_upscale_ || control == auto_copy_ ||
+                       control == autostart_);
 }
 
 bool SettingsWindow::checkbox_checked(HWND control) const noexcept {
@@ -1464,21 +1467,47 @@ void SettingsWindow::create_hotkey_page() {
 }
 
 void SettingsWindow::create_translation_page() {
-    add_label(1, L"接口");
+    add_label(1, L"接口类别");
+    translator_class_ = add_control(1, 0, L"COMBOBOX", L"",
+                                    CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                                    WS_VSCROLL | WS_TABSTOP,
+                                    id_translator_class);
+    SendMessageW(translator_class_, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(L"传统翻译 API"));
+    SendMessageW(translator_class_, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(L"大模型翻译 API"));
+    provider_label_ = add_label(1, L"接口");
     provider_ = add_control(1, 0, L"COMBOBOX", L"",
                             CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
                             WS_VSCROLL | WS_TABSTOP,
                             id_provider);
     for (const auto& provider : providers) {
-        SendMessageW(provider_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(provider.label.data()));
+        if (provider.kind == ProviderInfo::Kind::ai) continue;
+        SendMessageW(provider_, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(provider.label.data()));
     }
-    provider_key_label_ = add_label(1, L"密钥 Key");
+    profile_label_ = add_label(1, L"接口名称");
+    profile_select_ = add_control(1, 0, L"COMBOBOX", L"",
+                                  CBS_DROPDOWN | CBS_AUTOHSCROLL |
+                                      CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                                      WS_VSCROLL | WS_TABSTOP);
+    profile_add_ = add_control(1, 0, L"BUTTON", L"新增",
+                               BS_OWNERDRAW | WS_TABSTOP, id_profile_add);
+    profile_remove_ = add_control(1, 0, L"BUTTON", L"删除",
+                                  BS_OWNERDRAW | WS_TABSTOP, id_profile_remove);
+    protocol_label_ = add_label(1, L"接口协议");
+    ai_protocol_ = add_control(1, 0, L"COMBOBOX", L"",
+                               CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+                               WS_VSCROLL | WS_TABSTOP,
+                               id_ai_protocol);
+    for (const auto& [id, label] : ai_protocols) {
+        SendMessageW(ai_protocol_, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(label.data()));
+    }
+    provider_key_label_ = add_label(1, L"API Key");
     provider_key_ = add_control(1, 0, L"EDIT", L"",
                                 ES_AUTOHSCROLL | ES_PASSWORD | WS_BORDER | WS_TABSTOP);
-    provider_extra_label_ = add_label(1, L"区域 Region");
-    provider_extra_ = add_control(1, 0, L"EDIT", L"",
-                                  ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP);
-    provider_endpoint_label_ = add_label(1, L"终结点");
+    provider_endpoint_label_ = add_label(1, L"Base URL");
     provider_endpoint_ = add_control(1, 0, L"EDIT", L"",
                                      ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP);
     provider_model_label_ = add_label(1, L"模型");
@@ -1486,12 +1515,15 @@ void SettingsWindow::create_translation_page() {
                                   CBS_DROPDOWN | CBS_AUTOHSCROLL |
                                       CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
                                       WS_VSCROLL | WS_TABSTOP);
-    deepl_free_ = add_control(1, 0, L"BUTTON", L"使用 DeepL 免费版接口",
-                              BS_OWNERDRAW | WS_TABSTOP);
+    model_refresh_ = add_control(1, 0, L"BUTTON", L"获取模型",
+                                 BS_OWNERDRAW | WS_TABSTOP, id_refresh_models);
     test_button_ = add_control(1, 0, L"BUTTON", L"测试连接",
                                BS_OWNERDRAW | WS_TABSTOP, id_test);
     test_status_ = add_control(1, 0, L"STATIC", L"",
                                SS_LEFT | SS_CENTERIMAGE, 0);
+    set_font(test_status_, small_font_);
+    provider_hint_ = add_label(1, L"");
+    set_font(provider_hint_, small_font_);
     add_label(1, L"中文译成");
     chinese_target_ = add_control(1, 0, L"COMBOBOX", L"",
                                   CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
@@ -1499,10 +1531,6 @@ void SettingsWindow::create_translation_page() {
     for (const auto& [code, label] : zh_targets) {
         SendMessageW(chinese_target_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.data()));
     }
-    add_label(1, L"免密引擎使用非官方网页/移动接口，可能被限流或随服务改版失效。其余语言始终译成简体中文。");
-    // Append this control so the established translation-page indices stay stable.
-    model_refresh_ = add_control(1, 0, L"BUTTON", L"刷新",
-                                 BS_OWNERDRAW | WS_TABSTOP, id_refresh_models);
 }
 
 void SettingsWindow::create_ocr_page() {
@@ -1511,15 +1539,10 @@ void SettingsWindow::create_ocr_page() {
                               CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
                               WS_VSCROLL | WS_TABSTOP,
                               id_ocr_engine);
-    const bool rapidocr_available = rapidocr_is_available();
-    const std::size_t engine_count = rapidocr_available
-        ? ocr_engines.size() : ocr_engines.size() - 1;
-    for (std::size_t index = 0; index < engine_count; ++index) {
-        SendMessageW(ocr_engine_, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(ocr_engines[index].second.data()));
-    }
-    ocr_cloud_note_ = add_label(2, L"");
-    set_font(ocr_cloud_note_, small_font_);
+    SendMessageW(ocr_engine_, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(L"系统自带 OCR（离线，推荐）"));
+    ocr_engine_note_ = add_label(2, L"截图只在本地识别，不会上传到任何服务器。");
+    set_font(ocr_engine_note_, small_font_);
     add_label(2, L"识别语言");
     ocr_languages_ = add_control(2, 0, L"COMBOBOX", L"",
                                  CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED |
@@ -1554,12 +1577,6 @@ void SettingsWindow::create_ocr_page() {
     }
     ocr_upscale_ = add_control(2, 0, L"BUTTON", L"小图自动放大后识别",
                                BS_OWNERDRAW | WS_TABSTOP);
-    azure_endpoint_label_ = add_label(2, L"Endpoint");
-    azure_endpoint_ = add_control(2, 0, L"EDIT", L"",
-                                  ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP);
-    azure_key_label_ = add_label(2, L"Key");
-    azure_key_ = add_control(2, 0, L"EDIT", L"",
-                             ES_AUTOHSCROLL | ES_PASSWORD | WS_BORDER | WS_TABSTOP);
     std::wstring installed_names = L"系统已安装：";
     if (installed.empty()) {
         installed_names += L"无";
@@ -1569,7 +1586,8 @@ void SettingsWindow::create_ocr_page() {
             installed_names += ocr_language_name(installed[index]);
         }
     }
-    add_label(2, installed_names.c_str());
+    const HWND installed_label = add_label(2, installed_names.c_str());
+    set_font(installed_label, small_font_);
 }
 
 void SettingsWindow::create_appearance_page() {
@@ -1608,6 +1626,8 @@ void SettingsWindow::create_other_page() {
                                BS_OWNERDRAW | WS_TABSTOP, id_open_config);
     restart_ = add_control(4, 0, L"BUTTON", L"重启程序",
                            BS_OWNERDRAW | WS_TABSTOP, id_restart);
+    check_updates_ = add_control(4, 0, L"BUTTON", L"检查更新",
+                                 BS_OWNERDRAW | WS_TABSTOP, id_check_updates);
     add_label(4, L"这里改的每一项都即时写盘。API 密钥用 Windows 的 DPAPI 加过密，只有当前这台电脑上的当前这个账户能解开——但配置文件本身仍然别随手发给别人。");
     diagnostic_command_ = add_control(
         4, 0, L"EDIT", L"ScreenTranslate.exe --selftest",
@@ -1661,17 +1681,20 @@ void SettingsWindow::load_values() {
     SetWindowTextW(text_hotkey_, config_.string(
         L"hotkey_text_translate", L"Ctrl+Alt+Space").c_str());
     SetWindowTextW(side_footer_, (L"框选  " + capture_hotkey).c_str());
-    const auto provider = config_.string(L"translator.provider", L"microsoft");
-    std::size_t provider_index = 0;
-    loaded_provider_ = providers.front().id;
-    for (std::size_t index = 0; index < providers.size(); ++index) {
-        if (providers[index].id == provider) {
-            provider_index = index;
-            loaded_provider_ = provider;
-            break;
-        }
+    const auto configured_provider = config_.string(L"translator.provider", L"microsoft_free");
+    const bool large_model = configured_provider == L"ai";
+    int provider_position = 0;
+    int provider_selection = 0;
+    for (const auto& provider : providers) {
+        if (provider.kind == ProviderInfo::Kind::ai) continue;
+        if (provider.id == configured_provider) provider_selection = provider_position;
+        ++provider_position;
     }
-    select_combo(provider_, static_cast<int>(provider_index));
+    loaded_provider_ = large_model ? std::wstring(L"ai") : configured_provider;
+    select_combo(translator_class_, large_model ? 1 : 0);
+    select_combo(provider_, large_model ? 0 : provider_selection);
+    populate_profile_names();
+    select_profile(config_.string(L"translator.ai_selected"));
     refresh_provider_fields(true);
     const auto zh = config_.string(L"lang.zh_target", L"en");
     int zh_index = 0;
@@ -1680,12 +1703,7 @@ void SettingsWindow::load_values() {
     }
     select_combo(chinese_target_, zh_index);
 
-    const auto ocr = config_.string(L"ocr.engine", L"windows");
-    int ocr_index = 0;
-    for (std::size_t index = 0; index < ocr_engines.size(); ++index) {
-        if (ocr_engines[index].first == ocr) ocr_index = static_cast<int>(index);
-    }
-    select_combo(ocr_engine_, ocr_index);
+    select_combo(ocr_engine_, 0);
     const auto saved_languages = config_.strings(L"ocr.languages");
     int language_index = 0;
     bool language_found = false;
@@ -1710,9 +1728,6 @@ void SettingsWindow::load_values() {
     }
     select_combo(ocr_languages_, language_index);
     set_checkbox(ocr_upscale_, config_.boolean(L"ocr.upscale", true));
-    SetWindowTextW(azure_endpoint_, config_.string(L"ocr.azure_vision.endpoint").c_str());
-    SetWindowTextW(azure_key_, config_.string(L"ocr.azure_vision.key").c_str());
-    refresh_ocr_fields();
 
     select_combo_text(font_family_,
                       config_.string(L"appearance.font_family", L"Microsoft YaHei UI"));
@@ -1728,7 +1743,198 @@ void SettingsWindow::load_values() {
     loading_ = false;
 }
 
+std::vector<SettingsWindow::AiProfile> SettingsWindow::read_profiles() const {
+    std::vector<AiProfile> list;
+    const auto stored = config_.array(L"translator.ai_profiles");
+    for (const auto& entry : stored) {
+        if (entry.ValueType() != JsonValueType::Object) continue;
+        const auto option = entry.GetObject();
+        AiProfile profile;
+        profile.name = option.GetNamedString(L"name", L"").c_str();
+        profile.protocol = option.GetNamedString(L"protocol", L"openai_chat").c_str();
+        profile.base_url = option.GetNamedString(L"base_url", L"").c_str();
+        profile.key = option.GetNamedString(L"key", L"").c_str();
+        profile.model = option.GetNamedString(L"model", L"").c_str();
+        if (profile.name.empty()) continue;
+        list.push_back(std::move(profile));
+    }
+    return list;
+}
+
+void SettingsWindow::write_profiles(const std::vector<AiProfile>& list) {
+    JsonArray array;
+    for (const auto& profile : list) {
+        JsonObject option;
+        option.SetNamedValue(L"name", JsonValue::CreateStringValue(profile.name));
+        option.SetNamedValue(L"protocol", JsonValue::CreateStringValue(profile.protocol));
+        option.SetNamedValue(L"base_url", JsonValue::CreateStringValue(profile.base_url));
+        option.SetNamedValue(L"key", JsonValue::CreateStringValue(profile.key));
+        option.SetNamedValue(L"model", JsonValue::CreateStringValue(profile.model));
+        array.Append(option);
+    }
+    config_.set_json(L"translator.ai_profiles", array);
+    config_.set_string(L"translator.ai_selected", loaded_profile_);
+}
+
+int SettingsWindow::profile_index() const noexcept {
+    if (loaded_profile_.empty()) return -1;
+    const auto list = read_profiles();
+    for (std::size_t index = 0; index < list.size(); ++index) {
+        if (list[index].name == loaded_profile_) return static_cast<int>(index);
+    }
+    return -1;
+}
+
+std::wstring SettingsWindow::current_options_json() const {
+    if (loaded_provider_ == L"ai") {
+        const auto list = read_profiles();
+        const int index = profile_index();
+        if (index >= 0) {
+            const auto& profile = list[static_cast<std::size_t>(index)];
+            JsonObject option;
+            option.SetNamedValue(L"name", JsonValue::CreateStringValue(profile.name));
+            option.SetNamedValue(L"protocol", JsonValue::CreateStringValue(profile.protocol));
+            option.SetNamedValue(L"base_url", JsonValue::CreateStringValue(profile.base_url));
+            option.SetNamedValue(L"key", JsonValue::CreateStringValue(profile.key));
+            option.SetNamedValue(L"model", JsonValue::CreateStringValue(profile.model));
+            return option.Stringify().c_str();
+        }
+        return L"{}";
+    }
+    return config_.object(L"translator." + loaded_provider_).Stringify().c_str();
+}
+
+void SettingsWindow::populate_profile_names() {
+    const auto list = read_profiles();
+    SendMessageW(profile_select_, CB_RESETCONTENT, 0, 0);
+    int selection = -1;
+    for (std::size_t index = 0; index < list.size(); ++index) {
+        SendMessageW(profile_select_, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(list[index].name.c_str()));
+        if (list[index].name == loaded_profile_) selection = static_cast<int>(index);
+    }
+    if (selection >= 0) {
+        select_combo(profile_select_, selection);
+    } else if (!list.empty()) {
+        loaded_profile_ = list.front().name;
+        select_combo(profile_select_, 0);
+    } else {
+        loaded_profile_.clear();
+        SetWindowTextW(profile_select_, L"");
+    }
+    EnableWindow(profile_remove_, !loaded_profile_.empty());
+}
+
+void SettingsWindow::select_profile(std::wstring_view name) {
+    const auto list = read_profiles();
+    bool found = false;
+    for (const auto& profile : list) {
+        if (profile.name == name) {
+            found = true;
+            break;
+        }
+    }
+    loaded_profile_ = found ? std::wstring(name)
+                            : (list.empty() ? std::wstring() : list.front().name);
+    populate_profile_names();
+}
+
+void SettingsWindow::add_profile() {
+    auto list = read_profiles();
+    int suffix = static_cast<int>(list.size()) + 1;
+    std::wstring name = L"接口 " + std::to_wstring(suffix);
+    const auto taken = [&](std::wstring_view candidate) {
+        return std::any_of(list.begin(), list.end(), [&](const AiProfile& profile) {
+            return profile.name == candidate;
+        });
+    };
+    while (taken(name)) {
+        ++suffix;
+        name = L"接口 " + std::to_wstring(suffix);
+    }
+    AiProfile profile;
+    profile.name = name;
+    profile.protocol = L"openai_chat";
+    list.push_back(profile);
+    loaded_profile_ = name;
+    write_profiles(list);
+    populate_profile_names();
+    select_combo(profile_select_, static_cast<int>(list.size() - 1));
+    refresh_provider_fields(true);
+    save_values(false);
+}
+
+void SettingsWindow::remove_profile() {
+    auto list = read_profiles();
+    if (list.empty()) return;
+    const int index = std::clamp(profile_index(), 0, static_cast<int>(list.size()) - 1);
+    list.erase(list.begin() + index);
+    loaded_profile_ = list.empty() ? std::wstring()
+                                   : list[static_cast<std::size_t>(
+                                         std::min(index, static_cast<int>(list.size()) - 1))].name;
+    write_profiles(list);
+    populate_profile_names();
+    refresh_provider_fields(false);
+    save_values(false);
+}
+
+void SettingsWindow::save_profile_fields() {
+    if (loaded_provider_ != L"ai") return;
+    auto list = read_profiles();
+    if (list.empty()) return;
+    const int index = profile_index();
+    if (index < 0) return;
+    auto& profile = list[static_cast<std::size_t>(index)];
+    auto renamed = trim(text_of(profile_select_));
+    bool rename_happened = false;
+    if (!renamed.empty() && renamed != profile.name) {
+        // The name is the identity translator.ai_selected points at, so a rename
+        // must not collide with another endpoint in the same list.
+        const auto taken = [&](std::wstring_view candidate) {
+            for (std::size_t other = 0; other < list.size(); ++other) {
+                if (other != static_cast<std::size_t>(index) &&
+                    list[other].name == candidate) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (taken(renamed)) {
+            const auto base = renamed;
+            int suffix = 2;
+            while (taken(renamed)) {
+                renamed = base + L" " + std::to_wstring(suffix++);
+            }
+        }
+        profile.name = renamed;
+        rename_happened = true;
+        SetWindowTextW(profile_select_, profile.name.c_str());
+    }
+    if (rename_happened) {
+        // The combo still holds the old strings, so rebuild it in place and keep
+        // the row the user just edited selected.
+        SendMessageW(profile_select_, CB_RESETCONTENT, 0, 0);
+        for (const auto& entry : list) {
+            SendMessageW(profile_select_, CB_ADDSTRING, 0,
+                         reinterpret_cast<LPARAM>(entry.name.c_str()));
+        }
+        select_combo(profile_select_, index);
+    }
+    const int protocol = std::clamp(selected_index(ai_protocol_), 0,
+                                    static_cast<int>(ai_protocols.size()) - 1);
+    profile.protocol = std::wstring(ai_protocols[static_cast<std::size_t>(protocol)].first);
+    profile.base_url = trim(text_of(provider_endpoint_));
+    profile.key = trim(text_of(provider_key_));
+    profile.model = trim(text_of(provider_model_));
+    loaded_profile_ = profile.name;
+    write_profiles(list);
+}
+
 void SettingsWindow::save_provider_fields() {
+    if (loaded_provider_ == L"ai") {
+        save_profile_fields();
+        return;
+    }
     if (loaded_provider_.empty()) return;
     const auto found = std::find_if(providers.begin(), providers.end(), [&](const ProviderInfo& value) {
         return value.id == loaded_provider_;
@@ -1738,72 +1944,68 @@ void SettingsWindow::save_provider_fields() {
     if (found->kind != ProviderInfo::Kind::free) {
         config_.set_string(prefix + L"key", trim(text_of(provider_key_)));
     }
-    if (found->kind == ProviderInfo::Kind::microsoft) {
-        config_.set_string(prefix + L"region", trim(text_of(provider_extra_)));
-        config_.set_string(prefix + L"endpoint", trim(text_of(provider_endpoint_)));
-    } else if (found->kind == ProviderInfo::Kind::ai) {
-        config_.set_string(prefix + L"base_url", trim(text_of(provider_endpoint_)));
-        config_.set_string(prefix + L"model", trim(text_of(provider_model_)));
-    } else if (found->kind == ProviderInfo::Kind::deepl) {
-        config_.set_boolean(prefix + L"free_plan", checkbox_checked(deepl_free_));
+    if (found->kind == ProviderInfo::Kind::deepl) {
+        config_.set_boolean(prefix + L"free_plan", true);
     }
 }
 
 void SettingsWindow::refresh_provider_fields(bool load) {
-    const int index = std::clamp(selected_index(provider_), 0, static_cast<int>(providers.size() - 1));
-    const auto& provider = providers[index];
-    const bool key = provider.kind != ProviderInfo::Kind::free;
-    const bool extra = provider.kind == ProviderInfo::Kind::microsoft;
-    const bool endpoint = provider.kind == ProviderInfo::Kind::microsoft || provider.kind == ProviderInfo::Kind::ai;
-    const bool model = provider.kind == ProviderInfo::Kind::ai;
-    // The Python reference keeps DeepL's plan in configuration but does not
-    // expose an extra checkbox in this compact page.
-    const bool deepl = false;
+    const bool large_model = selected_index(translator_class_) == 1;
+    if (large_model) {
+        loaded_provider_ = L"ai";
+    } else {
+        // Same skip rule as the rest of the page: the combo only lists the
+        // traditional entries, so its index counts those rows alone.
+        const int chosen = selected_index(provider_);
+        int seen = 0;
+        loaded_provider_ = providers.front().id;
+        for (const auto& provider : providers) {
+            if (provider.kind == ProviderInfo::Kind::ai) continue;
+            if (seen == chosen) {
+                loaded_provider_ = provider.id;
+                break;
+            }
+            ++seen;
+        }
+    }
+    const auto traditional = std::find_if(
+        providers.begin(), providers.end(),
+        [&](const ProviderInfo& value) { return value.id == loaded_provider_; });
+    const bool has_key = large_model ||
+        (traditional != providers.end() && traditional->kind != ProviderInfo::Kind::free);
     for (const auto [control, visible] : {
-             std::pair{provider_key_label_, key}, std::pair{provider_key_, key},
-             std::pair{provider_extra_label_, extra}, std::pair{provider_extra_, extra},
-             std::pair{provider_endpoint_label_, endpoint}, std::pair{provider_endpoint_, endpoint},
-             std::pair{provider_model_label_, model}, std::pair{provider_model_, model},
-             std::pair{model_refresh_, model},
-             std::pair{deepl_free_, deepl}}) {
+             std::pair{provider_label_, !large_model},
+             std::pair{provider_, !large_model},
+             std::pair{profile_label_, large_model},
+             std::pair{profile_select_, large_model},
+             std::pair{profile_add_, large_model},
+             std::pair{profile_remove_, large_model},
+             std::pair{protocol_label_, large_model},
+             std::pair{ai_protocol_, large_model},
+             std::pair{provider_key_label_, has_key},
+             std::pair{provider_key_, has_key},
+             std::pair{provider_endpoint_label_, large_model},
+             std::pair{provider_endpoint_, large_model},
+             std::pair{provider_model_label_, large_model},
+             std::pair{provider_model_, large_model},
+             std::pair{model_refresh_, large_model},
+             std::pair{test_button_, true},
+             std::pair{test_status_, true}}) {
         ShowWindow(control, visible ? SW_SHOW : SW_HIDE);
     }
-    SetWindowTextW(provider_key_label_,
-                   provider.id == L"google" || provider.kind == ProviderInfo::Kind::ai
-                       ? L"API Key" : L"密钥 Key");
-    SetWindowTextW(provider_extra_label_, L"区域 Region");
-    SetWindowTextW(provider_endpoint_label_,
-                   provider.kind == ProviderInfo::Kind::ai ? L"接口地址" : L"终结点");
 
     std::wstring_view key_cue;
-    std::wstring_view extra_cue;
     std::wstring_view endpoint_cue;
     std::wstring_view model_cue;
-    if (provider.id == L"microsoft") {
-        key_cue = L"Azure 门户 → Translator 资源 → 密钥";
-        extra_cue = L"例如 eastasia、global";
-        endpoint_cue = L"https://api.cognitive.microsofttranslator.com";
-    } else if (provider.id == L"google") {
-        key_cue = L"Google Cloud Translation API 密钥";
-    } else if (provider.id == L"deepl") {
-        key_cue = L"免费版密钥以 :fx 结尾";
-    } else if (provider.id == L"openai") {
+    if (large_model) {
         key_cue = L"sk-...";
         endpoint_cue = L"https://api.deepseek.com/v1";
-        model_cue = L"deepseek-chat";
-    } else if (provider.id == L"nvidia") {
-        key_cue = L"nvapi-...";
-        endpoint_cue = L"https://integrate.api.nvidia.com/v1";
-        model_cue = L"点右边「刷新」拉取可用模型";
-    } else if (provider.id == L"anthropic") {
-        key_cue = L"sk-ant-...";
-        endpoint_cue = L"https://api.anthropic.com";
-        model_cue = L"claude-sonnet-5";
+        model_cue = L"点「获取模型」拉取可用模型";
+    } else if (loaded_provider_ == L"deepl") {
+        key_cue = L"免费版密钥以 :fx 结尾";
     }
     SendMessageW(provider_key_, EM_SETCUEBANNER, TRUE,
                  reinterpret_cast<LPARAM>(key_cue.data()));
-    SendMessageW(provider_extra_, EM_SETCUEBANNER, TRUE,
-                 reinterpret_cast<LPARAM>(extra_cue.data()));
     SendMessageW(provider_endpoint_, EM_SETCUEBANNER, TRUE,
                  reinterpret_cast<LPARAM>(endpoint_cue.data()));
     COMBOBOXINFO model_info{sizeof(model_info)};
@@ -1811,50 +2013,46 @@ void SettingsWindow::refresh_provider_fields(bool load) {
         SendMessageW(model_info.hwndItem, EM_SETCUEBANNER, TRUE,
                      reinterpret_cast<LPARAM>(model_cue.data()));
     }
-    if (load) {
-        loaded_provider_ = provider.id;
-        const auto prefix = L"translator." + loaded_provider_ + L".";
-        SetWindowTextW(provider_key_, config_.string(prefix + L"key").c_str());
-        SetWindowTextW(provider_extra_, config_.string(prefix + L"region").c_str());
-        const auto endpoint_key = provider.kind == ProviderInfo::Kind::ai ? L"base_url" : L"endpoint";
-        SetWindowTextW(provider_endpoint_, config_.string(prefix + endpoint_key).c_str());
-        const auto configured_model = config_.string(prefix + L"model");
-        SendMessageW(provider_model_, CB_RESETCONTENT, 0, 0);
-        if (!configured_model.empty()) {
-            SendMessageW(provider_model_, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(configured_model.c_str()));
+
+    if (load || large_model) {
+        if (large_model) {
+            const auto list = read_profiles();
+            const int index = profile_index();
+            const AiProfile empty;
+            const auto& profile = index >= 0 ? list[static_cast<std::size_t>(index)] : empty;
+            SetWindowTextW(provider_key_, profile.key.c_str());
+            SetWindowTextW(provider_endpoint_, profile.base_url.c_str());
+            int protocol_index = 0;
+            for (std::size_t i = 0; i < ai_protocols.size(); ++i) {
+                if (ai_protocols[i].first == profile.protocol) protocol_index = static_cast<int>(i);
+            }
+            select_combo(ai_protocol_, protocol_index);
+            SendMessageW(provider_model_, CB_RESETCONTENT, 0, 0);
+            if (!profile.model.empty()) {
+                SendMessageW(provider_model_, CB_ADDSTRING, 0,
+                             reinterpret_cast<LPARAM>(profile.model.c_str()));
+            }
+            SetWindowTextW(provider_model_, profile.model.c_str());
+            clear_combo_edit_selection(provider_model_);
+        } else {
+            const auto prefix = L"translator." + loaded_provider_ + L".";
+            SetWindowTextW(provider_key_, config_.string(prefix + L"key").c_str());
+            SendMessageW(provider_model_, CB_RESETCONTENT, 0, 0);
+            SetWindowTextW(provider_model_, L"");
         }
-        SetWindowTextW(provider_model_, configured_model.c_str());
-        clear_combo_edit_selection(provider_model_);
-        set_checkbox(deepl_free_, config_.boolean(prefix + L"free_plan", true));
     }
-    EnableWindow(model_refresh_, model && !model_refreshing_);
+    SetWindowTextW(provider_hint_,
+                   large_model
+                       ? L"可以添加多个大模型接口，各自填 Base URL、API Key 和模型；名称用于区分。"
+                       : L"这些是免密钥或只需密钥的传统接口，由各服务商的网页/移动端接口提供，可能被限流或随服务改版失效。");
+    EnableWindow(profile_remove_, large_model && !loaded_profile_.empty());
+    EnableWindow(model_refresh_, large_model && !model_refreshing_);
     layout_controls();
-    if (model && window_) {
+    if (large_model && window_) {
         clear_combo_edit_selection(provider_model_);
         PostMessageW(window_, clear_combo_selection_message,
                      reinterpret_cast<WPARAM>(provider_model_), 0);
     }
-}
-
-void SettingsWindow::refresh_ocr_fields() {
-    const bool azure = selected_index(ocr_engine_) == 1;
-    for (const auto control : {azure_endpoint_label_, azure_endpoint_, azure_key_label_, azure_key_}) {
-        ShowWindow(control, azure ? SW_SHOW : SW_HIDE);
-    }
-    EnableWindow(ocr_languages_, selected_index(ocr_engine_) == 0);
-    ShowWindow(ocr_upscale_, SW_HIDE);
-    const int engine = selected_index(ocr_engine_);
-    if (engine == 1) {
-        SetWindowTextW(ocr_cloud_note_,
-                       L"框选截图会上传到你的 Azure Vision 资源。官方接口，免费层每月 5,000 次。");
-    } else if (engine == 2) {
-        SetWindowTextW(ocr_cloud_note_,
-                       L"框选截图会上传到有道服务器。无需密钥，但属于非官方接口，可能限流或改版失效。");
-    } else {
-        SetWindowTextW(ocr_cloud_note_, L"");
-    }
-    ShowWindow(ocr_cloud_note_, engine == 1 || engine == 2 ? SW_SHOW : SW_HIDE);
 }
 
 void SettingsWindow::refresh_close_fields() {
@@ -1893,23 +2091,34 @@ bool SettingsWindow::save_values(bool) {
         const bool hotkeys_changed = capture != old_capture || toggle != old_toggle ||
                                      text != old_text;
         save_provider_fields();
-        const int provider_index = std::clamp(selected_index(provider_), 0,
-                                               static_cast<int>(providers.size() - 1));
-        config_.set_string(L"translator.provider", providers[provider_index].id);
+        const bool large_model = selected_index(translator_class_) == 1;
+        if (large_model) {
+            config_.set_string(L"translator.provider", L"ai");
+        } else {
+            // The provider combo lists only the traditional entries, so its
+            // selection is a position among the non-AI rows of the catalog.
+            const int chosen = selected_index(provider_);
+            int seen = 0;
+            std::wstring_view selected_provider = providers.front().id;
+            for (const auto& provider : providers) {
+                if (provider.kind == ProviderInfo::Kind::ai) continue;
+                if (seen == chosen) {
+                    selected_provider = provider.id;
+                    break;
+                }
+                ++seen;
+            }
+            config_.set_string(L"translator.provider", selected_provider);
+        }
         config_.set_string(L"lang.zh_target",
                            zh_targets[std::clamp(selected_index(chinese_target_), 0,
                                                  static_cast<int>(zh_targets.size() - 1))].first);
-        config_.set_string(L"ocr.engine",
-                           ocr_engines[std::clamp(selected_index(ocr_engine_), 0,
-                                                  static_cast<int>(ocr_engines.size() - 1))].first);
         const int language_index = std::clamp(
             selected_index(ocr_languages_), 0,
             std::max(0, static_cast<int>(ocr_language_options_.size()) - 1));
         config_.set_strings(L"ocr.languages",
                             ocr_language_options_[static_cast<std::size_t>(language_index)]);
         config_.set_boolean(L"ocr.upscale", checkbox_checked(ocr_upscale_));
-        config_.set_string(L"ocr.azure_vision.endpoint", trim(text_of(azure_endpoint_)));
-        config_.set_string(L"ocr.azure_vision.key", trim(text_of(azure_key_)));
         config_.set_string(L"appearance.font_family", trim(text_of(font_family_)));
         const auto accent = trim(text_of(accent_));
         if (accent.size() != 7 || accent.front() != L'#') {
@@ -1963,8 +2172,7 @@ void SettingsWindow::start_connection_test() {
     if (test_thread_.joinable()) return;
     if (!save_values()) return;
     const auto provider = loaded_provider_;
-    const std::wstring options =
-        config_.object(L"translator." + provider).Stringify().c_str();
+    const std::wstring options = current_options_json();
     EnableWindow(test_button_, FALSE);
     test_pending_ = true;
     SetWindowTextW(test_status_, L"测试中…");
@@ -2020,16 +2228,12 @@ void SettingsWindow::discard_connection_test_results(HWND target) noexcept {
 
 void SettingsWindow::start_model_refresh() {
     if (model_thread_.joinable()) return;
-    const int index = std::clamp(selected_index(provider_), 0,
-                                 static_cast<int>(providers.size() - 1));
-    if (providers[static_cast<std::size_t>(index)].kind != ProviderInfo::Kind::ai) {
-        return;
-    }
+    if (selected_index(translator_class_) != 1) return;
     if (!save_values()) return;
 
     const std::wstring provider = loaded_provider_;
-    const std::wstring options =
-        config_.object(L"translator." + provider).Stringify().c_str();
+    const std::wstring profile = loaded_profile_;
+    const std::wstring options = current_options_json();
     const std::uint64_t generation = ++model_generation_;
     model_refreshing_ = true;
     test_pending_ = true;
@@ -2042,16 +2246,17 @@ void SettingsWindow::start_model_refresh() {
 
     const HWND target = window_;
     model_thread_ = std::jthread(
-        [target, generation, provider, options](std::stop_token stop) noexcept {
+        [target, generation, provider, profile,
+         options](std::stop_token stop) noexcept {
             try {
                 auto result = std::make_unique<ModelListResult>();
                 result->generation = generation;
                 result->provider = provider;
+                result->profile = profile;
                 try {
                     WinrtApartment apartment(winrt::apartment_type::multi_threaded);
                     TranslatorService service;
                     result->models = service.list_models(
-                        provider,
                         winrt::Windows::Data::Json::JsonObject::Parse(options),
                         stop);
                     result->cancelled = stop.stop_requested();
@@ -2080,15 +2285,12 @@ void SettingsWindow::start_model_refresh() {
 void SettingsWindow::finish_model_refresh(ModelListResult result) {
     if (model_thread_.joinable()) model_thread_.join();
     if (result.generation != model_generation_ ||
-        result.provider != loaded_provider_) {
+        result.profile != loaded_profile_) {
         return;
     }
     model_refreshing_ = false;
     test_pending_ = false;
-    const int index = std::clamp(selected_index(provider_), 0,
-                                 static_cast<int>(providers.size() - 1));
-    const bool model_provider =
-        providers[static_cast<std::size_t>(index)].kind == ProviderInfo::Kind::ai;
+    const bool model_provider = selected_index(translator_class_) == 1;
     EnableWindow(model_refresh_, model_provider);
     InvalidateRect(model_refresh_, nullptr, FALSE);
     if (result.cancelled) return;
@@ -2179,7 +2381,6 @@ void SettingsWindow::show_page(int index) {
             }
         }
         if (current_page_ == 1) refresh_provider_fields(false);
-        if (current_page_ == 2) refresh_ocr_fields();
         if (current_page_ == 3) refresh_close_fields();
         if (current_page_ == 5) refresh_text_translation();
         layout_controls();
@@ -2252,9 +2453,6 @@ void SettingsWindow::layout_controls() {
                    control_height, FALSE);
         move_field(field, logical_top, logical_width);
     };
-    const auto place_right = [&](HWND field, int logical_top, int logical_width = -1) {
-        move_field(field, logical_top, logical_width);
-    };
     const auto place_hint = [&](HWND hint, int logical_y, int logical_height,
                                 bool full_width = true) {
         if (!hint) return;
@@ -2295,86 +2493,86 @@ void SettingsWindow::layout_controls() {
         }
     } else if (current_page_ == 1) {
         auto& c = page_controls_[1];
+        const bool large_model = selected_index(translator_class_) == 1;
         int y = logical_content_top;
-        if (!c.empty()) place(c[0], provider_, y);
-        y += logical_setting_row_height + 26;
-        const int kind = std::clamp(selected_index(provider_), 0, static_cast<int>(providers.size() - 1));
-        const auto& provider_info = providers[kind];
-        const auto provider_kind = provider_info.kind;
-        const auto place_model = [&] {
-            place(provider_model_label_, provider_model_, y);
-            const int refresh_width = px(52, dpi_);
-            const int refresh_gap = px(6, dpi_);
-            const int model_width = std::max(px(110, dpi_),
-                                             field_width - refresh_gap - refresh_width);
-            const int control_top = px(y + 13, dpi_);
-            MoveWindow(provider_model_, field_left, control_top, model_width,
-                       px(260, dpi_), FALSE);
-            MoveWindow(model_refresh_, field_left + model_width + refresh_gap,
-                       control_top, refresh_width, control_height, FALSE);
-            y += logical_setting_row_height;
-        };
-        if (provider_kind == ProviderInfo::Kind::microsoft) {
-            place(provider_key_label_, provider_key_, y);
-            y += logical_setting_row_height;
-            place(provider_extra_label_, provider_extra_, y);
-            y += logical_setting_row_height;
-            place(provider_endpoint_label_, provider_endpoint_, y);
-            y += logical_setting_row_height;
-        } else if (provider_kind == ProviderInfo::Kind::google ||
-                   provider_kind == ProviderInfo::Kind::deepl) {
-            place(provider_key_label_, provider_key_, y);
-            y += logical_setting_row_height;
-        } else if (provider_kind == ProviderInfo::Kind::ai) {
-            if (provider_info.id == L"openai") {
-                place(provider_endpoint_label_, provider_endpoint_, y);
-                y += logical_setting_row_height;
-                place(provider_key_label_, provider_key_, y);
-                y += logical_setting_row_height;
-                place_model();
-            } else {
-                place(provider_key_label_, provider_key_, y);
-                y += logical_setting_row_height;
-                place_model();
-                place(provider_endpoint_label_, provider_endpoint_, y);
-                y += logical_setting_row_height;
-            }
-        }
-        if (provider_kind == ProviderInfo::Kind::deepl && IsWindowVisible(deepl_free_)) {
-            place_right(deepl_free_, y);
-            y += logical_setting_row_height;
-        }
-        place_right(test_button_, y, 84);
-        MoveWindow(test_status_, field_left + px(93, dpi_), px(y + 13, dpi_),
-                   std::max(1, inner_right - field_left - px(93, dpi_)),
-                   control_height, FALSE);
+        if (!c.empty()) place(c[0], translator_class_, y);
         y += logical_setting_row_height;
-        const int language_row = y + 64;
-        if (c.size() >= 15) place(c[13], chinese_target_, language_row);
-        if (c.size() >= 16) place_hint(c[15], language_row + 56, 24, true);
+        if (large_model) {
+            place(c[4], profile_select_, y);
+            const int gap = px(6, dpi_);
+            const int button_width = px(56, dpi_);
+            const int select_width = std::max(
+                px(110, dpi_),
+                field_width - gap * 2 - button_width * 2);
+            MoveWindow(profile_select_, field_left, px(y + 13, dpi_),
+                       select_width, px(260, dpi_), FALSE);
+            MoveWindow(profile_add_, field_left + select_width + gap,
+                       px(y + 13, dpi_), button_width, control_height, FALSE);
+            MoveWindow(profile_remove_,
+                       field_left + select_width + gap * 2 + button_width,
+                       px(y + 13, dpi_), button_width, control_height, FALSE);
+            y += logical_setting_row_height;
+            place(c[8], ai_protocol_, y);
+            y += logical_setting_row_height;
+        } else {
+            place(c[2], provider_, y);
+            y += logical_setting_row_height;
+        }
+        const auto place_row = [&](HWND label, HWND field, int top) {
+            place(label, field, top);
+            y = top + logical_setting_row_height;
+        };
+        const auto chosen = std::find_if(
+            providers.begin(), providers.end(),
+            [&](const ProviderInfo& value) { return value.id == loaded_provider_; });
+        const bool has_key = large_model ||
+            (chosen != providers.end() && chosen->kind != ProviderInfo::Kind::free);
+        if (has_key) place_row(provider_key_label_, provider_key_, y);
+        if (large_model) {
+            place_row(provider_endpoint_label_, provider_endpoint_, y);
+            place_row(provider_model_label_, provider_model_, y);
+        }
+        // 「获取模型」sits on its own row next to 「测试连接」 so that the model
+        // combo keeps the full width of the field column.
+        const int gap = px(6, dpi_);
+        const int button_width = px(84, dpi_);
+        if (large_model) {
+            MoveWindow(model_refresh_, field_left, px(y + 13, dpi_),
+                       button_width, control_height, FALSE);
+            MoveWindow(test_button_, field_left + button_width + gap,
+                       px(y + 13, dpi_), button_width, control_height, FALSE);
+            MoveWindow(test_status_, field_left + (button_width + gap) * 2,
+                       px(y + 13, dpi_),
+                       std::max(1, inner_right - field_left -
+                                       (button_width + gap) * 2),
+                       control_height, FALSE);
+        } else {
+            MoveWindow(test_button_, field_left, px(y + 13, dpi_),
+                       button_width, control_height, FALSE);
+            MoveWindow(test_status_, field_left + button_width + gap,
+                       px(y + 13, dpi_),
+                       std::max(1, inner_right - field_left - button_width - gap),
+                       control_height, FALSE);
+        }
+        y += logical_setting_row_height;
+        // The last control sits 13px into its row and is 34px tall, so the card
+        // has to reach a little past the row band before it can close below the
+        // buttons. paint() recomputes the same figure from the row count.
+        const int main_bottom = y + 8;
+        place_hint(provider_hint_, main_bottom + 6, 34, true);
+        const int language_top = main_bottom + 52;
+        place(c[20], chinese_target_, language_top + 47);
     } else if (current_page_ == 2) {
         auto& c = page_controls_[2];
-        if (c.size() >= 11) {
-            const int engine = selected_index(ocr_engine_);
+        if (c.size() >= 7) {
             place(c[0], ocr_engine_, 90);
-            int language_row = 133;
-            if (engine == 1 || engine == 2) {
-                MoveWindow(ocr_cloud_note_, field_left, px(144, dpi_),
-                           field_width, px(engine == 1 ? 34 : 38, dpi_), FALSE);
-                language_row = 179;
-            }
-            if (engine == 1) {
-                place(azure_endpoint_label_, azure_endpoint_, 175);
-                place(azure_key_label_, azure_key_, 218);
-                language_row = 261;
-            }
-            place(c[3], ocr_languages_, language_row);
-            const auto note_style = GetWindowLongPtrW(c[10], GWL_STYLE);
-            SetWindowLongPtrW(c[10], GWL_STYLE,
-                              (note_style & ~static_cast<LONG_PTR>(SS_TYPEMASK)) | SS_LEFT);
-            set_font(c[10], small_font_);
-            MoveWindow(c[10], field_left, px(language_row + 56, dpi_),
+            MoveWindow(ocr_engine_note_, field_left, px(133, dpi_),
                        field_width, px(24, dpi_), FALSE);
+            place(c[3], ocr_languages_, 165);
+            MoveWindow(c[6], field_left, px(221, dpi_), field_width,
+                       px(24, dpi_), FALSE);
+            MoveWindow(ocr_upscale_, inner_left, px(253, dpi_), px(230, dpi_),
+                       control_height, FALSE);
         }
     } else if (current_page_ == 3) {
         auto& c = page_controls_[3];
@@ -2391,11 +2589,13 @@ void SettingsWindow::layout_controls() {
         }
     } else if (current_page_ == 4) {
         auto& c = page_controls_[4];
-        if (c.size() >= 7) {
+        if (c.size() >= 8) {
             MoveWindow(autostart_, inner_left, px(103, dpi_),
                        px(230, dpi_), control_height, FALSE);
             MoveWindow(restart_, inner_left, px(167, dpi_),
                        px(84, dpi_), control_height, FALSE);
+            MoveWindow(check_updates_, inner_left + px(84, dpi_) + px(10, dpi_),
+                       px(167, dpi_), px(84, dpi_), control_height, FALSE);
             MoveWindow(c[1], 0, 0, 0, 0, FALSE);
 
             const int inset_x = std::max(
@@ -2409,7 +2609,7 @@ void SettingsWindow::layout_controls() {
                        std::max(1, px(30, dpi_) - inset_top - inset_bottom), FALSE);
             MoveWindow(open_config_, inner_left, px(329, dpi_),
                        px(149, dpi_), control_height, FALSE);
-            place_hint(c[5], 368, 38);
+            place_hint(c[6], 368, 38);
 
             MoveWindow(diagnostic_command_, inner_left + inset_x,
                        px(503, dpi_) + inset_top,
@@ -2585,72 +2785,35 @@ void SettingsWindow::paint() {
                        px(436, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     } else if (current_page_ == 1) {
-        const auto& provider = providers[std::clamp(
-            selected_index(provider_), 0, static_cast<int>(providers.size() - 1))];
-        const int field_count = provider.kind == ProviderInfo::Kind::microsoft ||
-                                provider.kind == ProviderInfo::Kind::ai
-                                    ? 3
-                                    : provider.kind == ProviderInfo::Kind::google ||
-                                      provider.kind == ProviderInfo::Kind::deepl
-                                          ? 1 : 0;
-        const int main_bottom = 219 + field_count * logical_setting_row_height;
+        const bool large_model = selected_index(translator_class_) == 1;
+        const auto chosen = std::find_if(
+            providers.begin(), providers.end(),
+            [&](const ProviderInfo& value) { return value.id == loaded_provider_; });
+        const bool has_key = large_model ||
+            (chosen != providers.end() && chosen->kind != ProviderInfo::Kind::free);
+        // Mirror the row arithmetic in layout_controls so the card hugs the
+        // fields: one row per selection block, then the credential rows and the
+        // button row. The extra 8px covers the bottom of the button controls,
+        // which start 13px into their row and are 34px tall.
+        int rows = 2;  // class row + provider/profile block
+        if (large_model) rows += 1;  // the profile block spans two rows
+        if (has_key) rows += 1;
+        if (large_model) rows += 2;  // base URL + model
+        rows += 1;                   // 获取模型 / 测试连接
+        const int main_bottom = logical_content_top +
+                                rows * logical_setting_row_height + 8;
         card(90, main_bottom);
-        std::wstring_view hint;
-        if (provider.id == L"microsoft") hint = L"免费层每月 200 万字符，国内可直连。";
-        else if (provider.id == L"microsoft_free") hint = L"无需密钥，模拟微软客户端签名；不是 Azure 正式开发者 API。";
-        else if (provider.id == L"google") hint = L"需要 Google Cloud 项目并启用 Translation API。";
-        else if (provider.id == L"google_free") hint = L"无需密钥，非官方接口，有频率限制；国内通常需要代理。";
-        else if (provider.id == L"bing_free") hint = L"无需密钥，使用必应网页接口；可能限流或随网页改版失效。";
-        else if (provider.id == L"tencent_free") hint = L"无需密钥，使用腾讯交互翻译网页接口；可能限流或改版。";
-        else if (provider.id == L"yandex_free") hint = L"无需密钥，使用 Yandex 移动端接口；国内网络可用性不固定。";
-        else if (provider.id == L"iciba_free") hint = L"无需密钥，使用词霸网页接口；适合中英文短文本。";
-        else if (provider.id == L"deepl") hint = L"译文质量高，免费版每月 50 万字符。";
-        else if (provider.id == L"openai") hint = L"填 base_url + key + model 即可对接 DeepSeek / 智谱 / 通义 / 本地 Ollama 等。";
-        else if (provider.id == L"nvidia") hint = L"到 build.nvidia.com 领取 nvapi- 开头的 Key，地址已预置，新账号有免费额度。";
-        else if (provider.id == L"anthropic") hint = L"使用 Claude 的 Messages API。";
-        draw_text(dc, hint,
-                  RECT{field_left, px(142, dpi_), inner_right, px(165, dpi_)},
-                  small_font_, color_text_dim,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
-        const int section_y = main_bottom + 20;
+        const int section_y = main_bottom + 52;
         section(L"语言", section_y);
         card(section_y + 26, section_y + 112);
     } else if (current_page_ == 2) {
-        const int engine = selected_index(ocr_engine_);
-        const int main_bottom = engine == 1 ? 348 : engine == 2 ? 266 : 223;
-        card(90, main_bottom);
-        const bool rapidocr_available = rapidocr_is_available();
-        int language_section = main_bottom + 18;
-        if (!rapidocr_available) {
-            section(L"识别不出艺术字？", main_bottom + 18);
-            card(main_bottom + 44, main_bottom + 164);
-            draw_text(dc,
-                      L"系统 OCR 是照着文档和界面文字训练的，视频封面、海报那种花体字/描边字基本读不出来。RapidOCR 明显更准（离线），代价是慢十几倍、体积大 200MB。",
-                      RECT{inner_left, px(main_bottom + 56, dpi_), inner_right,
-                           px(main_bottom + 91, dpi_)},
-                      small_font_, color_text_dim, DT_LEFT | DT_TOP | DT_WORDBREAK);
-            const RECT code_rect{inner_left, px(main_bottom + 96, dpi_), inner_right,
-                                 px(main_bottom + 128, dpi_)};
-            fill_round_rect(dc, code_rect, px(6, dpi_), RGB(16, 18, 22), color_line);
-            draw_text(dc, L"安装 ScreenTranslate.RapidOcr.dll 与 rapidocr-models",
-                      RECT{code_rect.left + px(11, dpi_), code_rect.top,
-                           code_rect.right - px(11, dpi_), code_rect.bottom},
-                      small_font_, RGB(159, 216, 180),
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            draw_text(dc, L"安装后重启本程序，引擎列表里会出现 RapidOCR。",
-                      RECT{inner_left, px(main_bottom + 132, dpi_), inner_right,
-                           px(main_bottom + 154, dpi_)},
-                      small_font_, color_text_dim,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            language_section = main_bottom + 184;
-        }
-        section(L"装其他语言", language_section);
-        card(language_section + 26, language_section + 82);
+        card(90, 300);
+        section(L"装其他语言", 320);
+        card(346, 430);
         draw_text(dc,
                   L"需要日语、韩语等语言时，到 Windows 设置添加该语言，再进入语言选项安装光学字符识别，装好后重启本程序即可。",
-                  RECT{inner_left, px(language_section + 38, dpi_), inner_right,
-                       px(language_section + 72, dpi_)},
+                  RECT{inner_left, px(358, dpi_), inner_right,
+                       px(392, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else if (current_page_ == 3) {
         const bool timeout = selected_index(close_mode_) == 1;
@@ -2704,7 +2867,7 @@ void SettingsWindow::paint() {
         draw_text(dc, L"装完之后每次开机自动到托盘待命，不会弹窗口。",
                   RECT{inner_left, px(132, dpi_), inner_right, px(153, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, L"换了 OCR 引擎、或者刚给 Windows 装完新的识别语言包，重启一下才会生效。",
+        draw_text(dc, L"刚给 Windows 装完新的识别语言包，重启一下才会生效。",
                   RECT{inner_left, px(205, dpi_), inner_right, px(229, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
@@ -3035,6 +3198,12 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
                 apply_control_theme(control);
             }
         }
+        // The hint labels use a smaller font than the rest of the page, so the
+        // rebuild above has to put that font back instead of leaving them
+        // stretched to the page font.
+        set_font(ocr_engine_note_, small_font_);
+        set_font(test_status_, small_font_);
+        set_font(provider_hint_, small_font_);
         layout_controls();
         RedrawWindow(window_, nullptr, nullptr,
                      RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
@@ -3129,19 +3298,74 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
                          RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
             return 0;
         }
+        if (id == id_translator_class && notification == CBN_SELCHANGE && !loading_) {
+            ScopedRedrawPause redraw_pause(window_);
+            save_provider_fields();
+            cancel_model_refresh(true);
+            refresh_provider_fields(true);
+            save_values(false);
+            layout_controls();
+            RedrawWindow(window_, nullptr, nullptr,
+                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            return 0;
+        }
         if (id == id_provider && notification == CBN_SELCHANGE && !loading_) {
             ScopedRedrawPause redraw_pause(window_);
             save_provider_fields();
             cancel_model_refresh(true);
-            loaded_provider_ = providers[std::clamp(selected_index(provider_), 0,
-                static_cast<int>(providers.size() - 1))].id;
+            // The provider combo lists only the traditional entries, so walking
+            // the catalog with the same skip rule keeps the mapping correct
+            // even if the AI row ever moves away from the end of the table.
+            const int chosen = selected_index(provider_);
+            int seen = 0;
+            loaded_provider_ = providers.front().id;
+            for (const auto& provider : providers) {
+                if (provider.kind == ProviderInfo::Kind::ai) continue;
+                if (seen == chosen) {
+                    loaded_provider_ = provider.id;
+                    break;
+                }
+                ++seen;
+            }
             config_.set_string(L"translator.provider", loaded_provider_);
             refresh_provider_fields(true);
             save_values(false);
+            layout_controls();
+            RedrawWindow(window_, nullptr, nullptr,
+                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            return 0;
+        }
+        if (source == profile_select_ &&
+            (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS) &&
+            !loading_) {
+            ScopedRedrawPause redraw_pause(window_);
+            save_profile_fields();
+            const auto selected = trim(text_of(profile_select_));
+            if (!selected.empty() && selected != loaded_profile_) {
+                loaded_profile_ = selected;
+                config_.set_string(L"translator.ai_selected", loaded_profile_);
+            }
+            cancel_model_refresh(true);
+            refresh_provider_fields(true);
+            save_values(false);
+            layout_controls();
+            RedrawWindow(window_, nullptr, nullptr,
+                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            return 0;
+        }
+        if (id == id_ai_protocol && notification == CBN_SELCHANGE && !loading_) {
+            save_values(false);
+            return 0;
+        }
+        if (id == id_profile_add && notification == BN_CLICKED) {
+            add_profile();
+            return 0;
+        }
+        if (id == id_profile_remove && notification == BN_CLICKED) {
+            remove_profile();
             return 0;
         }
         if (id == id_ocr_engine && notification == CBN_SELCHANGE) {
-            refresh_ocr_fields();
             save_values(false);
             layout_controls();
             RedrawWindow(window_, nullptr, nullptr,
@@ -3170,6 +3394,12 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             save_values(false);
             const auto arguments = L"/select,\"" + config_.path().wstring() + L"\"";
             ShellExecuteW(window_, L"open", L"explorer.exe", arguments.c_str(), nullptr, SW_SHOWNORMAL);
+            return 0;
+        }
+        if (id == id_check_updates && notification == BN_CLICKED) {
+            if (!save_values()) return 0;
+            cancel_model_refresh();
+            if (updates_callback_) updates_callback_();
             return 0;
         }
         if (id == id_restart && notification == BN_CLICKED) {
