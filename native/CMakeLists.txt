@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(ScreenTranslateNative VERSION 1.2.0 LANGUAGES CXX RC)
+project(ScreenTranslateNative VERSION 1.2.1 LANGUAGES CXX RC)
 
 set(SCREENTRANS_UPDATE_REPOSITORY_URL
     "https://github.com/Freyja04/ScreenTranslate"
