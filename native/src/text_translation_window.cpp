@@ -34,6 +34,8 @@ constexpr COLORREF color_text = RGB(231, 233, 236);
 constexpr COLORREF color_dim = RGB(148, 154, 164);
 constexpr COLORREF color_faint = RGB(110, 116, 126);
 constexpr COLORREF color_error = RGB(255, 107, 107);
+constexpr int quick_window_logical_width = 480;
+constexpr int quick_window_logical_height = 300;
 
 constexpr int id_target = 4101;
 constexpr int id_input = 4102;
@@ -548,8 +550,8 @@ void position_quick(HWND window) {
     MONITORINFO info{sizeof(info)};
     GetMonitorInfoW(monitor, &info);
     const int dpi = static_cast<int>(GetDpiForWindow(window));
-    const int width = scaled(720, dpi);
-    const int height = scaled(300, dpi);
+    const int width = scaled(quick_window_logical_width, dpi);
+    const int height = scaled(quick_window_logical_height, dpi);
     const int work_width = info.rcWork.right - info.rcWork.left;
     const int work_height = info.rcWork.bottom - info.rcWork.top;
     const int x = info.rcWork.left + (work_width - width) / 2;
@@ -563,8 +565,8 @@ void position_near_anchor(HWND window, POINT anchor) {
     MONITORINFO info{sizeof(info)};
     GetMonitorInfoW(monitor, &info);
     const int dpi = static_cast<int>(GetDpiForWindow(window));
-    const int width = scaled(720, dpi);
-    const int height = scaled(300, dpi);
+    const int width = scaled(quick_window_logical_width, dpi);
+    const int height = scaled(quick_window_logical_height, dpi);
     const int work_left = info.rcWork.left;
     const int work_top = info.rcWork.top;
     const int work_right = info.rcWork.right;
@@ -1055,7 +1057,8 @@ void QuickTranslateWindow::create_window(HWND owner) {
     register_window_class(instance_, quick_window_class, &QuickTranslateWindow::window_proc);
     window_ = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW, quick_window_class, L"快速翻译",
-        WS_POPUP | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 720, 300,
+        WS_POPUP | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
+        quick_window_logical_width, quick_window_logical_height,
         owner, nullptr, instance_, this);
     if (!window_) throw_last_error("create quick translation window");
     dpi_ = static_cast<int>(GetDpiForWindow(window_));
@@ -1121,8 +1124,6 @@ void QuickTranslateWindow::create_controls() {
                  MAKELPARAM(scaled(12, dpi_), scaled(12, dpi_)));
     SendMessageW(output_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
                  MAKELPARAM(scaled(12, dpi_), scaled(12, dpi_)));
-    SendMessageW(input_, EM_SETCUEBANNER, TRUE,
-                 reinterpret_cast<LPARAM>(L"输入文字，停顿后自动翻译"));
     SendMessageW(output_, EM_SETCUEBANNER, TRUE,
                  reinterpret_cast<LPARAM>(L"译文"));
     populate_targets(target_combo_);
@@ -1206,6 +1207,7 @@ void QuickTranslateWindow::refresh() {
     status_error_ = session_.state() == TextTranslationState::error ||
                     session_.state() == TextTranslationState::too_long;
     EnableWindow(copy_button_, !session_.output().empty());
+    InvalidateRect(input_, nullptr, FALSE);
     InvalidateRect(target_combo_, nullptr, FALSE);
     InvalidateRect(window_, nullptr, FALSE);
 }
@@ -1340,12 +1342,14 @@ void QuickTranslateWindow::paint() {
                     body.left + scaled(80, dpi_), divider_y + scaled(29, dpi_)},
                small_font_, output_focused ? accent_ : color_dim,
                DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    const auto status = session_status(session_);
-    draw_label(dc, status,
-               RECT{margin + scaled(2, dpi_), body.bottom + scaled(6, dpi_),
-                    client.right - margin, client.bottom - scaled(8, dpi_)},
-               small_font_, status_error_ ? color_error : color_dim,
-               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (session_.state() != TextTranslationState::idle) {
+        const auto status = session_status(session_);
+        draw_label(dc, status,
+                   RECT{margin + scaled(2, dpi_), body.bottom + scaled(6, dpi_),
+                        client.right - margin, client.bottom - scaled(8, dpi_)},
+                   small_font_, status_error_ ? color_error : color_dim,
+                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
     EndPaint(window_, &paint);
 }
 
@@ -1428,6 +1432,12 @@ void QuickTranslateWindow::self_test(HWND owner) {
         throw AppError("quick translation window self-test IME handling mismatch");
     }
     show(owner);
+    RECT quick_client{};
+    if (!GetClientRect(window_, &quick_client) ||
+        std::abs(quick_client.right - scaled(quick_window_logical_width, dpi_)) > 2 ||
+        std::abs(quick_client.bottom - scaled(quick_window_logical_height, dpi_)) > 2) {
+        throw AppError("quick translation window self-test size mismatch");
+    }
     RECT target_before_dropdown{};
     GetWindowRect(target_combo_, &target_before_dropdown);
     SendMessageW(target_combo_, CB_SHOWDROPDOWN, TRUE, 0);
@@ -1457,7 +1467,7 @@ void QuickTranslateWindow::self_test(HWND owner) {
         throw AppError("quick translation window self-test close button did not hide");
     }
     show(owner);
-    POINT drag_point{scaled(240, dpi_), scaled(34, dpi_)};
+    POINT drag_point{scaled(180, dpi_), scaled(34, dpi_)};
     ClientToScreen(window_, &drag_point);
     const auto drag_hit = SendMessageW(
         window_, WM_NCHITTEST, 0,
@@ -1507,6 +1517,32 @@ LRESULT CALLBACK QuickTranslateWindow::input_proc(HWND control, UINT message,
                                                   WPARAM wparam, LPARAM lparam,
                                                   UINT_PTR subclass_id, DWORD_PTR reference) {
     auto* self = reinterpret_cast<QuickTranslateWindow*>(reference);
+    if (message == WM_PAINT) {
+        const LRESULT result = DefSubclassProc(control, message, wparam, lparam);
+        if (self && control == self->input_ && window_text(control).empty()) {
+            // EM_SETCUEBANNER does not work on multiline edit controls, so
+            // paint the hint ourselves for the quick translation input.
+            HDC dc = GetDC(control);
+            if (dc) {
+                RECT bounds{};
+                GetClientRect(control, &bounds);
+                bounds.left += scaled(12, self->dpi_);
+                bounds.right -= scaled(12, self->dpi_);
+                bounds.top += scaled(6, self->dpi_);
+                if (bounds.right > bounds.left && bounds.bottom > bounds.top) {
+                    const HGDIOBJ previous = SelectObject(dc, self->small_font_);
+                    SetBkMode(dc, TRANSPARENT);
+                    SetTextColor(dc, color_faint);
+                    constexpr wchar_t hint[] = L"等待输入中...";
+                    DrawTextW(dc, hint, -1, &bounds,
+                              DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+                    SelectObject(dc, previous);
+                }
+                ReleaseDC(control, dc);
+            }
+        }
+        return result;
+    }
     if (self && message == WM_IME_STARTCOMPOSITION && self->callbacks_.composition_changed) {
         self->callbacks_.composition_changed(true);
     } else if (self && message == WM_IME_ENDCOMPOSITION && self->callbacks_.composition_changed) {
@@ -1572,7 +1608,10 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
     case WM_COMMAND:
         switch (LOWORD(wparam)) {
         case id_input:
-            if (HIWORD(wparam) == EN_CHANGE) on_input_changed();
+            if (HIWORD(wparam) == EN_CHANGE) {
+                InvalidateRect(input_, nullptr, FALSE);
+                on_input_changed();
+            }
             if (HIWORD(wparam) == EN_SETFOCUS || HIWORD(wparam) == EN_KILLFOCUS) {
                 InvalidateRect(window_, nullptr, FALSE);
             }

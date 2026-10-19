@@ -968,6 +968,17 @@ void SettingsWindow::self_test(HWND owner) {
     if ((GetWindowLongPtrW(ocr_languages_, GWL_STYLE) & WS_VISIBLE) == 0) {
         throw AppError("settings self-test hid the offline OCR language list");
     }
+    RECT ocr_engine_rect{};
+    RECT ocr_note_rect{};
+    RECT ocr_languages_rect{};
+    if (!GetWindowRect(ocr_engine_value_, &ocr_engine_rect) ||
+        !GetWindowRect(ocr_engine_note_, &ocr_note_rect) ||
+        !GetWindowRect(ocr_languages_, &ocr_languages_rect) ||
+        ocr_note_rect.top < ocr_engine_rect.bottom ||
+        ocr_note_rect.bottom > ocr_languages_rect.top ||
+        ocr_note_rect.bottom - ocr_note_rect.top < px(20, dpi_)) {
+        throw AppError("settings self-test OCR note is clipped");
+    }
     show_page(3);
     layout_controls();
     RECT copy_label_rect{};
@@ -1547,6 +1558,10 @@ void SettingsWindow::create_ocr_page() {
     ocr_engine_value_ = add_control(
         2, 0, L"STATIC", L"系统自带 OCR", SS_LEFT | SS_CENTERIMAGE, 0);
     ocr_engine_note_ = add_label(2, L"截图只在本地识别，不会上传到任何服务器。");
+    SetWindowLongPtrW(ocr_engine_note_, GWL_STYLE,
+                      (GetWindowLongPtrW(ocr_engine_note_, GWL_STYLE) &
+                       ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
+                          SS_LEFT | SS_CENTERIMAGE);
     set_font(ocr_engine_note_, small_font_);
     add_label(2, L"识别语言");
     ocr_languages_ = add_control(2, 0, L"COMBOBOX", L"",
@@ -2598,8 +2613,8 @@ void SettingsWindow::layout_controls() {
         auto& c = page_controls_[2];
         if (c.size() >= 7) {
             place(c[0], ocr_engine_value_, 90);
-            MoveWindow(ocr_engine_note_, field_left, px(133, dpi_),
-                       field_width, px(24, dpi_), FALSE);
+            MoveWindow(ocr_engine_note_, field_left, px(141, dpi_),
+                       field_width, px(30, dpi_), FALSE);
             place(c[3], ocr_languages_, 165);
             MoveWindow(c[6], field_left, px(221, dpi_), field_width,
                        px(24, dpi_), FALSE);
