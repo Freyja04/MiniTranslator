@@ -2799,7 +2799,7 @@ void SettingsWindow::paint() {
         int width = 0;
         for (const auto& row : rows) {
             SIZE measured{};
-            GetTextExtentPoint32W(dc, row.first.c_str(),
+            GetTextExtentPoint32W(dc, row.first.data(),
                                   static_cast<int>(row.first.size()), &measured);
             width = std::max(width, static_cast<int>(measured.cx));
         }
