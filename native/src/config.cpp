@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cwctype>
 #include <limits>
 #include <string_view>
 
@@ -174,7 +175,7 @@ JsonObject ConfigStore::defaults() {
       "lang":{"zh_target":"en"},
       "appearance":{
         "font_family":"Microsoft YaHei UI","min_font_px":9,"auto_copy":true,
-        "accent":"#28C76F"
+        "theme":"system"
       },
       "updates":{"manifest_url":"","repository_url":"","channel":"stable"},
       "autostart":false
@@ -218,19 +219,28 @@ void ConfigStore::load() {
             rewrite_migrated_values = true;
         }
     }
-    // Match the retained Python client's one-time migrations.  The old blue
-    // value was never user-selectable when it was the default, so carrying it
-    // forever would make upgraded installs look different from fresh ones.
-    if (root_.GetNamedObject(L"appearance").GetNamedString(L"accent", L"") ==
-        L"#4C8DFF") {
-        root_.GetNamedObject(L"appearance").SetNamedValue(
-            L"accent", JsonValue::CreateStringValue(L"#28C76F"));
-        rewrite_migrated_values = true;
-    }
-    // The result window no longer has configurable close behavior, so drop
-    // the retired keys instead of carrying them in every rewritten config.
     const auto appearance = root_.GetNamedObject(L"appearance");
-    for (const auto* retired : {L"close_mode", L"timeout_ms"}) {
+    std::wstring configured_theme =
+        appearance.GetNamedString(L"theme", L"system").c_str();
+    std::transform(configured_theme.begin(), configured_theme.end(),
+                   configured_theme.begin(),
+                   [](wchar_t value) { return static_cast<wchar_t>(std::towlower(value)); });
+    if (configured_theme != L"system" && configured_theme != L"light" &&
+        configured_theme != L"dark") {
+        appearance.SetNamedValue(
+            L"theme", JsonValue::CreateStringValue(L"system"));
+        rewrite_migrated_values = true;
+    } else {
+        const winrt::hstring current =
+            appearance.GetNamedString(L"theme", L"system");
+        if (std::wstring(current.c_str()) != configured_theme) {
+            appearance.SetNamedValue(
+                L"theme", JsonValue::CreateStringValue(configured_theme));
+            rewrite_migrated_values = true;
+        }
+    }
+    // Custom accent colors are gone; themes now own the shared accent.
+    for (const auto* retired : {L"close_mode", L"timeout_ms", L"accent"}) {
         const winrt::hstring key(retired);
         if (appearance.HasKey(key)) {
             appearance.Remove(key);

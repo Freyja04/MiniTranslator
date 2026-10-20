@@ -26,6 +26,7 @@ public:
     void show(HWND owner);
     void show_translation(HWND owner);
     void show_text_translation(HWND owner);
+    void refresh_appearance();
     void attach_text_translation(TextTranslationSession& session,
                                  TextTranslationCallbacks callbacks);
     void detach_text_translation() noexcept;
@@ -164,7 +165,7 @@ private:
     HWND ocr_languages_{};
     HWND ocr_upscale_{};
     HWND font_family_{};
-    HWND accent_{};
+    HWND theme_mode_{};
     HWND close_value_{};
     HWND auto_copy_{};
     HWND autostart_{};

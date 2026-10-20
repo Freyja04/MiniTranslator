@@ -1,6 +1,7 @@
 #include "result_window.hpp"
 
 #include "capture.hpp"
+#include "theme.hpp"
 #include "util.hpp"
 
 #include <commctrl.h>
@@ -375,11 +376,11 @@ void ResultWindow::create_control_bar() {
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
         control_bar_, nullptr, instance_, nullptr);
     if (control_bar_tooltip_) {
-        SetWindowTheme(control_bar_tooltip_, L"DarkMode_Explorer", nullptr);
+        theme::apply_control_theme(control_bar_tooltip_);
         SendMessageW(control_bar_tooltip_, TTM_SETTIPBKCOLOR,
-                     static_cast<WPARAM>(RGB(38, 40, 46)), 0);
+                     static_cast<WPARAM>(theme::color_card), 0);
         SendMessageW(control_bar_tooltip_, TTM_SETTIPTEXTCOLOR,
-                     static_cast<WPARAM>(RGB(242, 243, 245)), 0);
+                     static_cast<WPARAM>(theme::color_text), 0);
         SetWindowPos(control_bar_tooltip_, HWND_TOPMOST, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         for (std::size_t index = 0; index < command_ids.size(); ++index) {
@@ -596,9 +597,9 @@ void ResultWindow::paint_control_bar() {
             ID2D1SolidColorBrush* edge = nullptr;
             target->CreateSolidColorBrush(d2d_color(RGB(0, 0, 0), 46.0F / 255.0F),
                                           &shadow);
-            target->CreateSolidColorBrush(d2d_color(RGB(28, 30, 36), 242.0F / 255.0F),
+            target->CreateSolidColorBrush(d2d_color(theme::color_card, 242.0F / 255.0F),
                                           &background);
-            target->CreateSolidColorBrush(d2d_color(RGB(255, 255, 255), 26.0F / 255.0F),
+            target->CreateSolidColorBrush(d2d_color(theme::color_line, 120.0F / 255.0F),
                                           &edge);
             const float radius = static_cast<float>(height) * 0.5F;
             const auto pill = D2D1::RoundedRect(
@@ -617,7 +618,7 @@ void ResultWindow::paint_control_bar() {
             if (edge) edge->Release();
 
             ID2D1SolidColorBrush* dots = nullptr;
-            target->CreateSolidColorBrush(d2d_color(RGB(255, 255, 255), 80.0F / 255.0F),
+            target->CreateSolidColorBrush(d2d_color(theme::color_text_dim, 130.0F / 255.0F),
                                           &dots);
             if (dots) {
                 const float scale = static_cast<float>(GetDpiForWindow(window_)) / 96.0F;
@@ -651,7 +652,7 @@ void ResultWindow::paint_control_bar() {
                             &hover);
                     } else {
                         target->CreateSolidColorBrush(
-                            d2d_color(RGB(255, 255, 255),
+                            d2d_color(theme::color_text,
                                       pressed ? 74.0F / 255.0F : 46.0F / 255.0F),
                             &hover);
                     }
@@ -674,7 +675,7 @@ void ResultWindow::paint_control_bar() {
                                 static_cast<float>(bounds.top) + inset,
                                 static_cast<float>(bounds.right) - inset,
                                 static_cast<float>(bounds.bottom) - inset),
-                    RGB(255, 255, 255),
+                    theme::color_text,
                     hovered ? 245.0F / 255.0F
                             : enabled ? 200.0F / 255.0F : 82.0F / 255.0F);
             }
@@ -1267,7 +1268,7 @@ void ResultWindow::paint() {
         const int left = static_cast<int>(std::lround(eased * travel));
         RECT progress{left, 0, std::min(client_width, left + progress_width),
                       std::min(client_height, dpi_value(window_, 2))};
-        HBRUSH accent = CreateSolidBrush(appearance_.accent);
+        HBRUSH accent = CreateSolidBrush(theme::accent);
         FillRect(dc, &progress, accent);
         DeleteObject(accent);
     } else if (!resizing_ && !error_.empty()) {
@@ -1305,7 +1306,7 @@ void ResultWindow::paint() {
         if (inner_dark.right > inner_dark.left && inner_dark.bottom > inner_dark.top) {
             alpha_frame(dc, inner_dark, dark_border, RGB(0, 0, 0), 90);
         }
-        alpha_frame(dc, frame_bounds, border, appearance_.accent, 255);
+        alpha_frame(dc, frame_bounds, border, theme::accent, 255);
 
         const int handle = dpi_value(window_, 8);
         if (handles_alpha_ > 0.04 && width >= dpi_value(window_, 56)
@@ -1320,7 +1321,7 @@ void ResultWindow::paint() {
             for (const auto [column, row] : positions) {
                 const RECT handle_bounds{xs[column], ys[row],
                                          xs[column] + handle, ys[row] + handle};
-                draw_alpha_handle(dc, handle_bounds, appearance_.accent,
+                draw_alpha_handle(dc, handle_bounds, theme::accent,
                                   handles_alpha_, corner);
             }
         }
@@ -1341,9 +1342,9 @@ void ResultWindow::paint() {
                 alpha_fill_region(dc, badge_region, badge.bounds, RGB(18, 20, 24), 232);
                 DeleteObject(badge_region);
             }
-            const int red = std::min(255, static_cast<int>(GetRValue(appearance_.accent)) * 118 / 100);
-            const int green = std::min(255, static_cast<int>(GetGValue(appearance_.accent)) * 118 / 100);
-            const int blue = std::min(255, static_cast<int>(GetBValue(appearance_.accent)) * 118 / 100);
+            const int red = std::min(255, static_cast<int>(GetRValue(theme::accent)) * 118 / 100);
+            const int green = std::min(255, static_cast<int>(GetGValue(theme::accent)) * 118 / 100);
+            const int blue = std::min(255, static_cast<int>(GetBValue(theme::accent)) * 118 / 100);
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, RGB(red, green, blue));
             RECT badge_text = badge.bounds;
@@ -1376,6 +1377,11 @@ LRESULT ResultWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
     switch (message) {
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: paint(); return 0;
+    case theme::changed_message:
+        destroy_control_bar();
+        create_control_bar();
+        InvalidateRect(window_, nullptr, FALSE);
+        return 0;
     case WM_MOVE:
         sync_control_bar();
         return 0;

@@ -22,7 +22,7 @@ public:
     SelectionOverlay(const SelectionOverlay&) = delete;
     SelectionOverlay& operator=(const SelectionOverlay&) = delete;
 
-    bool start(std::wstring_view accent,
+    bool start(COLORREF accent,
                SelectedCallback selected,
                CancelledCallback cancelled = {});
     void close();

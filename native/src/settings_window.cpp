@@ -3,6 +3,7 @@
 #include "hotkey.hpp"
 #include "language.hpp"
 #include "resource.h"
+#include "theme.hpp"
 #include "translator.hpp"
 #include "util.hpp"
 
@@ -40,7 +41,7 @@ constexpr int id_provider = 7010;
 constexpr int id_test = 7013;
 constexpr int id_open_config = 7014;
 constexpr int id_restart = 7015;
-constexpr int id_accent = 7016;
+constexpr int id_theme_mode = 7016;
 constexpr int id_refresh_models = 7017;
 constexpr int id_text_target = 7018;
 constexpr int id_text_input = 7019;
@@ -58,32 +59,62 @@ constexpr UINT_PTR hotkey_subclass_id = 2;
 constexpr UINT_PTR edit_subclass_id = 3;
 constexpr UINT_PTR combo_edit_subclass_id = 4;
 
-constexpr COLORREF color_sidebar = RGB(16, 17, 22);
-constexpr COLORREF color_page = RGB(21, 22, 27);
-constexpr COLORREF color_card = RGB(27, 29, 35);
-constexpr COLORREF color_input = RGB(33, 36, 41);
-constexpr COLORREF color_line = RGB(40, 43, 51);
-constexpr COLORREF color_line_high = RGB(52, 56, 66);
-constexpr COLORREF color_text = RGB(231, 233, 236);
-constexpr COLORREF color_text_dim = RGB(148, 154, 164);
-constexpr COLORREF color_text_faint = RGB(110, 116, 126);
-constexpr COLORREF color_bad = RGB(255, 107, 107);
-constexpr COLORREF color_ok = RGB(78, 209, 139);
+using theme::color_bad;
+using theme::color_card;
+using theme::color_input;
+using theme::color_line;
+using theme::color_line_high;
+using theme::color_ok;
+using theme::color_page;
+using theme::color_sidebar;
+using theme::color_text;
+using theme::color_text_dim;
+using theme::color_text_faint;
 
 constexpr int logical_sidebar_width = 166;
 constexpr int logical_page_margin = 28;
 constexpr int logical_content_top = 90;
+constexpr int logical_control_height = 34;
+constexpr int logical_card_padding = 12;
+constexpr int logical_row_gap = 12;
+constexpr int logical_hint_gap = 6;
+constexpr int logical_hint_height = 20;
+constexpr int logical_panel_header_height = 30;
+constexpr int logical_section_gap = 16;
+constexpr int logical_section_height = 20;
+constexpr int logical_section_to_card = 8;
+constexpr int logical_panel_gap = 14;
 constexpr int logical_field_min_offset = 56;
 constexpr int logical_field_max_offset = 180;
 constexpr int logical_label_gap = 10;
-constexpr int logical_setting_row_height = 43;
-constexpr int logical_control_height = 34;
+constexpr int logical_setting_row_height = logical_control_height + logical_row_gap;
 constexpr int logical_edit_inset_x = 3;
 constexpr int logical_edit_inset_top = 8;
 constexpr int logical_edit_inset_bottom = 4;
 constexpr int logical_edit_corner_radius = 8;
 constexpr int logical_field_text_offset_y = 0;
 constexpr int logical_combo_edit_offset_y = 4;
+
+constexpr int logical_translation_toolbar_bottom =
+    logical_content_top + logical_control_height + logical_card_padding * 2;
+constexpr int logical_translation_input_panel_top =
+    logical_translation_toolbar_bottom + logical_panel_gap;
+constexpr int logical_translation_input_panel_bottom =
+    logical_translation_input_panel_top + logical_panel_header_height + 118 +
+    logical_card_padding;
+constexpr int logical_translation_output_panel_top =
+    logical_translation_input_panel_bottom + logical_panel_gap;
+constexpr int logical_translation_output_panel_bottom =
+    logical_translation_output_panel_top + logical_panel_header_height + 150 +
+    logical_card_padding;
+constexpr int logical_window_height = 650;
+constexpr int logical_status_height = 20;
+constexpr int logical_status_margin = 8;
+constexpr int logical_status_bottom_margin = 11;
+constexpr int logical_status_top =
+    logical_window_height - logical_status_bottom_margin - logical_status_height;
+constexpr int logical_content_limit =
+    logical_status_top - logical_status_margin;
 
 constexpr std::array<std::wstring_view, 6> page_names{
     L"快捷键", L"翻译接口", L"截图识别", L"显示", L"其他", L"文本翻译",
@@ -119,16 +150,9 @@ std::size_t navigation_index_for_page(int page) noexcept {
         ? 0U : static_cast<std::size_t>(std::distance(navigation_page_order.begin(), found));
 }
 
-constexpr std::array<std::pair<std::wstring_view, COLORREF>, 8> accent_swatches{{
-    {L"#28C76F", RGB(40, 199, 111)},
-    {L"#4C8DFF", RGB(76, 141, 255)},
-    {L"#8C7CF0", RGB(140, 124, 240)},
-    {L"#FF7A45", RGB(255, 122, 69)},
-    {L"#F45B7A", RGB(244, 91, 122)},
-    {L"#F2C744", RGB(242, 199, 68)},
-    {L"#00C2C7", RGB(0, 194, 199)},
-    {L"#E8EAEE", RGB(232, 234, 238)},
-}};
+constexpr std::array<std::wstring_view, 3> theme_modes{
+    L"跟随系统", L"浅色", L"深色",
+};
 
 class ScopedRedrawPause {
 public:
@@ -371,35 +395,13 @@ void style_combo_popup(HWND combo, int dpi, HFONT font) noexcept {
 
     COMBOBOXINFO info{sizeof(info)};
     if (!GetComboBoxInfo(combo, &info) || !info.hwndList) return;
-    SetWindowTheme(info.hwndList, L"DarkMode_Explorer", nullptr);
-    constexpr DWORD immersive_dark_mode = 20;
-    constexpr DWORD window_corner_preference = 33;
-    constexpr int round_small = 3;
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(info.hwndList, immersive_dark_mode, &dark, sizeof(dark));
-    DwmSetWindowAttribute(info.hwndList, window_corner_preference,
-                          &round_small, sizeof(round_small));
+    theme::apply_window_theme(info.hwndList);
     const LONG_PTR ex_style = GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE);
     SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE,
                       ex_style & ~static_cast<LONG_PTR>(WS_EX_CLIENTEDGE));
     SetWindowPos(info.hwndList, nullptr, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                      SWP_FRAMECHANGED);
-}
-
-void enable_dark_frame(HWND window) noexcept {
-    constexpr DWORD immersive_dark_mode = 20;
-    constexpr DWORD border_color = 34;
-    constexpr DWORD caption_color = 35;
-    constexpr DWORD caption_text_color = 36;
-    BOOL enabled = TRUE;
-    DwmSetWindowAttribute(window, immersive_dark_mode, &enabled, sizeof(enabled));
-    const COLORREF border = color_line_high;
-    const COLORREF caption = color_sidebar;
-    const COLORREF text = color_text;
-    DwmSetWindowAttribute(window, border_color, &border, sizeof(border));
-    DwmSetWindowAttribute(window, caption_color, &caption, sizeof(caption));
-    DwmSetWindowAttribute(window, caption_text_color, &text, sizeof(text));
 }
 
 struct ProviderInfo {
@@ -752,7 +754,7 @@ void SettingsWindow::self_test(HWND owner) {
     RECT client{};
     GetClientRect(window_, &client);
     if (std::abs(client.right - px(790, dpi_)) > 2 ||
-        std::abs(client.bottom - px(610, dpi_)) > 2) {
+        std::abs(client.bottom - px(logical_window_height, dpi_)) > 2) {
         throw AppError("settings self-test client size differs from Python reference");
     }
     if ((GetWindowLongPtrW(status_, GWL_STYLE) & WS_VISIBLE) != 0) {
@@ -797,14 +799,16 @@ void SettingsWindow::self_test(HWND owner) {
         throw AppError("settings self-test OCR engine display mismatch");
     }
     show_page(0);
-    if (page_controls_[0].size() < 3 ||
-        text_of(page_controls_[0][2]) != L"收起 / 显示") {
-        throw AppError("settings self-test hotkey label differs from Python reference");
-    }
-    if (page_controls_[0].size() < 7 ||
-        text_of(page_controls_[0][4]) != L"快速文字翻译" ||
+    const auto& hotkey_controls = page_controls_[0];
+    if (hotkey_controls.size() < 7 ||
+        text_of(hotkey_controls[0]) != L"文本翻译" ||
+        hotkey_controls[1] != text_hotkey_ ||
+        text_of(hotkey_controls[2]) != L"框选翻译" ||
+        hotkey_controls[3] != capture_hotkey_ ||
+        text_of(hotkey_controls[4]) != L"收起 / 显示" ||
+        hotkey_controls[5] != toggle_hotkey_ ||
         text_of(text_hotkey_) != L"Ctrl+Alt+Space") {
-        throw AppError("settings self-test quick translation hotkey is missing");
+        throw AppError("settings self-test hotkey order mismatch");
     }
     std::wstring hotkey_error;
     const auto capture_spec = parse_hotkey(L"Ctrl+Alt+Q", &hotkey_error);
@@ -834,6 +838,14 @@ void SettingsWindow::self_test(HWND owner) {
         std::abs(hotkey_width - (text_rect.right - text_rect.left)) > 1 ||
         std::abs(hotkey_rect.right - toggle_rect.right) > 1 ||
         std::abs(hotkey_rect.right - text_rect.right) > 1 ||
+        std::abs((hotkey_rect.top - text_rect.top) -
+                 px(logical_control_height + logical_hint_gap +
+                        logical_hint_height + logical_row_gap,
+                    dpi_)) > 3 ||
+        std::abs((toggle_rect.top - hotkey_rect.top) -
+                 px(logical_control_height + logical_hint_gap +
+                        logical_hint_height + logical_row_gap,
+                    dpi_)) > 3 ||
         std::abs(hotkey_height - expected_hotkey_height) > 2) {
         throw AppError("settings self-test hotkey text inset mismatch");
     }
@@ -971,13 +983,17 @@ void SettingsWindow::self_test(HWND owner) {
     RECT ocr_engine_rect{};
     RECT ocr_note_rect{};
     RECT ocr_languages_rect{};
+    RECT ocr_installed_note_rect{};
     if (!GetWindowRect(ocr_engine_value_, &ocr_engine_rect) ||
         !GetWindowRect(ocr_engine_note_, &ocr_note_rect) ||
         !GetWindowRect(ocr_languages_, &ocr_languages_rect) ||
+        !GetWindowRect(page_controls_[2][6], &ocr_installed_note_rect) ||
         ocr_note_rect.top < ocr_engine_rect.bottom ||
         ocr_note_rect.bottom > ocr_languages_rect.top ||
-        ocr_note_rect.bottom - ocr_note_rect.top < px(20, dpi_)) {
-        throw AppError("settings self-test OCR note is clipped");
+        ocr_note_rect.bottom - ocr_note_rect.top < px(20, dpi_) ||
+        std::abs((ocr_note_rect.top - ocr_engine_rect.top) -
+                 (ocr_installed_note_rect.top - ocr_languages_rect.top)) > 1) {
+        throw AppError("settings self-test OCR note spacing mismatch");
     }
     show_page(3);
     layout_controls();
@@ -1003,6 +1019,41 @@ void SettingsWindow::self_test(HWND owner) {
     if (!check_updates_ || text_of(check_updates_) != L"检查更新" ||
         (GetWindowLongPtrW(check_updates_, GWL_STYLE) & WS_VISIBLE) == 0) {
         throw AppError("settings self-test update command is missing");
+    }
+    const int content_limit = px(logical_content_limit, dpi_);
+    RECT status_bounds{};
+    if (!GetWindowRect(status_, &status_bounds) ||
+        !MapWindowPoints(HWND_DESKTOP, window_,
+                         reinterpret_cast<POINT*>(&status_bounds), 2)) {
+        throw AppError("settings self-test could not measure the footer");
+    }
+    const int footer_top = status_bounds.top;
+    for (int page = 0; page < static_cast<int>(page_controls_.size()); ++page) {
+        show_page(page);
+        if (page == 1) {
+            SendMessageW(translator_class_, CB_SETCURSEL, 1, 0);
+            refresh_provider_fields(false);
+        }
+        layout_controls();
+        for (const HWND control : page_controls_[static_cast<std::size_t>(page)]) {
+            if (!control || (GetWindowLongPtrW(control, GWL_STYLE) & WS_VISIBLE) == 0) {
+                continue;
+            }
+            RECT bounds{};
+            if (!GetWindowRect(control, &bounds) ||
+                !MapWindowPoints(HWND_DESKTOP, window_,
+                                 reinterpret_cast<POINT*>(&bounds), 2)) {
+                throw AppError("settings self-test could not measure page controls");
+            }
+            if (bounds.bottom > std::min(content_limit,
+                                         footer_top - px(logical_status_margin, dpi_))) {
+                throw AppError("settings self-test page content overlaps the footer");
+            }
+        }
+        if (page == 1) {
+            SendMessageW(translator_class_, CB_SETCURSEL, 0, 0);
+            refresh_provider_fields(false);
+        }
     }
     DestroyWindow(window_);
     window_ = nullptr;
@@ -1052,7 +1103,7 @@ void SettingsWindow::create_window(HWND owner) {
     // the complete descendant tree before presenting it so owner-drawn buttons
     // and editable combo boxes never expose their default light erase frame.
     constexpr DWORD extended_style = WS_EX_APPWINDOW | WS_EX_COMPOSITED;
-    RECT desired{0, 0, px(790, dpi_), px(610, dpi_)};
+    RECT desired{0, 0, px(790, dpi_), px(logical_window_height, dpi_)};
     AdjustWindowRectExForDpi(&desired, style, FALSE, extended_style,
                              static_cast<UINT>(dpi_));
     const int width = desired.right - desired.left;
@@ -1068,7 +1119,7 @@ void SettingsWindow::create_window(HWND owner) {
         if (!window_error_.empty()) throw AppError(window_error_);
         throw_last_error("create settings window");
     }
-    enable_dark_frame(window_);
+    theme::apply_window_theme(window_, true, true);
 }
 
 HWND SettingsWindow::add_control(int page, DWORD ex_style, const wchar_t* type,
@@ -1121,6 +1172,26 @@ void SettingsWindow::create_theme_resources() {
     input_background_ = CreateSolidBrush(color_input);
 }
 
+void SettingsWindow::refresh_appearance() {
+    if (!window_) return;
+    create_theme_resources();
+    for (const auto button : navigation_) set_font(button, font_);
+    set_font(status_, small_font_);
+    for (auto& controls : page_controls_) {
+        for (const auto control : controls) {
+            set_font(control, font_);
+            apply_control_theme(control);
+        }
+    }
+    set_font(ocr_engine_note_, small_font_);
+    set_font(test_status_, small_font_);
+    set_font(provider_hint_, small_font_);
+    theme::apply_window_theme(window_, true, true);
+    layout_controls();
+    RedrawWindow(window_, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
+}
+
 void SettingsWindow::apply_control_theme(HWND control) {
     if (!control) return;
     wchar_t class_name_buffer[32]{};
@@ -1144,10 +1215,10 @@ void SettingsWindow::apply_control_theme(HWND control) {
         SetWindowSubclass(control, &SettingsWindow::edit_proc, edit_subclass_id,
                           reinterpret_cast<DWORD_PTR>(this));
     } else if (_wcsicmp(class_name_buffer, L"ComboBox") == 0) {
-        SetWindowTheme(control, L"DarkMode_Explorer", nullptr);
+        theme::apply_control_theme(control);
         COMBOBOXINFO info{sizeof(info)};
         if (GetComboBoxInfo(control, &info) && info.hwndItem && info.hwndItem != control) {
-            SetWindowTheme(info.hwndItem, L"DarkMode_Explorer", nullptr);
+            theme::apply_control_theme(info.hwndItem);
             set_font(info.hwndItem, font_);
             SendMessageW(info.hwndItem, EM_SETMARGINS,
                          EC_LEFTMARGIN | EC_RIGHTMARGIN,
@@ -1161,7 +1232,7 @@ void SettingsWindow::apply_control_theme(HWND control) {
                           reinterpret_cast<DWORD_PTR>(this));
         align_combo_edit(control, dpi_);
     } else {
-        SetWindowTheme(control, L"DarkMode_Explorer", nullptr);
+        theme::apply_control_theme(control);
     }
 }
 
@@ -1388,9 +1459,7 @@ void SettingsWindow::draw_combo(HWND control, HDC dc) {
     FillRect(dc, &rect, card_background_);
     const bool enabled = IsWindowEnabled(control) != FALSE;
     const bool focused = GetFocus() == control || IsChild(control, GetFocus());
-    wchar_t accent_text[16]{L'#', L'2', L'8', L'C', L'7', L'6', L'F', L'\0'};
-    if (accent_) GetWindowTextW(accent_, accent_text, static_cast<int>(std::size(accent_text)));
-    const COLORREF accent = parse_rgb_color(accent_text);
+    const COLORREF accent = theme::accent;
     fill_round_rect(dc, rect, px(6, dpi_), color_input,
                     focused ? accent : color_line);
 
@@ -1463,6 +1532,10 @@ void SettingsWindow::create_controls() {
 }
 
 void SettingsWindow::create_hotkey_page() {
+    add_label(0, L"文本翻译");
+    text_hotkey_ = add_control(0, 0, L"EDIT", L"",
+                               ES_AUTOHSCROLL | ES_CENTER | ES_READONLY |
+                               WS_BORDER | WS_TABSTOP);
     add_label(0, L"框选翻译");
     capture_hotkey_ = add_control(0, 0, L"EDIT", L"",
                                   ES_AUTOHSCROLL | ES_CENTER | ES_READONLY |
@@ -1471,10 +1544,6 @@ void SettingsWindow::create_hotkey_page() {
     toggle_hotkey_ = add_control(0, 0, L"EDIT", L"",
                                  ES_AUTOHSCROLL | ES_CENTER | ES_READONLY |
                                  WS_BORDER | WS_TABSTOP);
-    add_label(0, L"快速文字翻译");
-    text_hotkey_ = add_control(0, 0, L"EDIT", L"",
-                               ES_AUTOHSCROLL | ES_CENTER | ES_READONLY |
-                               WS_BORDER | WS_TABSTOP);
     SetWindowSubclass(capture_hotkey_, &SettingsWindow::hotkey_proc,
                       hotkey_subclass_id, reinterpret_cast<DWORD_PTR>(this));
     SetWindowSubclass(toggle_hotkey_, &SettingsWindow::hotkey_proc,
@@ -1611,6 +1680,15 @@ void SettingsWindow::create_ocr_page() {
 }
 
 void SettingsWindow::create_appearance_page() {
+    add_label(3, L"主题");
+    theme_mode_ = add_control(3, 0, L"COMBOBOX", L"",
+                              CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED |
+                                  CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP,
+                              id_theme_mode);
+    for (const auto mode : theme_modes) {
+        SendMessageW(theme_mode_, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(mode.data()));
+    }
     add_label(3, L"译文字体");
     font_family_ = add_control(3, 0, L"COMBOBOX", L"",
                                CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED |
@@ -1619,8 +1697,6 @@ void SettingsWindow::create_appearance_page() {
         SendMessageW(font_family_, CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(family.c_str()));
     }
-    add_label(3, L"强调色");
-    accent_ = add_control(3, 0, L"BUTTON", L"", BS_OWNERDRAW | WS_TABSTOP, id_accent);
     add_label(3, L"关闭方式");
     // Only one close behavior is offered, so render it as a value instead of
     // a one-item drop-down.
@@ -1741,9 +1817,11 @@ void SettingsWindow::load_values() {
     select_combo(ocr_languages_, language_index);
     set_checkbox(ocr_upscale_, config_.boolean(L"ocr.upscale", true));
 
+    const int theme_index = theme::mode == theme::Mode::light ? 1
+                          : theme::mode == theme::Mode::dark ? 2 : 0;
+    select_combo(theme_mode_, theme_index);
     select_combo_text(font_family_,
                       config_.string(L"appearance.font_family", L"Microsoft YaHei UI"));
-    SetWindowTextW(accent_, config_.string(L"appearance.accent", L"#28C76F").c_str());
     set_checkbox(auto_copy_, config_.boolean(L"appearance.auto_copy", true));
     set_checkbox(autostart_, autostart_enabled());
     SetWindowTextW(config_path_, config_.path().c_str());
@@ -2120,12 +2198,13 @@ bool SettingsWindow::save_values(bool) {
         config_.set_strings(L"ocr.languages",
                             ocr_language_options_[static_cast<std::size_t>(language_index)]);
         config_.set_boolean(L"ocr.upscale", checkbox_checked(ocr_upscale_));
+        const int theme_selection = std::clamp(selected_index(theme_mode_), 0, 2);
+        const auto theme_mode =
+            theme::mode_name(static_cast<theme::Mode>(theme_selection));
+        const bool theme_changed = config_.string(L"appearance.theme", L"system") !=
+                                   theme_mode;
+        config_.set_string(L"appearance.theme", theme_mode);
         config_.set_string(L"appearance.font_family", trim(text_of(font_family_)));
-        const auto accent = trim(text_of(accent_));
-        if (accent.size() != 7 || accent.front() != L'#') {
-            throw AppError("强调色必须写成 #RRGGBB");
-        }
-        config_.set_string(L"appearance.accent", accent);
         config_.set_boolean(L"appearance.auto_copy", checkbox_checked(auto_copy_));
         const bool autostart = checkbox_checked(autostart_);
         if (autostart != old_autostart) set_autostart(autostart);
@@ -2144,6 +2223,7 @@ bool SettingsWindow::save_values(bool) {
             applied_hotkeys = true;
         }
         config_.save();
+        if (theme_changed) theme::apply_mode(static_cast<theme::Mode>(theme_selection));
         if (settings_changed_callback_) settings_changed_callback_();
         set_status(L"");
         return true;
@@ -2401,9 +2481,13 @@ void SettingsWindow::layout_controls() {
         MoveWindow(navigation_[index], px(12, dpi_), px(18 + static_cast<int>(index) * 42, dpi_),
                    std::max(1, sidebar - px(24, dpi_)), px(38, dpi_), FALSE);
     }
-    MoveWindow(status_, sidebar + px(logical_page_margin, dpi_), height - px(31, dpi_),
+    const int status_top = height - px(logical_status_bottom_margin +
+                                           logical_status_height,
+                                       dpi_);
+    MoveWindow(status_, sidebar + px(logical_page_margin, dpi_),
+               status_top,
                std::max(1, width - sidebar - px(logical_page_margin * 2, dpi_)),
-               px(20, dpi_), FALSE);
+               px(logical_status_height, dpi_), FALSE);
 
     const int card_left = sidebar + px(logical_page_margin, dpi_);
     const int card_right = width - px(logical_page_margin, dpi_);
@@ -2476,7 +2560,7 @@ void SettingsWindow::layout_controls() {
         const bool combo = _wcsicmp(type, L"ComboBox") == 0;
         const bool edit = _wcsicmp(type, L"Edit") == 0;
         const int requested = logical_width < 0 ? field_width : px(logical_width, dpi_);
-        const int field_top = px(logical_top + 13, dpi_);
+        const int field_top = px(logical_top, dpi_);
         const int inset_x = edit
             ? std::max(1, px(logical_edit_inset_x, dpi_)) : 0;
         const int inset_top = edit
@@ -2494,7 +2578,7 @@ void SettingsWindow::layout_controls() {
         SetWindowLongPtrW(label, GWL_STYLE,
                           (label_style & ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
                           SS_LEFT | SS_CENTERIMAGE);
-        const int label_top = px(logical_top + 13, dpi_);
+        const int label_top = px(logical_top, dpi_);
         MoveWindow(label, inner_left, label_top, label_width,
                    control_height, FALSE);
         move_field(field, logical_top, logical_width);
@@ -2513,13 +2597,13 @@ void SettingsWindow::layout_controls() {
 
     if (current_page_ == 0) {
         auto& c = page_controls_[0];
-        if (c.size() >= 7) {
-            const auto place_hotkey = [&](HWND label, HWND edit, int top) {
+        if (c.size() >= 8) {
+            const auto place_hotkey = [&](HWND label, HWND edit, int logical_top) {
                 const auto label_style = GetWindowLongPtrW(label, GWL_STYLE);
                 SetWindowLongPtrW(label, GWL_STYLE,
                                   (label_style & ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
                                       SS_LEFT | SS_CENTERIMAGE);
-                MoveWindow(label, inner_left, px(top, dpi_), label_width,
+                MoveWindow(label, inner_left, px(logical_top, dpi_), label_width,
                            px(34, dpi_), FALSE);
                 const int inset_x = std::max(
                     1, px(logical_edit_inset_x, dpi_));
@@ -2528,19 +2612,23 @@ void SettingsWindow::layout_controls() {
                 const int inset_bottom = std::max(
                     1, px(logical_edit_inset_bottom, dpi_));
                 MoveWindow(edit, field_left + inset_x,
-                           px(top, dpi_) + inset_top,
+                           px(logical_top, dpi_) + inset_top,
                            std::max(1, field_width - inset_x * 2),
                            px(34, dpi_) - inset_top - inset_bottom, FALSE);
             };
-            place_hotkey(c[0], capture_hotkey_, 103);
-            place_hotkey(c[2], toggle_hotkey_, 180);
-            place_hotkey(c[4], text_hotkey_, 257);
+            const int first_top = logical_content_top + logical_card_padding;
+            const int block_height = logical_control_height + logical_hint_gap +
+                                     logical_hint_height;
+            const int stride = block_height + logical_row_gap;
+            place_hotkey(c[0], text_hotkey_, first_top);
+            place_hotkey(c[2], capture_hotkey_, first_top + stride);
+            place_hotkey(c[4], toggle_hotkey_, first_top + stride * 2);
             MoveWindow(c[6], 0, 0, 0, 0, FALSE);
         }
     } else if (current_page_ == 1) {
         auto& c = page_controls_[1];
         const bool large_model = selected_index(translator_class_) == 1;
-        int y = logical_content_top;
+        int y = logical_content_top + logical_card_padding;
         if (!c.empty()) place(c[0], translator_class_, y);
         y += logical_setting_row_height;
         if (large_model) {
@@ -2550,13 +2638,13 @@ void SettingsWindow::layout_controls() {
             const int select_width = std::max(
                 px(110, dpi_),
                 field_width - gap * 2 - button_width * 2);
-            MoveWindow(profile_select_, field_left, px(y + 13, dpi_),
+            MoveWindow(profile_select_, field_left, px(y, dpi_),
                        select_width, px(260, dpi_), FALSE);
             MoveWindow(profile_add_, field_left + select_width + gap,
-                       px(y + 13, dpi_), button_width, control_height, FALSE);
+                       px(y, dpi_), button_width, control_height, FALSE);
             MoveWindow(profile_remove_,
                        field_left + select_width + gap * 2 + button_width,
-                       px(y + 13, dpi_), button_width, control_height, FALSE);
+                       px(y, dpi_), button_width, control_height, FALSE);
             y += logical_setting_row_height;
             place(c[8], ai_protocol_, y);
             y += logical_setting_row_height;
@@ -2583,83 +2671,126 @@ void SettingsWindow::layout_controls() {
         const int gap = px(6, dpi_);
         const int button_width = px(84, dpi_);
         if (large_model) {
-            MoveWindow(model_refresh_, field_left, px(y + 13, dpi_),
+            MoveWindow(model_refresh_, field_left, px(y, dpi_),
                        button_width, control_height, FALSE);
             MoveWindow(test_button_, field_left + button_width + gap,
-                       px(y + 13, dpi_), button_width, control_height, FALSE);
+                       px(y, dpi_), button_width, control_height, FALSE);
             MoveWindow(test_status_, field_left + (button_width + gap) * 2,
-                       px(y + 13, dpi_),
+                       px(y, dpi_),
                        std::max(1, inner_right - field_left -
                                        (button_width + gap) * 2),
                        control_height, FALSE);
         } else {
-            MoveWindow(test_button_, field_left, px(y + 13, dpi_),
+            MoveWindow(test_button_, field_left, px(y, dpi_),
                        button_width, control_height, FALSE);
             MoveWindow(test_status_, field_left + button_width + gap,
-                       px(y + 13, dpi_),
+                       px(y, dpi_),
                        std::max(1, inner_right - field_left - button_width - gap),
                        control_height, FALSE);
         }
         y += logical_setting_row_height;
-        // The last control sits 13px into its row and is 34px tall, so the card
-        // has to reach a little past the row band before it can close below the
-        // buttons. paint() recomputes the same figure from the row count.
-        const int main_bottom = y + 8;
-        MoveWindow(provider_hint_, field_left, px(main_bottom + 6, dpi_),
+        const int hint_top = y - logical_row_gap + logical_hint_gap;
+        MoveWindow(provider_hint_, field_left, px(hint_top, dpi_),
                    field_width, px(34, dpi_), FALSE);
-        const int language_top = main_bottom + 52;
-        place(c[20], chinese_target_, language_top + 47);
+        const int main_bottom = hint_top + 34 + logical_card_padding;
+        const int section_top = main_bottom + logical_section_gap;
+        const int language_card_top =
+            section_top + logical_section_height + logical_section_to_card;
+        place(c[20], chinese_target_,
+              language_card_top + logical_card_padding);
     } else if (current_page_ == 2) {
         auto& c = page_controls_[2];
         if (c.size() >= 7) {
-            place(c[0], ocr_engine_value_, 90);
-            MoveWindow(ocr_engine_note_, field_left, px(141, dpi_),
-                       field_width, px(30, dpi_), FALSE);
-            place(c[3], ocr_languages_, 165);
-            MoveWindow(c[6], field_left, px(221, dpi_), field_width,
-                       px(24, dpi_), FALSE);
-            MoveWindow(ocr_upscale_, field_left, px(253, dpi_), px(230, dpi_),
+            const int engine_top = logical_content_top + logical_card_padding;
+            const int block_height = logical_control_height + logical_hint_gap +
+                                     logical_hint_height;
+            const int language_top = engine_top + block_height + logical_row_gap;
+            place(c[0], ocr_engine_value_, engine_top);
+            MoveWindow(ocr_engine_note_, field_left,
+                       px(engine_top + logical_control_height + logical_hint_gap,
+                          dpi_),
+                       field_width, px(logical_hint_height, dpi_), FALSE);
+            place(c[3], ocr_languages_, language_top);
+            MoveWindow(c[6], field_left,
+                       px(language_top + logical_control_height + logical_hint_gap,
+                          dpi_),
+                       field_width, px(logical_hint_height, dpi_), FALSE);
+            const int upscale_top = language_top + block_height + logical_row_gap;
+            MoveWindow(ocr_upscale_, field_left, px(upscale_top, dpi_), px(230, dpi_),
                        control_height, FALSE);
         }
     } else if (current_page_ == 3) {
         auto& c = page_controls_[3];
         if (c.size() >= 8) {
-            place(c[0], font_family_, 90);
-            place(c[2], accent_, 163);
-            place(c[4], close_value_, 250);
-            place(c[7], auto_copy_, 293);
+            const int first_top = logical_content_top + logical_card_padding;
+            const int theme_top = first_top;
+            const int font_top = theme_top + logical_setting_row_height;
+            const int font_block_height = logical_control_height +
+                                          logical_hint_gap + logical_hint_height +
+                                          logical_row_gap;
+            const int close_top = font_top + font_block_height;
+            place(c[0], theme_mode_, theme_top);
+            place(c[2], font_family_, font_top);
+            place(c[4], close_value_, close_top);
+            place(c[7], auto_copy_, close_top + logical_setting_row_height);
         }
     } else if (current_page_ == 4) {
         auto& c = page_controls_[4];
         if (c.size() >= 8) {
-            MoveWindow(autostart_, inner_left, px(103, dpi_),
+            const int first_top = logical_content_top + logical_card_padding;
+            MoveWindow(autostart_, inner_left, px(first_top, dpi_),
                        px(230, dpi_), control_height, FALSE);
-            MoveWindow(restart_, inner_left, px(167, dpi_),
+            const int separator_top = first_top + logical_control_height +
+                                      logical_hint_gap + logical_hint_height +
+                                      logical_row_gap;
+            const int actions_top = separator_top + logical_row_gap;
+            MoveWindow(restart_, inner_left, px(actions_top, dpi_),
                        px(84, dpi_), control_height, FALSE);
             MoveWindow(check_updates_, inner_left + px(84, dpi_) + px(10, dpi_),
-                       px(167, dpi_), px(84, dpi_), control_height, FALSE);
+                       px(actions_top, dpi_), px(84, dpi_), control_height, FALSE);
             MoveWindow(c[1], 0, 0, 0, 0, FALSE);
 
+            const int config_section_top = actions_top + logical_control_height +
+                                           logical_hint_gap + logical_hint_height +
+                                           logical_card_padding + logical_section_gap;
+            const int config_card_top = config_section_top + logical_section_height +
+                                        logical_section_to_card;
+            const int config_path_top = config_card_top + logical_card_padding;
             const int inset_x = std::max(
                 1, px(logical_edit_inset_x, dpi_));
             const int inset_top = std::max(
                 1, px(logical_edit_inset_top, dpi_));
             const int inset_bottom = std::max(
                 1, px(logical_edit_inset_bottom, dpi_));
-            MoveWindow(config_path_, inner_left + inset_x, px(296, dpi_) + inset_top,
+            MoveWindow(config_path_, inner_left + inset_x,
+                       px(config_path_top, dpi_) + inset_top,
                        std::max(1, available_width - inset_x * 2),
-                       std::max(1, px(30, dpi_) - inset_top - inset_bottom), FALSE);
-            MoveWindow(open_config_, inner_left, px(329, dpi_),
+                       std::max(1, control_height - inset_top - inset_bottom), FALSE);
+            const int open_top = config_path_top + logical_setting_row_height;
+            MoveWindow(open_config_, inner_left, px(open_top, dpi_),
                        px(149, dpi_), control_height, FALSE);
-            place_hint(c[6], 368, 38);
+            const int config_hint_top = open_top + logical_control_height +
+                                        logical_hint_gap;
+            place_hint(c[6], config_hint_top, 40);
 
+            const int diagnostic_section_top = config_hint_top + 40 +
+                                               logical_card_padding +
+                                               logical_section_gap;
+            const int diagnostic_card_top = diagnostic_section_top +
+                                            logical_section_height +
+                                            logical_section_to_card;
+            const int diagnostic_hint_top = diagnostic_card_top +
+                                            logical_card_padding;
+            const int diagnostic_command_top = diagnostic_hint_top + 40 +
+                                               logical_row_gap;
             MoveWindow(diagnostic_command_, inner_left + inset_x,
-                       px(503, dpi_) + inset_top,
+                       px(diagnostic_command_top, dpi_) + inset_top,
                        std::max(1, available_width - inset_x * 2),
-                       std::max(1, px(34, dpi_) - inset_top - inset_bottom), FALSE);
+                       std::max(1, control_height - inset_top - inset_bottom), FALSE);
         }
     } else if (current_page_ == 5) {
-        const int toolbar_top = px(90, dpi_);
+        const int toolbar_top =
+            px(logical_content_top + logical_card_padding, dpi_);
         const int target_left = inner_left + px(68, dpi_);
         MoveWindow(text_target_, target_left, toolbar_top, px(166, dpi_),
                    px(318, dpi_), FALSE);
@@ -2674,19 +2805,23 @@ void SettingsWindow::layout_controls() {
         MoveWindow(text_clear_, right - px(54, dpi_), toolbar_top,
                    px(54, dpi_), control_height, FALSE);
 
-        MoveWindow(text_input_, card_left + px(13, dpi_), px(166, dpi_),
+        MoveWindow(text_input_, card_left + px(13, dpi_),
+                   px(logical_translation_input_panel_top +
+                          logical_panel_header_height,
+                      dpi_),
                    std::max(1, card_right - card_left - px(26, dpi_)),
                    px(118, dpi_), FALSE);
-        MoveWindow(text_output_, card_left + px(13, dpi_), px(345, dpi_),
+        MoveWindow(text_output_, card_left + px(13, dpi_),
+                   px(logical_translation_output_panel_top +
+                          logical_panel_header_height,
+                      dpi_),
                    std::max(1, card_right - card_left - px(26, dpi_)),
-                   px(143, dpi_), FALSE);
+                   px(150, dpi_), FALSE);
     }
 }
 
 void SettingsWindow::paint() {
-    wchar_t accent_text[16]{L'#', L'2', L'8', L'C', L'7', L'6', L'F', L'\0'};
-    if (accent_) GetWindowTextW(accent_, accent_text, static_cast<int>(std::size(accent_text)));
-    const COLORREF accent = parse_rgb_color(accent_text);
+    const COLORREF accent = theme::accent;
     PAINTSTRUCT state{};
     HDC target = BeginPaint(window_, &state);
     if (!target) {
@@ -2736,7 +2871,7 @@ void SettingsWindow::paint() {
     const int text_right = field_left - px(logical_label_gap, dpi_);
     draw_text(dc, page_names[static_cast<std::size_t>(current_page_)],
               RECT{card_left, px(20, dpi_), card_right, px(48, dpi_)},
-              title_font_, RGB(242, 243, 246), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+              title_font_, color_text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     draw_text(dc, page_subtitles[static_cast<std::size_t>(current_page_)],
               RECT{card_left, px(50, dpi_), card_right, px(72, dpi_)},
               small_font_, color_text_dim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -2817,30 +2952,51 @@ void SettingsWindow::paint() {
         }
     };
     if (current_page_ == 0) {
-        card(90, 341);
+        const int first_top = logical_content_top + logical_card_padding;
+        const int block_height = logical_control_height + logical_hint_gap +
+                                 logical_hint_height;
+        const int stride = block_height + logical_row_gap;
+        const int main_bottom = first_top + stride * 3 - logical_row_gap +
+                                logical_card_padding;
+        card(logical_content_top, main_bottom);
+        draw_text(dc, L"弹出聚焦式输入框；Esc 或再次按快捷键隐藏",
+                  RECT{field_left,
+                       px(first_top + logical_control_height + logical_hint_gap, dpi_),
+                       inner_right,
+                       px(first_top + logical_control_height + logical_hint_gap +
+                              logical_hint_height, dpi_)},
+                  small_font_, color_text_dim,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         draw_text(dc, L"按下后拉框，松手立刻翻译",
-                  RECT{field_left, px(143, dpi_), inner_right,
-                       px(162, dpi_)},
+                  RECT{field_left,
+                       px(first_top + stride + logical_control_height +
+                              logical_hint_gap, dpi_),
+                       inner_right,
+                       px(first_top + stride + logical_control_height +
+                              logical_hint_gap + logical_hint_height, dpi_)},
                   small_font_, color_text_dim,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         draw_text(dc, L"同一个键来回切：译文开着就收进托盘，收着就叫回来",
-                  RECT{field_left, px(220, dpi_), inner_right,
-                       px(239, dpi_)},
+                  RECT{field_left,
+                       px(first_top + stride * 2 + logical_control_height +
+                              logical_hint_gap, dpi_),
+                       inner_right,
+                       px(first_top + stride * 2 + logical_control_height +
+                              logical_hint_gap + logical_hint_height, dpi_)},
                   small_font_, color_text_dim,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        draw_text(dc, L"弹出聚焦式输入框；Esc 或再次按快捷键隐藏",
-                  RECT{field_left, px(297, dpi_), inner_right,
-                       px(316, dpi_)},
-                  small_font_, color_text_dim,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        section(L"框选时", 361);
-        card(387, 448);
+        const int section_top = main_bottom + logical_section_gap;
+        section(L"框选时", section_top);
+        const int selection_card_top =
+            section_top + logical_section_height + logical_section_to_card;
+        const int selection_rows_top = selection_card_top + logical_card_padding;
+        card(selection_card_top, selection_rows_top + 36 + logical_card_padding);
         const std::array<std::pair<std::wstring_view, std::wstring_view>, 2>
             selection_rows{{
                 {L"拖动鼠标", L"画出要翻译的区域，松手立刻识别并翻译"},
                 {L"Esc / 右键", L"取消这次框选"},
             }};
-        draw_key_rows(selection_rows, 400, 18);
+        draw_key_rows(selection_rows, selection_rows_top, 18);
     } else if (current_page_ == 1) {
         const bool large_model = selected_index(translator_class_) == 1;
         const auto chosen = std::find_if(
@@ -2848,76 +3004,135 @@ void SettingsWindow::paint() {
             [&](const ProviderInfo& value) { return value.id == loaded_provider_; });
         const bool has_key = large_model ||
             (chosen != providers.end() && chosen->kind != ProviderInfo::Kind::free);
-        // Mirror the row arithmetic in layout_controls so the card hugs the
-        // fields: one row per selection block, then the credential rows and the
-        // button row. The extra 8px covers the bottom of the button controls,
-        // which start 13px into their row and are 34px tall.
-        int rows = 2;  // class row + provider/profile block
-        if (large_model) rows += 1;  // the profile block spans two rows
-        if (has_key) rows += 1;
-        if (large_model) rows += 2;  // base URL + model
-        rows += 1;                   // 获取模型 / 测试连接
-        const int main_bottom = logical_content_top +
-                                rows * logical_setting_row_height + 8;
-        card(90, main_bottom);
-        const int section_y = main_bottom + 52;
+        // Mirror the row arithmetic in layout_controls so the card's top and
+        // bottom breathing room stay identical.
+        int last_top = logical_content_top + logical_card_padding;
+        last_top += logical_setting_row_height;  // class
+        last_top += logical_setting_row_height;  // provider/profile
+        if (large_model) last_top += logical_setting_row_height;
+        if (has_key) last_top += logical_setting_row_height;
+        if (large_model) last_top += logical_setting_row_height * 2;
+        const int hint_top = last_top + logical_control_height + logical_hint_gap;
+        const int main_bottom = hint_top + 34 + logical_card_padding;
+        card(logical_content_top, main_bottom);
+        const int section_y = main_bottom + logical_section_gap;
         section(L"语言", section_y);
-        card(section_y + 26, section_y + 112);
+        const int language_card_top =
+            section_y + logical_section_height + logical_section_to_card;
+        card(language_card_top, language_card_top + logical_card_padding +
+                                      logical_control_height + logical_card_padding);
     } else if (current_page_ == 2) {
-        card(90, 300);
-        section(L"装其他语言", 320);
-        card(346, 430);
+        const int first_top = logical_content_top + logical_card_padding;
+        const int block_height = logical_control_height + logical_hint_gap +
+                                 logical_hint_height;
+        const int language_top = first_top + block_height + logical_row_gap;
+        const int upscale_top = language_top + block_height + logical_row_gap;
+        const int main_bottom =
+            upscale_top + logical_control_height + logical_card_padding;
+        card(logical_content_top, main_bottom);
+        const int language_section_top = main_bottom + logical_section_gap;
+        section(L"安装其他语言", language_section_top);
+        const int language_card_top = language_section_top +
+                                      logical_section_height +
+                                      logical_section_to_card;
+        const int note_top = language_card_top + logical_card_padding;
+        card(language_card_top, note_top + 40 + logical_card_padding);
         draw_text(dc,
                   L"需要日语、韩语等语言时，到 Windows 设置添加该语言，再进入语言选项安装光学字符识别，装好后重启本程序即可。",
-                  RECT{inner_left, px(358, dpi_), inner_right,
-                       px(392, dpi_)},
+                  RECT{inner_left, px(note_top, dpi_), inner_right,
+                       px(note_top + 40, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else if (current_page_ == 3) {
-        const int main_bottom = 354;
-        card(90, main_bottom);
+        const int first_top = logical_content_top + logical_card_padding;
+        const int theme_block_height = logical_control_height + logical_row_gap;
+        const int font_block_height = logical_control_height + logical_hint_gap +
+                                      logical_hint_height + logical_row_gap;
+        const int close_top = first_top + theme_block_height + font_block_height;
+        const int main_bottom = close_top + logical_setting_row_height +
+                                logical_control_height + logical_card_padding;
+        card(logical_content_top, main_bottom);
+        const int font_top = first_top + theme_block_height;
         draw_text(dc,
                   L"只列出能显示中文的字体——没有汉字的字体会让译文退化成系统替换字，很难看。",
-                  RECT{field_left, px(143, dpi_), inner_right, px(166, dpi_)},
+                  RECT{field_left,
+                       px(font_top + logical_control_height + logical_hint_gap, dpi_),
+                       inner_right,
+                       px(font_top + logical_control_height + logical_hint_gap +
+                              logical_hint_height, dpi_)},
                   small_font_, color_text_dim,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        draw_text(dc,
-                  L"框选边框、八个拖拽手柄、进度条和菜单高亮都用这个颜色。改完立刻生效；已经开着的译文窗口保持原色，下一个才换。",
-                  RECT{field_left, px(210, dpi_), inner_right, px(239, dpi_)},
-                  small_font_, color_text_dim, DT_LEFT | DT_TOP | DT_WORDBREAK);
-        separator(247);
-
     } else if (current_page_ == 4) {
-        card(90, 238);
-        separator(156);
+        const int first_top = logical_content_top + logical_card_padding;
+        const int separator_top = first_top + logical_control_height +
+                                  logical_hint_gap + logical_hint_height +
+                                  logical_row_gap;
+        const int actions_top = separator_top + logical_row_gap;
+        const int main_bottom = actions_top + logical_control_height +
+                                logical_hint_gap + logical_hint_height +
+                                logical_card_padding;
+        card(logical_content_top, main_bottom);
+        separator(separator_top);
         draw_text(dc, L"装完之后每次开机自动到托盘待命，不会弹窗口。",
-                  RECT{inner_left, px(132, dpi_), inner_right, px(153, dpi_)},
+                  RECT{inner_left,
+                       px(first_top + logical_control_height + logical_hint_gap, dpi_),
+                       inner_right,
+                       px(first_top + logical_control_height + logical_hint_gap +
+                              logical_hint_height, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         draw_text(dc, L"刚给 Windows 装完新的识别语言包，重启一下才会生效。",
-                  RECT{inner_left, px(205, dpi_), inner_right, px(229, dpi_)},
+                  RECT{inner_left,
+                       px(actions_top + logical_control_height + logical_hint_gap,
+                          dpi_),
+                       inner_right,
+                       px(actions_top + logical_control_height + logical_hint_gap +
+                              logical_hint_height, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-        section(L"配置文件", 258);
-        card(283, 405);
+        const int config_section_top = main_bottom + logical_section_gap;
+        section(L"配置文件", config_section_top);
+        const int config_card_top = config_section_top + logical_section_height +
+                                    logical_section_to_card;
+        const int config_path_top = config_card_top + logical_card_padding;
+        const int open_top = config_path_top + logical_setting_row_height;
+        const int config_hint_top = open_top + logical_control_height +
+                                    logical_hint_gap;
+        const int config_bottom = config_hint_top + 40 + logical_card_padding;
+        card(config_card_top, config_bottom);
 
-        section(L"出问题时", 427);
-        card(452, 550);
+        const int diagnostic_section_top = config_bottom + logical_section_gap;
+        section(L"出问题时", diagnostic_section_top);
+        const int diagnostic_card_top = diagnostic_section_top +
+                                        logical_section_height +
+                                        logical_section_to_card;
+        const int diagnostic_note_top = diagnostic_card_top + logical_card_padding;
+        const int diagnostic_command_top =
+            diagnostic_note_top + 40 + logical_row_gap;
+        card(diagnostic_card_top,
+             diagnostic_command_top + logical_control_height + logical_card_padding);
         draw_text(dc,
                   L"命令行跑一次自检，会逐项检查 OCR 语言包 → 文字识别 → 译文排版 → 翻译接口 → 全局快捷键，一眼看出断在哪一环：",
-                  RECT{inner_left, px(466, dpi_), inner_right, px(497, dpi_)},
+                  RECT{inner_left, px(diagnostic_note_top, dpi_), inner_right,
+                       px(diagnostic_note_top + 40, dpi_)},
                   small_font_, color_text_dim,
                   DT_LEFT | DT_TOP | DT_WORDBREAK);
     } else if (current_page_ == 5) {
-        card(82, 132);
+        const int toolbar_top = logical_content_top;
+        card(toolbar_top, toolbar_top + logical_control_height +
+                              logical_card_padding * 2);
         draw_text(dc, L"目标语言",
-                  RECT{inner_left, px(90, dpi_), inner_left + px(62, dpi_),
-                       px(124, dpi_)},
+                  RECT{inner_left, px(toolbar_top + logical_card_padding, dpi_),
+                       inner_left + px(62, dpi_),
+                       px(toolbar_top + logical_card_padding +
+                              logical_control_height, dpi_)},
                   small_font_, color_text_dim,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-        const RECT input_panel{card_left, px(144, dpi_), card_right,
-                               px(299, dpi_)};
-        const RECT output_panel{card_left, px(311, dpi_), card_right,
-                                px(503, dpi_)};
+        const RECT input_panel{
+            card_left, px(logical_translation_input_panel_top, dpi_), card_right,
+            px(logical_translation_input_panel_bottom, dpi_)};
+        const RECT output_panel{
+            card_left, px(logical_translation_output_panel_top, dpi_), card_right,
+            px(logical_translation_output_panel_bottom, dpi_)};
         fill_round_rect(dc, input_panel, px(7, dpi_), color_input,
                         GetFocus() == text_input_ ? accent : color_line);
         fill_round_rect(dc, output_panel, px(7, dpi_), color_input,
@@ -2946,14 +3161,26 @@ void SettingsWindow::paint() {
             const bool error = text_session_->state() == TextTranslationState::error ||
                                text_session_->state() == TextTranslationState::too_long;
             draw_text(dc, text_translation_status(*text_session_),
-                      RECT{card_left + px(2, dpi_), px(513, dpi_),
-                           card_right, px(537, dpi_)},
+                      RECT{card_left + px(2, dpi_),
+                           px(logical_translation_output_panel_bottom +
+                                  logical_hint_gap,
+                              dpi_),
+                           card_right,
+                           px(logical_translation_output_panel_bottom +
+                                  logical_hint_gap + logical_hint_height,
+                              dpi_)},
                       small_font_, error ? color_bad : color_text_dim,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
         draw_text(dc, L"自动选择会把中文译成设置的目标语言，其他语言译成简体中文。",
-                  RECT{card_left + px(2, dpi_), px(537, dpi_),
-                       card_right, px(558, dpi_)},
+                  RECT{card_left + px(2, dpi_),
+                       px(logical_translation_output_panel_bottom +
+                              logical_hint_gap + logical_hint_height + 2,
+                          dpi_),
+                       card_right,
+                       px(logical_translation_output_panel_bottom +
+                              logical_hint_gap + logical_hint_height * 2 + 2,
+                          dpi_)},
                   small_font_, color_text_faint,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
@@ -2995,8 +3222,7 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
     const bool pressed = (item.itemState & ODS_SELECTED) != 0;
     const bool hot = (item.itemState & ODS_HOTLIGHT) != 0;
     const bool focused = (item.itemState & ODS_FOCUS) != 0;
-    const COLORREF accent = parse_rgb_color(accent_ ? text_of(accent_) :
-                                         config_.string(L"appearance.accent", L"#28C76F"));
+    const COLORREF accent = theme::accent;
 
     if (item.CtlType == ODT_COMBOBOX) {
         const bool list_item = (item.itemState & ODS_COMBOBOXEDIT) == 0;
@@ -3031,9 +3257,7 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
         if (!list_item) {
             OffsetRect(&rect, 0, px(logical_field_text_offset_y, dpi_));
         }
-        draw_text(dc, value, rect, font_, disabled ? color_text_faint
-                                                    : selected ? RGB(244, 247, 245)
-                                                               : color_text,
+        draw_text(dc, value, rect, font_, disabled ? color_text_faint : color_text,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         if (!list_item) {
             HPEN pen = CreatePen(PS_SOLID, px(2, dpi_), color_text_dim);
@@ -3054,13 +3278,13 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
         const int navigation_index = static_cast<int>(item.CtlID) - id_nav_first;
         const int page = navigation_page_order[static_cast<std::size_t>(navigation_index)];
         const bool active = page == current_page_;
-        const COLORREF fill = pressed ? RGB(35, 39, 47)
-                              : active ? RGB(35, 39, 47)
-                              : hot ? RGB(27, 30, 37) : color_sidebar;
+        const COLORREF fill = pressed ? theme::color_hover
+                              : active ? theme::color_hover
+                              : hot ? color_line : color_sidebar;
         FillRect(dc, &rect, sidebar_background_);
         fill_round_rect(dc, rect, px(6, dpi_), fill, fill);
-        const COLORREF icon_color = active ? accent : RGB(151, 158, 169);
-        const COLORREF text_color = active ? RGB(244, 245, 247) : RGB(166, 172, 182);
+        const COLORREF icon_color = active ? accent : color_text_dim;
+        const COLORREF text_color = active ? color_text : color_text_dim;
         const int icon_size = px(18, dpi_);
         const int icon_top = rect.top + (rect.bottom - rect.top - icon_size) / 2;
         RECT icon_rect{rect.left + px(13, dpi_), icon_top,
@@ -3069,48 +3293,6 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
         RECT text_rect{rect.left + px(43, dpi_), rect.top, rect.right - px(8, dpi_), rect.bottom};
         draw_text(dc, page_names[static_cast<std::size_t>(page)], text_rect, font_, text_color,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        return TRUE;
-    }
-
-    if (item.hwndItem == accent_) {
-        FillRect(dc, &rect, card_background_);
-        const auto selected = text_of(accent_);
-        const int radius = px(9, dpi_);
-        const int selected_radius = px(11, dpi_);
-        const int inner_radius = px(7, dpi_);
-        const int center_y = (rect.top + rect.bottom) / 2;
-        for (std::size_t index = 0; index < accent_swatches.size(); ++index) {
-            const int center_x = rect.left + px(12 + static_cast<int>(index) * 30, dpi_);
-            const auto& [name, color] = accent_swatches[index];
-            const bool active = _wcsicmp(selected.c_str(), std::wstring(name).c_str()) == 0;
-            if (active) {
-                HPEN ring = CreatePen(PS_SOLID, std::max(1, px(2, dpi_)), color);
-                const auto old_pen = SelectObject(dc, ring);
-                const auto old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-                Ellipse(dc, center_x - selected_radius, center_y - selected_radius,
-                        center_x + selected_radius, center_y + selected_radius);
-                SelectObject(dc, old_brush);
-                SelectObject(dc, old_pen);
-                DeleteObject(ring);
-                HBRUSH brush = CreateSolidBrush(color);
-                const auto previous = SelectObject(dc, brush);
-                Ellipse(dc, center_x - inner_radius, center_y - inner_radius,
-                        center_x + inner_radius, center_y + inner_radius);
-                SelectObject(dc, previous);
-                DeleteObject(brush);
-            } else {
-                HBRUSH brush = CreateSolidBrush(color);
-                HPEN pen = CreatePen(PS_SOLID, 1, color);
-                const auto old_brush = SelectObject(dc, brush);
-                const auto old_pen = SelectObject(dc, pen);
-                Ellipse(dc, center_x - radius, center_y - radius,
-                        center_x + radius, center_y + radius);
-                SelectObject(dc, old_pen);
-                SelectObject(dc, old_brush);
-                DeleteObject(pen);
-                DeleteObject(brush);
-            }
-        }
         return TRUE;
     }
 
@@ -3123,7 +3305,7 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
         fill_round_rect(dc, box, px(4, dpi_), checked ? accent : color_input,
                         checked ? accent : color_line);
         if (checked) {
-            HPEN pen = CreatePen(PS_SOLID, px(2, dpi_), RGB(255, 255, 255));
+            HPEN pen = CreatePen(PS_SOLID, px(2, dpi_), theme::accent_foreground);
             const auto previous = SelectObject(dc, pen);
             MoveToEx(dc, box.left + px(4, dpi_), box.top + px(8, dpi_), nullptr);
             LineTo(dc, box.left + px(7, dpi_), box.top + px(11, dpi_));
@@ -3138,9 +3320,9 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
         return TRUE;
     }
 
-    const COLORREF fill = disabled ? RGB(30, 32, 38)
-                          : pressed ? RGB(35, 38, 45)
-                          : hot ? RGB(45, 49, 58) : RGB(36, 39, 46);
+    const COLORREF fill = disabled ? theme::color_line
+                          : pressed ? theme::color_hover
+                          : hot ? theme::color_line_high : theme::color_card;
     FillRect(dc, &rect, card_background_);
     fill_round_rect(dc, rect, px(6, dpi_), fill, focused ? accent : color_line_high);
     draw_text(dc, text_of(item.hwndItem), rect, font_,
@@ -3196,7 +3378,7 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         }
         return 0;
     case WM_GETMINMAXINFO: {
-        RECT minimum{0, 0, px(760, dpi_), px(590, dpi_)};
+        RECT minimum{0, 0, px(760, dpi_), px(logical_window_height, dpi_)};
         AdjustWindowRectExForDpi(
             &minimum,
             static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_STYLE)), FALSE,
@@ -3242,6 +3424,7 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         }
         if (notification == CBN_DROPDOWN && source) {
             set_combo_edit_redraw(source, false);
+            theme::apply_control_theme(source);
             style_combo_popup(source, dpi_, font_);
             clear_combo_edit_selection(source);
             InvalidateRect(source, nullptr, FALSE);
@@ -3282,36 +3465,6 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         }
         if (id == id_text_copy && notification == BN_CLICKED) {
             if (text_callbacks_.copy) text_callbacks_.copy();
-            return 0;
-        }
-        if (id == id_accent && notification == BN_CLICKED) {
-            POINT cursor{};
-            GetCursorPos(&cursor);
-            ScreenToClient(accent_, &cursor);
-            int picked = -1;
-            for (std::size_t index = 0; index < accent_swatches.size(); ++index) {
-                const int center = px(12 + static_cast<int>(index) * 30, dpi_);
-                if (std::abs(cursor.x - center) <= px(12, dpi_)) {
-                    picked = static_cast<int>(index);
-                    break;
-                }
-            }
-            if (picked < 0) {
-                const auto current = text_of(accent_);
-                picked = 0;
-                for (std::size_t index = 0; index < accent_swatches.size(); ++index) {
-                    if (_wcsicmp(current.c_str(),
-                                 std::wstring(accent_swatches[index].first).c_str()) == 0) {
-                        picked = (static_cast<int>(index) + 1) %
-                                 static_cast<int>(accent_swatches.size());
-                        break;
-                    }
-                }
-            }
-            SetWindowTextW(accent_, accent_swatches[static_cast<std::size_t>(picked)].first.data());
-            save_values(false);
-            RedrawWindow(window_, nullptr, nullptr,
-                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
             return 0;
         }
         if (!loading_ && notification == BN_CLICKED && is_checkbox(source)) {
@@ -3424,10 +3577,6 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
                           notification == EN_KILLFOCUS ||
                           (source == provider_model_ && notification == CBN_KILLFOCUS))) {
             save_values(false);
-            if (source == accent_) {
-                RedrawWindow(window_, nullptr, nullptr,
-                             RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-            }
         }
         break;
     }
@@ -3461,9 +3610,8 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
     case WM_CTLCOLOREDIT: {
         const auto dc = reinterpret_cast<HDC>(wparam);
         const auto control = reinterpret_cast<HWND>(lparam);
-        SetTextColor(dc, control == diagnostic_command_
-                             ? RGB(159, 216, 180)
-                             : color_text);
+        SetTextColor(dc, control == diagnostic_command_ ? theme::accent
+                                                       : color_text);
         SetBkColor(dc, color_input);
         SetBkMode(dc, OPAQUE);
         return reinterpret_cast<LRESULT>(input_background_);

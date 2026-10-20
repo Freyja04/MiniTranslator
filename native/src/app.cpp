@@ -3,6 +3,7 @@
 #include "block_editor.hpp"
 #include "hotkey.hpp"
 #include "resource.h"
+#include "theme.hpp"
 #include "util.hpp"
 
 #include <commctrl.h>
@@ -40,13 +41,13 @@ constexpr UINT command_restart = 3005;
 constexpr UINT command_exit = 3006;
 constexpr UINT command_text_translate = 3007;
 
-constexpr COLORREF tray_color_background = RGB(32, 32, 32);
-constexpr COLORREF tray_color_border = RGB(58, 58, 58);
-constexpr COLORREF tray_color_separator = RGB(61, 61, 61);
-constexpr COLORREF tray_color_hover = RGB(48, 48, 48);
-constexpr COLORREF tray_color_text = RGB(243, 243, 243);
-constexpr COLORREF tray_color_text_dim = RGB(178, 178, 178);
-constexpr COLORREF tray_color_text_faint = RGB(112, 112, 112);
+using theme::tray_color_background;
+using theme::tray_color_border;
+using theme::tray_color_hover;
+using theme::tray_color_separator;
+using theme::tray_color_text;
+using theme::tray_color_text_dim;
+using theme::tray_color_text_faint;
 constexpr int tray_menu_min_width = 240;
 constexpr int tray_menu_row_height = 32;
 constexpr int tray_menu_edge_padding = 4;
@@ -111,16 +112,7 @@ void CALLBACK style_tray_menu_window(HWINEVENTHOOK, DWORD event, HWND window,
         return;
     }
 
-    SetWindowTheme(window, L"DarkMode_Explorer", nullptr);
-    constexpr DWORD immersive_dark_mode = 20;
-    constexpr DWORD window_corner_preference = 33;
-    constexpr DWORD border_color = 34;
-    constexpr int round = 2;
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(window, immersive_dark_mode, &dark, sizeof(dark));
-    DwmSetWindowAttribute(window, window_corner_preference, &round, sizeof(round));
-    const COLORREF border = tray_color_border;
-    DwmSetWindowAttribute(window, border_color, &border, sizeof(border));
+    theme::apply_window_theme(window);
 }
 
 bool is_tray_menu_item(ULONG_PTR data) noexcept {
@@ -293,9 +285,9 @@ bool draw_tray_menu_item(const DRAWITEMSTRUCT& draw) {
         if (accent_brush) DeleteObject(accent_brush);
     }
 
-    const COLORREF foreground = selected ? RGB(245, 247, 248)
+    const COLORREF foreground = selected ? theme::color_text
         : disabled ? tray_color_text_faint : tray_color_text;
-    const COLORREF secondary_color = selected ? RGB(198, 204, 211)
+    const COLORREF secondary_color = selected ? theme::color_text_dim
         : disabled ? tray_color_text_faint : tray_color_text_dim;
     const int icon_size = tray_scaled(tray_menu_icon_size, item.dpi);
     RECT icon_bounds{
@@ -523,6 +515,7 @@ bool icon_contains_red_accent(HICON icon) {
 AppHost::AppHost(HINSTANCE instance)
     : instance_(instance), settings_(instance, config_), updates_(instance, config_),
       overlay_(instance), result_(instance) {
+    theme::initialize(config_);
     create_message_window();
     pipeline_ = std::make_unique<PipelineController>(window_);
     text_session_ = std::make_unique<TextTranslationSession>(config_, *pipeline_);
@@ -545,6 +538,7 @@ AppHost::AppHost(HINSTANCE instance)
     text_callbacks.copy = [this] {
         if (text_session_) copy_to_clipboard(text_session_->output());
     };
+    text_callbacks.capture = [this] { start_capture(); };
     text_callbacks.open_settings = [this] { open_translation_settings(); };
     settings_.attach_text_translation(*text_session_, text_callbacks);
     quick_window_->set_callbacks(std::move(text_callbacks));
@@ -568,10 +562,8 @@ AppHost::AppHost(HINSTANCE instance)
     settings_.set_restart_callback([this] { restart(); });
     settings_.set_updates_callback([this] { open_updates(); });
     settings_.set_settings_changed_callback([this] {
+        refresh_theme_windows();
         refresh_tray_tooltip();
-        refresh_tray_icon();
-        updates_.refresh_appearance();
-        if (quick_window_) quick_window_->refresh_appearance();
         if (text_session_ && text_session_->configuration_changed()) {
             schedule_text_translation(true);
         }
@@ -632,8 +624,9 @@ void AppHost::add_tray_icon() {
         icon_ = nullptr;
     }
 
-    const auto accent_text = config_.string(L"appearance.accent", L"#28C76F");
-    HICON icon = load_accent_icon(instance_, parse_rgb_color(accent_text));
+    const auto theme_key = theme::mode_name(theme::mode) + L":" +
+                           std::to_wstring(static_cast<int>(theme::accent));
+    HICON icon = load_accent_icon(instance_, theme::accent);
     if (!icon) throw_last_error("load notification icon");
 
     NOTIFYICONDATAW tray{};
@@ -657,7 +650,7 @@ void AppHost::add_tray_icon() {
     Shell_NotifyIconW(NIM_SETVERSION, &tray);
     tray_ = tray;
     icon_ = icon;
-    tray_accent_ = accent_text;
+    tray_accent_ = theme_key;
 }
 
 void AppHost::remove_tray_icon() {
@@ -674,16 +667,17 @@ void AppHost::remove_tray_icon() {
 
 void AppHost::refresh_tray_icon() {
     if (!tray_.hWnd) return;
-    const auto accent_text = config_.string(L"appearance.accent", L"#28C76F");
-    if (icon_ && accent_text == tray_accent_) return;
-    HICON replacement = load_accent_icon(instance_, parse_rgb_color(accent_text));
+    const auto theme_key = theme::mode_name(theme::mode) + L":" +
+                           std::to_wstring(static_cast<int>(theme::accent));
+    if (icon_ && theme_key == tray_accent_) return;
+    HICON replacement = load_accent_icon(instance_, theme::accent);
     if (!replacement) return;
     const HICON previous = icon_;
     tray_.uFlags = NIF_ICON;
     tray_.hIcon = replacement;
     if (Shell_NotifyIconW(NIM_MODIFY, &tray_)) {
         icon_ = replacement;
-        tray_accent_ = accent_text;
+        tray_accent_ = theme_key;
         if (previous) DestroyIcon(previous);
     } else {
         tray_.hIcon = previous;
@@ -701,6 +695,20 @@ void AppHost::refresh_tray_tooltip() {
     tray_.uFlags = NIF_TIP;
     wcsncpy_s(tray_.szTip, tip.c_str(), _TRUNCATE);
     Shell_NotifyIconW(NIM_MODIFY, &tray_);
+}
+
+void AppHost::refresh_theme_windows() {
+    settings_.refresh_appearance();
+    updates_.refresh_appearance();
+    if (quick_window_) quick_window_->refresh_appearance();
+    if (result_.handle()) {
+        PostMessageW(result_.handle(), theme::changed_message, 0, 0);
+    }
+    BlockEditor::refresh_active_theme();
+    tray_accent_.clear();
+    refresh_tray_icon();
+    refresh_tray_tooltip();
+    if (window_) RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE);
 }
 
 void AppHost::notify(std::wstring_view title, std::wstring_view message) {
@@ -885,7 +893,7 @@ void AppHost::start_capture() {
 
 void AppHost::begin_capture_now() {
     try {
-        overlay_.start(config_.string(L"appearance.accent", L"#28C76F"),
+        overlay_.start(theme::accent,
             [this](const RECT& rect, PixelBuffer image) noexcept {
                 try {
                     on_selected(rect, std::move(image));
@@ -1084,8 +1092,7 @@ void AppHost::open_block_editor() {
                                                  std::move(blocks), nullptr)) {
                     result_.set_editing(false);
                 }
-            },
-            config_.string(L"appearance.accent", L"#28C76F"));
+            });
         if (!opened) {
             result_.set_editing(false);
         }
@@ -1249,7 +1256,6 @@ ResultAppearance AppHost::result_appearance() const {
     ResultAppearance value;
     value.font_family = config_.string(L"appearance.font_family", L"Microsoft YaHei UI");
     value.minimum_font_pixels = config_.integer(L"appearance.min_font_px", 9);
-    value.accent = parse_rgb_color(config_.string(L"appearance.accent", L"#28C76F"));
     return value;
 }
 
@@ -1409,6 +1415,14 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         if (wparam == hotkey_capture) start_capture();
         else if (wparam == hotkey_toggle) toggle_result();
         else if (wparam == hotkey_text_translate) toggle_quick_translation();
+        return 0;
+    case WM_SETTINGCHANGE:
+        if (theme::mode == theme::Mode::system && lparam &&
+            wcscmp(reinterpret_cast<const wchar_t*>(lparam),
+                   L"ImmersiveColorSet") == 0) {
+            theme::refresh_system_mode();
+            refresh_theme_windows();
+        }
         return 0;
     case tray_message: {
         const UINT event = LOWORD(lparam);

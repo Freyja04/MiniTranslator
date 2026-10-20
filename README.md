@@ -30,6 +30,8 @@ Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是�
 
 左键单击托盘图标会弹出固定大小的快速翻译面板，再次点击托盘图标或按 `Esc` 收起；右键菜单把文本翻译排在最上面，并提供框选翻译、显示上次译文、设置、重启和退出，检查更新在「设置 → 其他」里。快捷键可在设置中修改，三个快捷键不能重复。快速文字翻译也可以改成 `Ctrl+Space`，但可能与输入法切换冲突。
 
+设置中的「显示」页可以选择「跟随系统」「浅色」「深色」三种主题。跟随系统时，程序会读取 Windows 的应用主题并在系统切换深浅色后实时同步；截图遮罩和选区边框始终使用固定强调色，以保证叠在任意屏幕内容上都清晰可见。
+
 本项目目前不使用 Authenticode 证书。Windows SmartScreen 可能显示“未知发布者”或首次下载警告，请只从上面的官方 Releases 页面下载。
 
 ## 主要功能
@@ -125,7 +127,7 @@ build\native\Release\ScreenTranslate.exe
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\release\check_native_binary.ps1 `
   -Path .\build\native\Release\ScreenTranslate.exe `
-  -ExpectedVersion 1.2.3
+  -ExpectedVersion 1.2.4
 ```
 
 Debug 构建：
@@ -145,7 +147,7 @@ Debug 构建：
 
 1. 同步修改 `native/CMakeLists.txt` 的 `project(... VERSION ...)` 与 `native/src/resource.h` 的 `SCREENTRANS_VERSION_*`，两处必须与标签一致；
 2. 提交并推送到 `main`，等 CI 变绿；
-3. 打标签并推送：`git tag v1.2.3` → `git push origin v1.2.3`；
+3. 打标签并推送：`git tag v1.2.4` → `git push origin v1.2.4`；
 4. Release 工作流自动完成编译、校验、打包和 `gh release create`。
 
 工作流不接受任意仓库发布：`Validate release identity` 会从 `native/CMakeLists.txt` 读出更新信任根，要求 `GITHUB_REPOSITORY` 与之完全一致，否则直接失败。当前信任根是 `Freyja04/ScreenTranslate`。

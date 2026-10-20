@@ -1,6 +1,7 @@
 #include "update_window.hpp"
 
 #include "resource.h"
+#include "theme.hpp"
 #include "util.hpp"
 #include "version.hpp"
 
@@ -25,17 +26,17 @@ constexpr int id_check = 8101;
 constexpr int id_release = 8102;
 constexpr int id_action = 8103;
 
-constexpr COLORREF color_page = RGB(21, 22, 27);
-constexpr COLORREF color_card = RGB(27, 29, 35);
-constexpr COLORREF color_input = RGB(33, 36, 41);
-constexpr COLORREF color_line = RGB(40, 43, 51);
-constexpr COLORREF color_line_high = RGB(52, 56, 66);
-constexpr COLORREF color_text = RGB(231, 233, 236);
-constexpr COLORREF color_text_dim = RGB(148, 154, 164);
-constexpr COLORREF color_text_faint = RGB(110, 116, 126);
-constexpr COLORREF color_ok = RGB(78, 209, 139);
-constexpr COLORREF color_warn = RGB(232, 180, 74);
-constexpr COLORREF color_bad = RGB(255, 107, 107);
+using theme::color_bad;
+using theme::color_card;
+using theme::color_input;
+using theme::color_line;
+using theme::color_line_high;
+using theme::color_ok;
+using theme::color_page;
+using theme::color_text;
+using theme::color_text_dim;
+using theme::color_text_faint;
+using theme::color_warn;
 
 int px(int value, int dpi) noexcept {
     return MulDiv(value, dpi, 96);
@@ -80,21 +81,6 @@ std::wstring text_of(HWND control) {
 
 void set_font(HWND control, HFONT font) {
     if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-}
-
-void enable_dark_frame(HWND window) noexcept {
-    constexpr DWORD immersive_dark_mode = 20;
-    constexpr DWORD border_color = 34;
-    constexpr DWORD caption_color = 35;
-    constexpr DWORD caption_text_color = 36;
-    BOOL enabled = TRUE;
-    DwmSetWindowAttribute(window, immersive_dark_mode, &enabled, sizeof(enabled));
-    const COLORREF border = color_line_high;
-    const COLORREF caption = RGB(16, 17, 22);
-    const COLORREF text = color_text;
-    DwmSetWindowAttribute(window, border_color, &border, sizeof(border));
-    DwmSetWindowAttribute(window, caption_color, &caption, sizeof(caption));
-    DwmSetWindowAttribute(window, caption_text_color, &text, sizeof(text));
 }
 
 std::wstring format_size(std::uint64_t bytes) {
@@ -195,11 +181,10 @@ std::wstring source_label(std::wstring_view repository) {
 
 class InstallConfirmationDialog {
 public:
-    bool show(HINSTANCE instance, HWND owner, std::wstring version,
-              COLORREF accent) {
+    bool show(HINSTANCE instance, HWND owner, std::wstring version) {
         instance_ = instance;
         owner_ = owner;
-        accent_ = accent;
+        accent_ = theme::accent;
         prompt_ =
             L"安装包已通过大小和 SHA-256 校验。\r\n\r\n"
             L"ScreenTranslate 将退出并启动 " + std::move(version) +
@@ -273,7 +258,7 @@ public:
             destroy_theme_resources();
             return false;
         }
-        enable_dark_frame(window_);
+        theme::apply_window_theme(window_, true, true);
 
         disabled_owner_ = owner_ && IsWindow(owner_) && IsWindowEnabled(owner_);
         if (disabled_owner_) EnableWindow(owner_, FALSE);
@@ -507,14 +492,14 @@ private:
 
         const int margin = px(22, dpi_);
         RECT icon{margin, px(20, dpi_), margin + px(42, dpi_), px(62, dpi_)};
-        fill_round_rect(dc, icon, px(21, dpi_), RGB(55, 46, 27), color_warn);
+        fill_round_rect(dc, icon, px(21, dpi_), color_card, color_warn);
         draw_text(dc, L"!", icon, title_font_, color_warn,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         const int heading_left = icon.right + px(14, dpi_);
         draw_text(dc, L"准备安装更新",
                   RECT{heading_left, px(17, dpi_), client.right - margin,
                        px(43, dpi_)},
-                  title_font_, RGB(242, 243, 246),
+                  title_font_, color_text,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         draw_text(dc, L"请确认后再退出当前版本",
                   RECT{heading_left, px(43, dpi_), client.right - margin,
@@ -558,16 +543,17 @@ private:
         COLORREF border = color_line_high;
         COLORREF foreground = color_text_dim;
         if (disabled) {
-            fill = RGB(32, 35, 41);
-            border = RGB(44, 48, 56);
+            fill = color_card;
+            border = color_line;
             foreground = color_text_faint;
         } else if (primary) {
-        fill = pressed ? accent_ : hot ? adjust_rgb(accent_, 18) : accent_;
+            fill = pressed ? adjust_rgb(accent_, -12)
+                           : hot ? adjust_rgb(accent_, 18) : accent_;
             border = fill;
-            foreground = RGB(14, 16, 19);
+            foreground = theme::accent_foreground;
         } else {
-            fill = pressed ? RGB(35, 38, 45)
-                           : hot ? RGB(31, 34, 41) : color_page;
+            fill = pressed ? theme::color_hover
+                           : hot ? theme::color_hover : color_page;
             foreground = hot || focused ? color_text : color_text_dim;
         }
         fill_round_rect(item.hDC, rect, px(6, dpi_), fill,
@@ -599,7 +585,7 @@ private:
     HFONT small_font_{};
     HBRUSH background_{};
     std::wstring prompt_;
-    COLORREF accent_{RGB(40, 199, 111)};
+    COLORREF accent_{};
     int dpi_{96};
     bool accepted_{};
     bool finished_{};
@@ -692,6 +678,23 @@ void UpdateWindow::show(HWND owner) {
 
 void UpdateWindow::refresh_appearance() {
     if (!window_ || !IsWindow(window_)) return;
+    create_theme_resources();
+    theme::apply_window_theme(window_, true, true);
+    set_font(check_button_, font_);
+    set_font(release_button_, font_);
+    set_font(action_button_, font_);
+    set_font(state_message_control_, small_font_);
+    set_font(published_value_control_, font_);
+    set_font(artifact_value_control_, font_);
+    set_font(source_control_, small_font_);
+    if (repository_tooltip_ && IsWindow(repository_tooltip_)) {
+        theme::apply_control_theme(repository_tooltip_);
+        SendMessageW(repository_tooltip_, TTM_SETTIPBKCOLOR,
+                     static_cast<WPARAM>(color_input), 0);
+        SendMessageW(repository_tooltip_, TTM_SETTIPTEXTCOLOR,
+                     static_cast<WPARAM>(color_text), 0);
+    }
+    layout_controls();
     refresh_repository_control();
     RedrawWindow(window_, nullptr, nullptr,
                  RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -791,7 +794,7 @@ void UpdateWindow::create_window(HWND owner) {
     }
     dispatch->target = window_;
     worker_dispatch_ = std::move(dispatch);
-    enable_dark_frame(window_);
+    theme::apply_window_theme(window_, true, true);
 }
 
 void UpdateWindow::create_theme_resources() {
@@ -848,7 +851,7 @@ void UpdateWindow::create_controls() {
         set_font(control, font);
         SendMessageW(control, EM_SETMARGINS,
                      EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(0, 0));
-        SetWindowTheme(control, L"DarkMode_Explorer", nullptr);
+    theme::apply_control_theme(control);
         return control;
     };
     check_button_ = make_button(L"检查更新", id_check);
@@ -867,7 +870,7 @@ void UpdateWindow::create_controls() {
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
         window_, nullptr, instance_, nullptr);
     if (!repository_tooltip_) throw_last_error("create repository tooltip");
-    SetWindowTheme(repository_tooltip_, L"DarkMode_Explorer", nullptr);
+    theme::apply_control_theme(repository_tooltip_);
     SendMessageW(repository_tooltip_, TTM_SETTIPBKCOLOR, color_input, 0);
     SendMessageW(repository_tooltip_, TTM_SETTIPTEXTCOLOR, color_text, 0);
     SendMessageW(repository_tooltip_, TTM_SETMAXTIPWIDTH, 0, px(640, dpi_));
@@ -1032,8 +1035,7 @@ void UpdateWindow::paint() {
     const auto old_bitmap = SelectObject(dc, bitmap);
     FillRect(dc, &client, background_);
 
-    const COLORREF accent = parse_rgb_color(
-        config_.string(L"appearance.accent", L"#28C76F"));
+    const COLORREF accent = theme::accent;
     const int margin = px(24, dpi_);
 
     RECT mark{margin, px(20, dpi_), margin + px(38, dpi_), px(58, dpi_)};
@@ -1053,13 +1055,13 @@ void UpdateWindow::paint() {
     SelectObject(dc, old_brush);
     DeleteObject(mark_pen);
     DeleteObject(mark_brush);
-    draw_text(dc, L"译", bubble, state_font_, RGB(14, 16, 19),
+    draw_text(dc, L"译", bubble, state_font_, theme::accent_foreground,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     const int heading_left = mark.right + px(12, dpi_);
     draw_text(dc, L"ScreenTranslate",
               RECT{heading_left, px(17, dpi_), client.right - margin, px(42, dpi_)},
-              title_font_, RGB(242, 243, 246),
+              title_font_, color_text,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     const auto channel = config_.string(L"updates.channel", L"stable") == L"stable"
         ? L"稳定版" : L"预览版";
@@ -1155,8 +1157,7 @@ LRESULT UpdateWindow::draw_item(const DRAWITEMSTRUCT& item) {
     const bool pressed = (item.itemState & ODS_SELECTED) != 0;
     const bool hot = (item.itemState & ODS_HOTLIGHT) != 0;
     const bool focused = (item.itemState & ODS_FOCUS) != 0;
-    const COLORREF accent = parse_rgb_color(
-        config_.string(L"appearance.accent", L"#28C76F"));
+    const COLORREF accent = theme::accent;
     ButtonRole role = ButtonRole::ghost;
     if (item.hwndItem == check_button_) role = check_role_;
     else if (item.hwndItem == release_button_) role = release_role_;
@@ -1167,15 +1168,16 @@ LRESULT UpdateWindow::draw_item(const DRAWITEMSTRUCT& item) {
     COLORREF border = color_line_high;
     COLORREF foreground = color_text_dim;
     if (disabled) {
-        fill = RGB(32, 35, 41);
-        border = RGB(44, 48, 56);
+        fill = color_card;
+        border = color_line;
         foreground = color_text_faint;
     } else if (role == ButtonRole::primary) {
-        fill = pressed ? accent : hot ? adjust_rgb(accent, 18) : accent;
+        fill = pressed ? adjust_rgb(accent, -12) : hot ? adjust_rgb(accent, 18) : accent;
         border = fill;
-        foreground = RGB(14, 16, 19);
+        foreground = theme::accent_foreground;
     } else {
-        fill = pressed ? RGB(35, 38, 45) : hot ? RGB(31, 34, 41) : color_page;
+            fill = pressed ? theme::color_hover
+                           : hot ? theme::color_hover : color_page;
         foreground = hot ? color_text : color_text_dim;
     }
     fill_round_rect(dc, rect, px(6, dpi_), fill, focused ? accent : border);
@@ -1407,9 +1409,7 @@ void UpdateWindow::start_download() {
 void UpdateWindow::install() {
     if (!available_ || !downloaded_) return;
     InstallConfirmationDialog confirmation;
-    if (!confirmation.show(
-            instance_, window_, available_->version,
-            parse_rgb_color(config_.string(L"appearance.accent", L"#28C76F")))) {
+    if (!confirmation.show(instance_, window_, available_->version)) {
         return;
     }
 
@@ -1525,6 +1525,13 @@ LRESULT UpdateWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
                      RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
         return 0;
     }
+    case theme::changed_message:
+        create_theme_resources();
+        theme::apply_window_theme(window_, true, true);
+        layout_controls();
+        RedrawWindow(window_, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
+        return 0;
     case WM_COMMAND: {
         const int identifier = LOWORD(wparam);
         const int notification = HIWORD(wparam);

@@ -1,6 +1,7 @@
 #include "block_editor.hpp"
 
 #include "language.hpp"
+#include "theme.hpp"
 #include "util.hpp"
 
 #include <commctrl.h>
@@ -30,17 +31,17 @@ constexpr UINT_PTR combo_subclass_id = 1;
 constexpr UINT_PTR edit_subclass_id = 2;
 constexpr UINT_PTR list_subclass_id = 3;
 
-constexpr COLORREF color_page = RGB(21, 22, 27);
-constexpr COLORREF color_card = RGB(27, 29, 35);
-constexpr COLORREF color_input = RGB(33, 36, 41);
-constexpr COLORREF color_translation = RGB(25, 27, 32);
-constexpr COLORREF color_line = RGB(40, 43, 51);
-constexpr COLORREF color_line_high = RGB(52, 56, 66);
-constexpr COLORREF color_text = RGB(231, 233, 236);
-constexpr COLORREF color_text_dim = RGB(148, 154, 164);
-constexpr COLORREF color_text_faint = RGB(110, 116, 126);
-constexpr COLORREF color_warning = RGB(232, 180, 74);
-constexpr COLORREF color_bad = RGB(255, 107, 107);
+using theme::color_bad;
+using theme::color_card;
+using theme::color_input;
+using theme::color_line;
+using theme::color_line_high;
+using theme::color_page;
+using theme::color_text;
+using theme::color_text_dim;
+using theme::color_text_faint;
+using theme::color_translation;
+using theme::color_warning;
 
 constexpr std::array<std::pair<std::wstring_view, std::wstring_view>, 9> targets{{
     {L"zh-Hans", L"简体中文"}, {L"en", L"英语"}, {L"ja", L"日语"},
@@ -121,21 +122,6 @@ void draw_text(HDC dc, std::wstring_view text, RECT rect, HFONT font,
     SelectObject(dc, old_font);
 }
 
-void enable_dark_frame(HWND window) noexcept {
-    constexpr DWORD immersive_dark_mode = 20;
-    constexpr DWORD border_color = 34;
-    constexpr DWORD caption_color = 35;
-    constexpr DWORD caption_text_color = 36;
-    BOOL enabled = TRUE;
-    DwmSetWindowAttribute(window, immersive_dark_mode, &enabled, sizeof(enabled));
-    const COLORREF border = color_line_high;
-    const COLORREF caption = RGB(16, 17, 22);
-    const COLORREF caption_text = color_text;
-    DwmSetWindowAttribute(window, border_color, &border, sizeof(border));
-    DwmSetWindowAttribute(window, caption_color, &caption, sizeof(caption));
-    DwmSetWindowAttribute(window, caption_text_color, &caption_text, sizeof(caption_text));
-}
-
 std::optional<double> block_confidence(const TextBlock& block) {
     double weighted = 0.0;
     std::size_t total = 0;
@@ -164,13 +150,12 @@ BlockEditor::BlockEditor(HINSTANCE instance, HWND owner, const PipelineResult& r
                          std::wstring_view chinese_target,
                          RetranslateCallback retranslate_callback,
                          CancelRequestCallback cancel_request_callback,
-                         CompletionCallback completion_callback,
-                         std::wstring_view accent)
+                         CompletionCallback completion_callback)
     : instance_(instance), owner_(owner), chinese_target_(chinese_target),
       retranslate_callback_(std::move(retranslate_callback)),
       cancel_request_callback_(std::move(cancel_request_callback)),
       completion_callback_(std::move(completion_callback)),
-      accent_text_(accent), accent_color_(parse_rgb_color(accent)) {
+      accent_color_(theme::accent) {
     drafts_.reserve(result.blocks.size());
     for (const auto& item : result.blocks) {
         const auto source = item.block.text();
@@ -214,7 +199,7 @@ bool BlockEditor::show(
     HINSTANCE instance, HWND owner, const PipelineResult& result,
     std::wstring_view chinese_target, RetranslateCallback retranslate_callback,
     CancelRequestCallback cancel_request_callback,
-    CompletionCallback completion_callback, std::wstring_view accent) {
+    CompletionCallback completion_callback) {
     if (result.blocks.empty()) return false;
     if (active_editor && active_editor->window_ &&
         IsWindow(active_editor->window_)) {
@@ -227,7 +212,7 @@ bool BlockEditor::show(
     auto* editor = new BlockEditor(
         instance, owner, result, chinese_target,
         std::move(retranslate_callback), std::move(cancel_request_callback),
-        std::move(completion_callback), accent);
+        std::move(completion_callback));
     active_editor = editor;
     try {
         editor->present();
@@ -242,6 +227,25 @@ bool BlockEditor::show(
 void BlockEditor::close_active() noexcept {
     if (!active_editor) return;
     active_editor->cancel();
+}
+
+void BlockEditor::refresh_active_theme() noexcept {
+    if (!active_editor || !active_editor->window_) return;
+    theme::apply_window_theme(active_editor->window_, false, true);
+    active_editor->create_list_tooltip();
+    active_editor->create_theme_resources();
+    for (const HWND control : {active_editor->list_, active_editor->source_,
+                               active_editor->target_, active_editor->translation_,
+                               active_editor->retranslate_, active_editor->close_,
+                               active_editor->apply_remaining_}) {
+        set_font(control, (control == active_editor->retranslate_ ||
+                           control == active_editor->apply_remaining_)
+                              ? active_editor->primary_font_
+                              : active_editor->font_);
+        active_editor->apply_control_theme(control);
+    }
+    RedrawWindow(active_editor->window_, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
 }
 
 bool BlockEditor::preprocess_active_message(MSG& message) noexcept {
@@ -261,7 +265,7 @@ void BlockEditor::self_test(HINSTANCE instance, HWND owner) {
     PipelineResult result;
     result.blocks.push_back(BlockTranslation{block, L"Self-test translation", L"en"});
 
-    BlockEditor editor(instance, owner, result, L"en", {}, {}, {}, L"#28C76F");
+    BlockEditor editor(instance, owner, result, L"en", {}, {}, {});
     editor.create_window();
     DWORD_PTR subclass_reference{};
     const bool list_subclass_installed = editor.list_ && GetWindowSubclass(
@@ -348,7 +352,7 @@ void BlockEditor::create_window() {
         if (!window_error_.empty()) throw AppError(window_error_);
         throw_last_error("create block editor");
     }
-    enable_dark_frame(window_);
+    theme::apply_window_theme(window_, false, true);
 }
 
 void BlockEditor::create_theme_resources() {
@@ -372,6 +376,7 @@ void BlockEditor::create_theme_resources() {
     block_title_font_ = make_font(14, FW_SEMIBOLD);
     small_font_ = make_font(11, FW_NORMAL);
     primary_font_ = make_font(13, FW_SEMIBOLD);
+    accent_color_ = theme::accent;
     background_ = CreateSolidBrush(color_page);
     card_background_ = CreateSolidBrush(color_card);
     input_background_ = CreateSolidBrush(color_input);
@@ -385,7 +390,7 @@ void BlockEditor::create_theme_resources() {
 
 void BlockEditor::apply_control_theme(HWND control) {
     if (!control) return;
-    SetWindowTheme(control, L"DarkMode_Explorer", nullptr);
+    theme::apply_control_theme(control);
     wchar_t control_class[32]{};
     GetClassNameW(control, control_class, static_cast<int>(std::size(control_class)));
     if (_wcsicmp(control_class, L"Edit") == 0) {
@@ -591,11 +596,11 @@ void BlockEditor::create_list_tooltip() {
         window_, nullptr, instance_, nullptr);
     if (!list_tooltip_) return;
 
-    SetWindowTheme(list_tooltip_, L"DarkMode_Explorer", nullptr);
+    theme::apply_control_theme(list_tooltip_);
     SendMessageW(list_tooltip_, TTM_SETTIPBKCOLOR,
-                 static_cast<WPARAM>(RGB(38, 40, 46)), 0);
+                 static_cast<WPARAM>(theme::color_card), 0);
     SendMessageW(list_tooltip_, TTM_SETTIPTEXTCOLOR,
-                 static_cast<WPARAM>(RGB(242, 243, 245)), 0);
+                 static_cast<WPARAM>(theme::color_text), 0);
     SendMessageW(list_tooltip_, TTM_SETMAXTIPWIDTH, 0, scale(420));
     RECT margin{scale(6), scale(4), scale(6), scale(4)};
     SendMessageW(list_tooltip_, TTM_SETMARGIN, 0,
@@ -969,7 +974,7 @@ void BlockEditor::paint() {
     }
     const auto old_bitmap = SelectObject(dc, bitmap);
     FillRect(dc, &client, background_);
-    draw_text(dc, L"校对识别文字", title_rect_, title_font_, RGB(242, 243, 246),
+    draw_text(dc, L"校对识别文字", title_rect_, title_font_, color_text,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     fill_round_rect(dc, list_rect_, scale(6), color_card, color_line);
@@ -1046,8 +1051,8 @@ LRESULT BlockEditor::draw_item(const DRAWITEMSTRUCT& item) {
             highlight.top += scale(2);
             highlight.bottom -= scale(2);
             const COLORREF highlight_color = selected
-                ? RGB(42, 48, 57)
-                : RGB(35, 38, 45);
+                ? theme::color_hover
+                : color_card;
             fill_round_rect(dc, highlight, scale(5), highlight_color, highlight_color);
         }
         if (item.itemID != static_cast<UINT>(-1)) {
@@ -1061,7 +1066,7 @@ LRESULT BlockEditor::draw_item(const DRAWITEMSTRUCT& item) {
             }
             rect.left += scale(13);
             rect.right -= scale(13);
-            draw_text(dc, value, rect, font_, selected ? RGB(255, 255, 255) : color_text,
+            draw_text(dc, value, rect, font_, selected ? theme::accent_foreground : color_text,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
         return TRUE;
@@ -1070,7 +1075,7 @@ LRESULT BlockEditor::draw_item(const DRAWITEMSTRUCT& item) {
     if (item.CtlType == ODT_COMBOBOX && item.CtlID == id_target) {
         const bool list_item = (item.itemState & ODS_COMBOBOXEDIT) == 0;
         const bool highlighted = list_item && selected;
-        HBRUSH brush = CreateSolidBrush(highlighted ? accent_color_ : color_input);
+        HBRUSH brush = CreateSolidBrush(highlighted ? color_hover : color_input);
         FillRect(dc, &rect, brush ? brush : input_background_);
         if (brush) DeleteObject(brush);
         std::wstring value;
@@ -1101,13 +1106,13 @@ LRESULT BlockEditor::draw_item(const DRAWITEMSTRUCT& item) {
     COLORREF border{};
     COLORREF foreground{};
     if (primary) {
-        fill = disabled ? RGB(32, 35, 41)
+        fill = disabled ? color_card
                 : pressed ? adjust_rgb(accent_color_, -12)
                 : hot ? adjust_rgb(accent_color_, 18) : accent_color_;
-        border = disabled ? RGB(44, 48, 56) : fill;
-        foreground = disabled ? color_text_faint : RGB(14, 16, 19);
+        border = disabled ? color_line : fill;
+        foreground = disabled ? color_text_faint : theme::accent_foreground;
     } else {
-        fill = pressed ? RGB(31, 34, 41) : hot ? RGB(31, 34, 41) : color_page;
+        fill = pressed ? theme::color_hover : hot ? theme::color_hover : color_page;
         border = focused ? accent_color_ : color_line_high;
         foreground = disabled ? color_text_faint : color_text_dim;
     }
@@ -1382,7 +1387,7 @@ LRESULT BlockEditor::handle_message(UINT message, WPARAM wparam, LPARAM lparam) 
         const HWND child = reinterpret_cast<HWND>(lparam);
         if (child == translation_) {
             HDC dc = reinterpret_cast<HDC>(wparam);
-            SetTextColor(dc, RGB(201, 205, 212));
+            SetTextColor(dc, color_text_dim);
             SetBkColor(dc, color_translation);
             return reinterpret_cast<LRESULT>(translation_background_);
         }
@@ -1406,6 +1411,19 @@ LRESULT BlockEditor::handle_message(UINT message, WPARAM wparam, LPARAM lparam) 
         return 1;
     case WM_PAINT:
         paint();
+        return 0;
+    case theme::changed_message:
+        theme::apply_window_theme(window_, false, true);
+        create_list_tooltip();
+        create_theme_resources();
+        for (const HWND control : {list_, source_, target_, translation_,
+                                   retranslate_, close_, apply_remaining_}) {
+            set_font(control, (control == retranslate_ || control == apply_remaining_)
+                                  ? primary_font_ : font_);
+            apply_control_theme(control);
+        }
+        RedrawWindow(window_, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
         return 0;
     case WM_CLOSE:
         cancel();

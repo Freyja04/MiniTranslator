@@ -45,6 +45,7 @@ private:
                                         WPARAM wparam, LPARAM lparam);
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam);
     void create_message_window();
+    void refresh_theme_windows();
     void add_tray_icon();
     void remove_tray_icon();
     void refresh_tray_icon();

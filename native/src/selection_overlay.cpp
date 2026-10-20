@@ -245,7 +245,7 @@ SelectionOverlay::~SelectionOverlay() {
     close();
 }
 
-bool SelectionOverlay::start(std::wstring_view accent,
+bool SelectionOverlay::start(COLORREF accent,
                              SelectedCallback selected,
                              CancelledCallback cancelled) {
     if (active()) {
@@ -265,7 +265,7 @@ bool SelectionOverlay::start(std::wstring_view accent,
     }
 
     desktop_ = capture_virtual_desktop();
-    accent_ = parse_rgb_color(accent, accent_);
+    accent_ = accent;
     selected_ = std::move(selected);
     cancelled_ = std::move(cancelled);
     finishing_ = false;

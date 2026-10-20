@@ -16,7 +16,6 @@ namespace screentrans {
 struct ResultAppearance {
     std::wstring font_family{L"Microsoft YaHei UI"};
     int minimum_font_pixels{9};
-    COLORREF accent{RGB(40, 199, 111)};
 };
 
 class ResultWindow {

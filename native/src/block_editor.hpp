@@ -31,10 +31,10 @@ public:
         std::wstring_view chinese_target,
         RetranslateCallback retranslate_callback,
         CancelRequestCallback cancel_request_callback,
-        CompletionCallback completion_callback,
-        std::wstring_view accent = L"#28C76F");
+        CompletionCallback completion_callback);
 
     static void close_active() noexcept;
+    static void refresh_active_theme() noexcept;
     [[nodiscard]] static bool preprocess_active_message(MSG& message) noexcept;
     static void self_test(HINSTANCE instance, HWND owner);
     void set_translation(std::size_t index, const BlockTranslation& translation);
@@ -64,8 +64,7 @@ private:
                 std::wstring_view chinese_target,
                 RetranslateCallback retranslate_callback,
                 CancelRequestCallback cancel_request_callback,
-                CompletionCallback completion_callback,
-                std::wstring_view accent);
+                CompletionCallback completion_callback);
     ~BlockEditor();
 
     static LRESULT CALLBACK window_proc(HWND window, UINT message,
@@ -152,7 +151,6 @@ private:
     CancelRequestCallback cancel_request_callback_;
     CompletionCallback completion_callback_;
     std::wstring chinese_target_;
-    std::wstring accent_text_;
     std::wstring block_heading_;
     std::wstring confidence_text_;
     std::wstring status_text_;

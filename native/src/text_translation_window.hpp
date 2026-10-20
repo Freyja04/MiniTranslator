@@ -138,7 +138,9 @@ private:
     HWND input_{};
     HWND output_{};
     HWND copy_button_{};
-    HWND settings_button_{};
+    HWND clear_button_{};
+    HWND text_button_{};
+    HWND capture_button_{};
     HWND close_button_{};
     HFONT font_{};
     HFONT title_font_{};

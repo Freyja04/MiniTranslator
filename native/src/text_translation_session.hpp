@@ -28,6 +28,7 @@ struct TextTranslationCallbacks {
     std::function<void()> translate_now;
     std::function<void()> clear;
     std::function<void()> copy;
+    std::function<void()> capture;
     std::function<void()> open_settings;
 };
 
