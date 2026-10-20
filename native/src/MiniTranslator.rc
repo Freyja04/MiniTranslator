@@ -5,7 +5,7 @@ IDI_APP_ICON ICON "app.ico"
 
 STRINGTABLE
 BEGIN
-    IDS_APP_TITLE "ScreenTranslate"
+    IDS_APP_TITLE "MiniTranslator"
 END
 
 VS_VERSION_INFO VERSIONINFO
@@ -21,13 +21,13 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName", "ScreenTranslate\0"
-            VALUE "FileDescription", "ScreenTranslate native client\0"
+            VALUE "CompanyName", "MiniTranslator\0"
+            VALUE "FileDescription", "MiniTranslator\0"
             VALUE "FileVersion", SCREENTRANS_VERSION_STRING
-            VALUE "InternalName", "ScreenTranslate\0"
-            VALUE "LegalCopyright", "Copyright (c) ScreenTranslate contributors\0"
-            VALUE "OriginalFilename", "ScreenTranslate.exe\0"
-            VALUE "ProductName", "ScreenTranslate\0"
+            VALUE "InternalName", "MiniTranslator\0"
+            VALUE "LegalCopyright", "Copyright (c) MiniTranslator contributors\0"
+            VALUE "OriginalFilename", "MiniTranslator.exe\0"
+            VALUE "ProductName", "MiniTranslator\0"
             VALUE "ProductVersion", SCREENTRANS_VERSION_STRING
         END
     END

@@ -118,7 +118,7 @@ bool is_loopback(std::wstring host) {
 }  // namespace
 
 HttpClient::HttpClient() {
-    const auto user_agent = L"Mozilla/5.0 ScreenTranslate/" + std::wstring(native_version);
+    const auto user_agent = L"Mozilla/5.0 MiniTranslator/" + std::wstring(native_version);
     session_ = WinHttpOpen(user_agent.c_str(),
                            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);

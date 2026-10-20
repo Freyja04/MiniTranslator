@@ -32,7 +32,7 @@ std::string encrypt(std::string_view plaintext) {
         reinterpret_cast<BYTE*>(const_cast<char*>(plaintext.data())),
     };
     LocalBlob output;
-    if (!CryptProtectData(&input, L"ScreenTranslate API key", nullptr, nullptr, nullptr,
+    if (!CryptProtectData(&input, L"MiniTranslator API key", nullptr, nullptr, nullptr,
                           CRYPTPROTECT_UI_FORBIDDEN, &output.value)) {
         throw_last_error("Windows DPAPI encryption failed");
     }

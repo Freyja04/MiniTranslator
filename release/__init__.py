@@ -1,1 +1,1 @@
-"""Release tooling for ScreenTranslate."""
+"""Release tooling for MiniTranslator."""

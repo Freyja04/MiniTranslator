@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(ScreenTranslateNative VERSION 1.2.6 LANGUAGES CXX RC)
+project(MiniTranslatorNative VERSION 1.2.6 LANGUAGES CXX RC)
 
 set(SCREENTRANS_UPDATE_REPOSITORY_URL
     "https://github.com/Freyja04/ScreenTranslate"
@@ -11,14 +11,14 @@ set(SCREENTRANS_UPDATE_MANIFEST_URL
 set(SCREENTRANS_UPDATE_CHANNEL "stable" CACHE STRING "Native update channel")
 
 if(NOT WIN32)
-    message(FATAL_ERROR "The native ScreenTranslate client only supports Windows.")
+    message(FATAL_ERROR "The native MiniTranslator client only supports Windows.")
 endif()
 
 if(NOT MSVC)
-    message(FATAL_ERROR "The native ScreenTranslate client currently requires MSVC.")
+    message(FATAL_ERROR "The native MiniTranslator client currently requires MSVC.")
 endif()
 
-add_executable(ScreenTranslate WIN32
+add_executable(MiniTranslator WIN32
     src/app.cpp
     src/app.hpp
     src/block_editor.cpp
@@ -51,7 +51,7 @@ add_executable(ScreenTranslate WIN32
     src/result_renderer.hpp
     src/result_window.cpp
     src/result_window.hpp
-    src/ScreenTranslate.rc
+    src/MiniTranslator.rc
     src/selection_overlay.cpp
     src/selection_overlay.hpp
     src/settings_window.cpp
@@ -64,6 +64,7 @@ add_executable(ScreenTranslate WIN32
     src/theme.hpp
     src/types.hpp
     src/ui_icons.hpp
+    src/ui_draw.hpp
     src/updater.cpp
     src/updater.hpp
     src/update_window.cpp
@@ -75,15 +76,15 @@ add_executable(ScreenTranslate WIN32
     src/version.hpp
 )
 
-target_compile_features(ScreenTranslate PRIVATE cxx_std_20)
+target_compile_features(MiniTranslator PRIVATE cxx_std_20)
 
-set_target_properties(ScreenTranslate PROPERTIES
-    OUTPUT_NAME "ScreenTranslate"
+set_target_properties(MiniTranslator PROPERTIES
+    OUTPUT_NAME "MiniTranslator"
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
     INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
 )
 
-target_compile_definitions(ScreenTranslate PRIVATE
+target_compile_definitions(MiniTranslator PRIVATE
     UNICODE
     _UNICODE
     WIN32_LEAN_AND_MEAN
@@ -97,12 +98,12 @@ target_compile_definitions(ScreenTranslate PRIVATE
     "SCREENTRANS_UPDATE_CHANNEL=L\"${SCREENTRANS_UPDATE_CHANNEL}\""
 )
 
-target_include_directories(ScreenTranslate PRIVATE
+target_include_directories(MiniTranslator PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/.."
 )
 
-target_compile_options(ScreenTranslate PRIVATE
+target_compile_options(MiniTranslator PRIVATE
     /W4
     /permissive-
     /EHsc
@@ -110,14 +111,14 @@ target_compile_options(ScreenTranslate PRIVATE
     $<$<CONFIG:Release>:/O2>
 )
 
-target_link_options(ScreenTranslate PRIVATE
+target_link_options(MiniTranslator PRIVATE
     $<$<CONFIG:Debug>:/DEBUG:FULL>
     $<$<CONFIG:Release>:/LTCG>
     $<$<CONFIG:Release>:/OPT:REF>
     $<$<CONFIG:Release>:/OPT:ICF>
 )
 
-target_link_libraries(ScreenTranslate PRIVATE
+target_link_libraries(MiniTranslator PRIVATE
     user32
     shell32
     comctl32

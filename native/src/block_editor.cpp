@@ -1,7 +1,9 @@
 #include "block_editor.hpp"
 
 #include "language.hpp"
+#include "resource.h"
 #include "theme.hpp"
+#include "ui_draw.hpp"
 #include "util.hpp"
 
 #include <commctrl.h>
@@ -20,7 +22,7 @@ namespace screentrans {
 
 namespace {
 
-constexpr wchar_t class_name[] = L"ScreenTranslate.Native.BlockEditor.v2";
+constexpr wchar_t class_name[] = L"MiniTranslator.Native.BlockEditor.v2";
 constexpr int id_list = 6101;
 constexpr int id_source = 6102;
 constexpr int id_target = 6103;
@@ -89,9 +91,7 @@ std::wstring preview(std::wstring_view value, std::size_t limit = 32,
     return output;
 }
 
-void set_font(HWND control, HFONT font) {
-    if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-}
+using ui_draw::set_font;
 
 void fill_round_rect(HDC dc, const RECT& rect, int radius,
                      COLORREF fill, COLORREF border) {
@@ -112,15 +112,7 @@ void fill_round_rect(HDC dc, const RECT& rect, int radius,
     DeleteObject(brush);
 }
 
-void draw_text(HDC dc, std::wstring_view text, RECT rect, HFONT font,
-               COLORREF color, UINT format) {
-    const auto old_font = SelectObject(dc, font);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, color);
-    DrawTextW(dc, text.data(), static_cast<int>(text.size()), &rect,
-              format | DT_NOPREFIX);
-    SelectObject(dc, old_font);
-}
+using ui_draw::draw_text;
 
 std::optional<double> block_confidence(const TextBlock& block) {
     double weighted = 0.0;
@@ -297,6 +289,8 @@ void BlockEditor::create_window() {
     description.style = CS_HREDRAW | CS_VREDRAW;
     description.lpfnWndProc = &BlockEditor::window_proc;
     description.hInstance = instance_;
+    description.hIcon = LoadIconW(instance_, MAKEINTRESOURCEW(IDI_APP_ICON));
+    description.hIconSm = description.hIcon;
     description.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     description.hbrBackground = nullptr;
     description.lpszClassName = class_name;
@@ -369,13 +363,14 @@ void BlockEditor::create_theme_resources() {
     const auto make_font = [&](int pixels, int weight) {
         return CreateFontW(-scale(pixels), 0, 0, 0, weight, FALSE, FALSE, FALSE,
                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                           CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+                           CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                           theme::font_family.c_str());
     };
-    font_ = make_font(13, FW_NORMAL);
-    title_font_ = make_font(18, FW_SEMIBOLD);
-    block_title_font_ = make_font(14, FW_SEMIBOLD);
-    small_font_ = make_font(11, FW_NORMAL);
-    primary_font_ = make_font(13, FW_SEMIBOLD);
+    font_ = make_font(theme::font_size_body, FW_NORMAL);
+    title_font_ = make_font(theme::font_size_title, FW_SEMIBOLD);
+    block_title_font_ = make_font(theme::font_size_section, FW_SEMIBOLD);
+    small_font_ = make_font(theme::font_size_small, FW_NORMAL);
+    primary_font_ = make_font(theme::font_size_body, FW_SEMIBOLD);
     accent_color_ = theme::accent;
     background_ = CreateSolidBrush(color_page);
     card_background_ = CreateSolidBrush(color_card);

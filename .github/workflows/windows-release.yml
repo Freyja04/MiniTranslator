@@ -47,8 +47,8 @@ jobs:
           "RELEASE_VERSION=$releaseVersion" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
           "RELEASE_NUMERIC_VERSION=$numericVersion" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
           "RELEASE_CHANNEL=$releaseChannel" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PORTABLE_NAME=ScreenTranslate-$releaseVersion-windows-x64.exe" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
-          "SETUP_NAME=ScreenTranslate-$releaseVersion-setup-x64.exe" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PORTABLE_NAME=MiniTranslator-$releaseVersion-windows-x64.exe" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SETUP_NAME=MiniTranslator-$releaseVersion-setup-x64.exe" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Build native release
         shell: pwsh
         run: >-
@@ -63,7 +63,7 @@ jobs:
         run: >-
           powershell.exe -NoProfile -ExecutionPolicy Bypass
           -File .\release\check_native_binary.ps1
-          -Path .\build\native\Release\ScreenTranslate.exe
+          -Path .\build\native\Release\MiniTranslator.exe
           -ExpectedVersion $env:RELEASE_VERSION
       - name: Install locked Inno Setup compiler
         shell: pwsh
@@ -73,13 +73,13 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path -LiteralPath $iscc)) { throw "ISCC.exe was not installed" }
-          & $iscc "/DAppVersion=$env:RELEASE_VERSION" "/DAppNumericVersion=$env:RELEASE_NUMERIC_VERSION" installer/ScreenTranslate.iss
+          & $iscc "/DAppVersion=$env:RELEASE_VERSION" "/DAppNumericVersion=$env:RELEASE_NUMERIC_VERSION" installer/MiniTranslator.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
       - name: Stage portable executable and update manifest
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Copy-Item -LiteralPath build/native/Release/ScreenTranslate.exe -Destination "dist/$env:PORTABLE_NAME"
+          Copy-Item -LiteralPath build/native/Release/MiniTranslator.exe -Destination "dist/$env:PORTABLE_NAME"
           Copy-Item -LiteralPath LICENSE -Destination dist/LICENSE.txt
           Copy-Item -LiteralPath native/THIRD_PARTY_NOTICES.txt -Destination dist/THIRD_PARTY_NOTICES.txt
           $downloadUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$env:SETUP_NAME"
@@ -88,10 +88,10 @@ jobs:
       - name: Upload verified release assets
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: ScreenTranslate-${{ github.ref_name }}-windows-x64
+          name: MiniTranslator-${{ github.ref_name }}-windows-x64
           path: |
-            dist/ScreenTranslate-*-windows-x64.exe
-            dist/ScreenTranslate-*-setup-x64.exe
+            dist/MiniTranslator-*-windows-x64.exe
+            dist/MiniTranslator-*-setup-x64.exe
             dist/update-manifest.json
             dist/LICENSE.txt
             dist/THIRD_PARTY_NOTICES.txt
@@ -107,7 +107,7 @@ jobs:
       - name: Download verified release assets
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: ScreenTranslate-${{ github.ref_name }}-windows-x64
+          name: MiniTranslator-${{ github.ref_name }}-windows-x64
           path: dist
       - name: Create GitHub release
         shell: bash
@@ -116,12 +116,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          portable="ScreenTranslate-${version}-windows-x64.exe"
-          setup="ScreenTranslate-${version}-setup-x64.exe"
+          portable="MiniTranslator-${version}-windows-x64.exe"
+          setup="MiniTranslator-${version}-setup-x64.exe"
           arguments=(
             release create "$GITHUB_REF_NAME"
             "dist/$portable" "dist/$setup" "dist/update-manifest.json"
             "dist/LICENSE.txt" "dist/THIRD_PARTY_NOTICES.txt"
-            --verify-tag --generate-notes --title "ScreenTranslate $GITHUB_REF_NAME"
+            --verify-tag --generate-notes --title "MiniTranslator $GITHUB_REF_NAME"
           )
           gh "${arguments[@]}"

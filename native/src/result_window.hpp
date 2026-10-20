@@ -14,7 +14,7 @@
 namespace screentrans {
 
 struct ResultAppearance {
-    std::wstring font_family{L"Microsoft YaHei UI"};
+    std::wstring font_family{L"Segoe UI"};
     int minimum_font_pixels{9};
 };
 
@@ -32,6 +32,7 @@ public:
     void show_retry_loading(ResultAppearance appearance);
     void set_result(PipelineResult result);
     void set_error(std::wstring message);
+    void refresh_appearance(ResultAppearance appearance);
     void close();
     void minimize();
     void restore();

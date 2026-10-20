@@ -143,7 +143,7 @@ if ($sourceSnapshot -ne (Get-NativeSourceSnapshot)) {
     throw 'Native sources changed while compilation was running. Discard this build and run the command again.'
 }
 
-$executable = Join-Path $BuildDirectory "$Configuration\ScreenTranslate.exe"
+$executable = Join-Path $BuildDirectory "$Configuration\MiniTranslator.exe"
 if (-not (Test-Path -LiteralPath $executable)) {
     throw "The expected executable was not produced: $executable"
 }

@@ -1,5 +1,6 @@
 #include "app.hpp"
 #include "result_renderer.hpp"
+#include "resource.h"
 #include "updater.hpp"
 #include "util.hpp"
 
@@ -7,6 +8,7 @@
 #include <winrt/base.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <cerrno>
 #include <cwchar>
 #include <optional>
@@ -15,7 +17,7 @@
 
 namespace {
 
-constexpr wchar_t mutex_name[] = L"Global\\ScreenTranslate.SingleInstance.v1";
+constexpr wchar_t mutex_name[] = L"Global\\MiniTranslator.SingleInstance.v1";
 constexpr DWORD restart_wait_timeout_ms = 60'000;
 
 void initialize_dpi_awareness() noexcept {
@@ -40,7 +42,7 @@ bool has_argument(std::wstring_view expected) {
 void report_self_test_error(std::string_view message) noexcept {
     const HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
     if (!error || error == INVALID_HANDLE_VALUE) return;
-    constexpr std::string_view prefix = "ScreenTranslate self-test failed: ";
+    constexpr std::string_view prefix = "MiniTranslator self-test failed: ";
     DWORD written = 0;
     WriteFile(error, prefix.data(), static_cast<DWORD>(prefix.size()), &written, nullptr);
     WriteFile(error, message.data(), static_cast<DWORD>(message.size()), &written, nullptr);
@@ -82,7 +84,7 @@ void wait_for_restart_parent() {
     const DWORD wait_result = WaitForSingleObject(process.get(), restart_wait_timeout_ms);
     if (wait_result == WAIT_FAILED) screentrans::throw_last_error("wait for previous process");
     if (wait_result == WAIT_TIMEOUT) {
-        throw screentrans::AppError("previous ScreenTranslate process did not exit in time");
+        throw screentrans::AppError("previous MiniTranslator process did not exit in time");
     }
 }
 
@@ -132,7 +134,21 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
         {
             screentrans::WinrtApartment apartment(winrt::apartment_type::single_threaded);
             {
-                screentrans::AppHost app(instance);
+                std::filesystem::path config_path;
+                if (self_test || update_self_test) {
+                    std::error_code error;
+                    config_path = std::filesystem::temp_directory_path(error);
+                    if (error) config_path = std::filesystem::current_path();
+                    config_path /= L"MiniTranslator-self-test";
+                    std::filesystem::create_directories(config_path, error);
+                    if (error) {
+                        throw screentrans::AppError(
+                            "cannot create isolated self-test data directory");
+                    }
+                    config_path /= L"config.json";
+                    std::filesystem::remove(config_path, error);
+                }
+                screentrans::AppHost app(instance, std::move(config_path));
                 result = app.run(self_test, update_self_test, text_translation);
             }
         }
@@ -143,9 +159,10 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
             return EXIT_FAILURE;
         }
         const auto message = std::wstring(update_helper ? L"无法启动更新安装程序。\n\n"
-                                                         : L"ScreenTranslate 无法启动。\n\n") +
+                                                         : L"MiniTranslator 无法启动。\n\n") +
                              screentrans::utf8_to_wide(error.what());
-        MessageBoxW(nullptr, message.c_str(), update_helper ? L"ScreenTranslate 更新" : L"ScreenTranslate",
+        MessageBoxW(nullptr, message.c_str(),
+                    update_helper ? L"MiniTranslator 更新" : SCREENTRANS_DISPLAY_NAME,
                     MB_OK | MB_ICONERROR);
         return EXIT_FAILURE;
     } catch (...) {
@@ -153,8 +170,8 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
             report_self_test_error("unknown exception");
             return EXIT_FAILURE;
         }
-        MessageBoxW(nullptr, L"ScreenTranslate 遇到未知启动错误。",
-                    L"ScreenTranslate", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, L"MiniTranslator 遇到未知启动错误。",
+                    SCREENTRANS_DISPLAY_NAME, MB_OK | MB_ICONERROR);
         return EXIT_FAILURE;
     }
 }

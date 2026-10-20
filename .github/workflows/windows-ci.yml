@@ -34,11 +34,11 @@ jobs:
         run: >-
           powershell.exe -NoProfile -ExecutionPolicy Bypass
           -File .\release\check_native_binary.ps1
-          -Path .\build\native\Release\ScreenTranslate.exe
+          -Path .\build\native\Release\MiniTranslator.exe
       - name: Upload unsigned native executable
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: ScreenTranslate-native-windows-x64-unsigned
-          path: build/native/Release/ScreenTranslate.exe
+          name: MiniTranslator-native-windows-x64-unsigned
+          path: build/native/Release/MiniTranslator.exe
           if-no-files-found: error
           retention-days: 14

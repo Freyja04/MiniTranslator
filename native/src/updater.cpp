@@ -126,6 +126,11 @@ struct Repository {
     [[nodiscard]] std::wstring url() const { return L"https://github.com/" + owner + L"/" + name; }
 };
 
+class LegacyManifest final : public UpdateError {
+public:
+    LegacyManifest() : UpdateError("legacy ScreenTranslate update manifest") {}
+};
+
 Repository parse_repository(std::wstring_view input) {
     const auto url = parse_url(input, L"GitHub 仓库地址");
     require_https(url, L"GitHub 仓库地址");
@@ -276,7 +281,7 @@ HttpResponse github_get(HttpClient& client, std::wstring url, std::size_t limit,
         request.max_response_bytes = limit;
         request.headers = {
             {L"Accept", chunks ? L"application/octet-stream" : L"application/json"},
-            {L"User-Agent", L"ScreenTranslate/" + std::wstring(native_version)},
+            {L"User-Agent", L"MiniTranslator/" + std::wstring(native_version)},
         };
         request.response_chunk = chunks;
         auto response = client.send(request, stop);
@@ -319,10 +324,12 @@ UpdateInfo parse_manifest(std::string_view payload, const Repository& repository
     JsonObject root;
     try { root = JsonObject::Parse(utf8_to_wide(payload)); }
     catch (...) { throw UpdateError("update manifest is not valid UTF-8 JSON"); }
-    if (root.GetNamedNumber(L"schema_version", 0) != 2 ||
-        root.GetNamedString(L"product", L"") != L"ScreenTranslate") {
+    if (root.GetNamedNumber(L"schema_version", 0) != 2) {
         throw UpdateError("unsupported update manifest");
     }
+    const auto product = root.GetNamedString(L"product", L"");
+    if (product == L"ScreenTranslate") throw LegacyManifest();
+    if (product != L"MiniTranslator") throw UpdateError("unsupported update manifest");
     UpdateInfo info;
     info.version = required_string(root, L"version");
     const auto semver = parse_semver(info.version);
@@ -356,7 +363,7 @@ UpdateInfo parse_manifest(std::string_view payload, const Repository& repository
     const auto artifact = root.GetNamedObject(L"artifact", nullptr);
     if (!artifact) throw UpdateError("update manifest has no artifact");
     info.artifact.name = required_string(artifact, L"name");
-    const auto expected_name = L"ScreenTranslate-" + info.version + L"-setup-x64.exe";
+    const auto expected_name = L"MiniTranslator-" + info.version + L"-setup-x64.exe";
     if (info.artifact.name != expected_name) throw UpdateError("artifact name does not match version");
     info.artifact.url = required_string(artifact, L"url");
     const auto artifact_url = parse_url(info.artifact.url, L"安装包地址");
@@ -383,7 +390,7 @@ std::filesystem::path update_root() {
     const DWORD written = GetEnvironmentVariableW(L"LOCALAPPDATA", value.data(), needed);
     if (!written || written >= needed) throw_last_error("LOCALAPPDATA is unavailable");
     value.resize(written);
-    return std::filesystem::path(value) / L"ScreenTranslate" / L"updates";
+    return std::filesystem::path(value) / L"MiniTranslator" / L"updates";
 }
 
 bool reparse_point(const std::filesystem::path& path) {
@@ -546,7 +553,7 @@ void validate_info(const UpdateInfo& info, const Repository& repository, bool re
         throw UpdateError("update version is not newer than this build");
     }
     const auto expected_release = repository.url() + L"/releases/tag/v" + info.version;
-    const auto expected_name = L"ScreenTranslate-" + info.version + L"-setup-x64.exe";
+    const auto expected_name = L"MiniTranslator-" + info.version + L"-setup-x64.exe";
     const auto expected_url = repository.url() + L"/releases/download/v" + info.version + L"/" + expected_name;
     if (info.release_url != expected_release || info.artifact.name != expected_name ||
         info.artifact.url != expected_url || info.artifact.size == 0 ||
@@ -629,7 +636,12 @@ std::optional<UpdateInfo> check_for_update(
     if (channel != L"stable" && channel != L"preview") throw UpdateError("update channel is invalid");
     HttpClient client;
     const auto response = github_get(client, std::wstring(manifest_url), manifest_limit, stop);
-    auto info = parse_manifest(response.utf8(), repository);
+    UpdateInfo info;
+    try {
+        info = parse_manifest(response.utf8(), repository);
+    } catch (const LegacyManifest&) {
+        return std::nullopt;
+    }
     if (channel == L"stable" && info.channel != L"stable") return std::nullopt;
     return compare_semver(parse_semver(info.version), parse_semver(native_version)) > 0
         ? std::optional<UpdateInfo>(std::move(info)) : std::nullopt;
@@ -765,7 +777,7 @@ int run_update_helper() {
     const auto semver = parse_semver(info.version);
     info.channel = semver.prerelease.empty() ? L"stable" : L"preview";
     info.release_url = repository.url() + L"/releases/tag/v" + info.version;
-    info.artifact.name = L"ScreenTranslate-" + info.version + L"-setup-x64.exe";
+    info.artifact.name = L"MiniTranslator-" + info.version + L"-setup-x64.exe";
     info.artifact.url = repository.url() + L"/releases/download/v" + info.version + L"/" + info.artifact.name;
     info.artifact.size = unsigned_value(values.at(L"--update-size"), L"安装包大小");
     info.artifact.sha256 = lower_ascii(values.at(L"--update-sha256"));
@@ -790,15 +802,15 @@ void updater_self_test() {
     const Repository repository{L"Freyja04", L"ScreenTranslate"};
     constexpr std::string_view manifest = R"json({
       "schema_version":2,
-      "product":"ScreenTranslate",
+      "product":"MiniTranslator",
       "version":"1.0.3",
       "channel":"stable",
       "published_at":"2026-07-29T12:00:00Z",
       "release_url":"https://github.com/Freyja04/ScreenTranslate/releases/tag/v1.0.3",
       "platform":{"os":"windows","arch":"x86_64","minimum":"10"},
       "artifact":{
-        "name":"ScreenTranslate-1.0.3-setup-x64.exe",
-        "url":"https://github.com/Freyja04/ScreenTranslate/releases/download/v1.0.3/ScreenTranslate-1.0.3-setup-x64.exe",
+        "name":"MiniTranslator-1.0.3-setup-x64.exe",
+        "url":"https://github.com/Freyja04/ScreenTranslate/releases/download/v1.0.3/MiniTranslator-1.0.3-setup-x64.exe",
         "size":123456,
         "sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       }
@@ -807,6 +819,19 @@ void updater_self_test() {
     validate_info(parsed, repository, false);
     if (parsed.version != L"1.0.3" || parsed.artifact.size != 123456) {
         throw UpdateError("manifest self-test failed");
+    }
+    bool legacy_ignored = false;
+    constexpr std::string_view legacy_manifest = R"json({
+      "schema_version":2,
+      "product":"ScreenTranslate"
+    })json";
+    try {
+        (void)parse_manifest(legacy_manifest, repository);
+    } catch (const LegacyManifest&) {
+        legacy_ignored = true;
+    }
+    if (!legacy_ignored) {
+        throw UpdateError("legacy manifest was not recognized");
     }
 }
 

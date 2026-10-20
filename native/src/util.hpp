@@ -92,6 +92,7 @@ std::wstring url_encode(std::wstring_view value);
 std::wstring url_encode_utf8(std::string_view value);
 std::wstring html_unescape(std::wstring value);
 std::wstring new_uuid();
+bool copy_text_to_clipboard(HWND owner, std::wstring_view text) noexcept;
 bool constant_time_equal(std::span<const std::uint8_t> left,
                          std::span<const std::uint8_t> right) noexcept;
 void util_self_test();

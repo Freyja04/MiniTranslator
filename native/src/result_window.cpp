@@ -1,6 +1,7 @@
 #include "result_window.hpp"
 
 #include "capture.hpp"
+#include "resource.h"
 #include "theme.hpp"
 #include "util.hpp"
 
@@ -19,8 +20,8 @@ namespace screentrans {
 
 namespace {
 
-constexpr wchar_t class_name[] = L"ScreenTranslate.Native.ResultWindow.v1";
-constexpr wchar_t control_bar_class_name[] = L"ScreenTranslate.Native.ResultControlBar.v1";
+constexpr wchar_t class_name[] = L"MiniTranslator.Native.ResultWindow.v1";
+constexpr wchar_t control_bar_class_name[] = L"MiniTranslator.Native.ResultControlBar.v1";
 // Keep the detached result toolbar dimensionally identical to the Python
 // reference.  At 26 px the native toolbar covered noticeably more of the
 // surrounding desktop and made the glyphs read heavier than the original.
@@ -302,7 +303,7 @@ SizeBadge make_size_badge(HWND window, int width, int height) {
                              FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                              CLEARTYPE_QUALITY, DEFAULT_PITCH,
-                             L"Microsoft YaHei UI");
+                             theme::font_family.c_str());
     if (dc && font) {
         const HGDIOBJ old_font = SelectObject(dc, font);
         GetTextExtentPoint32W(dc, badge.text.c_str(),
@@ -333,6 +334,8 @@ void ResultWindow::create_window() {
     description.lpfnWndProc = &ResultWindow::window_proc;
     description.style = CS_DBLCLKS;
     description.hInstance = instance_;
+    description.hIcon = LoadIconW(instance_, MAKEINTRESOURCEW(IDI_APP_ICON));
+    description.hIconSm = description.hIcon;
     description.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     description.hbrBackground = nullptr;
     description.lpszClassName = class_name;
@@ -341,7 +344,7 @@ void ResultWindow::create_window() {
         throw_last_error("register result window");
     }
     window_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
-                              class_name, L"划词截屏翻译",
+                              class_name, SCREENTRANS_DISPLAY_NAME,
                               WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                               0, 0, 1, 1, nullptr, nullptr, instance_, this);
     if (!window_) throw_last_error("create result window");
@@ -693,7 +696,7 @@ void ResultWindow::paint_control_bar() {
         BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
         if (!UpdateLayeredWindow(control_bar_, screen, &destination, &size,
                                  memory, &source, 0, &blend, ULW_ALPHA)) {
-            OutputDebugStringW(L"ScreenTranslate: could not update result control bar.\n");
+            OutputDebugStringW(L"MiniTranslator: could not update result control bar.\n");
         }
     }
     if (memory && previous_bitmap && previous_bitmap != HGDI_ERROR) {
@@ -964,7 +967,7 @@ void ResultWindow::set_error(std::wstring message) {
         error_.clear();
         pending_source_.reset();
         refresh_surface_ = {};
-        const std::wstring diagnostic = L"ScreenTranslate refresh failed: " + message + L"\n";
+        const std::wstring diagnostic = L"MiniTranslator refresh failed: " + message + L"\n";
         OutputDebugStringW(diagnostic.c_str());
         InvalidateRect(window_, nullptr, FALSE);
         UpdateWindow(window_);
@@ -983,6 +986,16 @@ void ResultWindow::set_error(std::wstring message) {
     error_ = std::move(message);
     InvalidateRect(window_, nullptr, FALSE);
     if (control_bar_) InvalidateRect(control_bar_, nullptr, FALSE);
+}
+
+void ResultWindow::refresh_appearance(ResultAppearance appearance) {
+    if (!window_) return;
+    if (refreshing_ && pending_source_) {
+        pending_source_->appearance = appearance;
+    }
+    appearance_ = std::move(appearance);
+    if (!peek_ && !result_.blocks.empty()) build_repaired_background();
+    RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE);
 }
 
 void ResultWindow::close() {
@@ -1154,7 +1167,7 @@ void ResultWindow::freeze_current_surface() noexcept {
         } else if (original_ && !original_->empty()) {
             refresh_surface_ = *original_;
         }
-        OutputDebugStringW(L"ScreenTranslate: could not freeze the current result surface.\n");
+        OutputDebugStringW(L"MiniTranslator: could not freeze the current result surface.\n");
     }
     freeze_content_only_ = false;
     handles_alpha_ = previous_handles_alpha;
@@ -1332,7 +1345,7 @@ void ResultWindow::paint() {
                                             FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                             CLEARTYPE_QUALITY, DEFAULT_PITCH,
-                                            L"Microsoft YaHei UI");
+                                            theme::font_family.c_str());
             const HGDIOBJ old_badge_font = SelectObject(dc, badge_font);
             const int badge_height = badge.bounds.bottom - badge.bounds.top;
             HRGN badge_region = CreateRoundRectRgn(

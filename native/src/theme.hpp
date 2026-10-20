@@ -22,6 +22,15 @@ enum class Mode {
 inline Mode mode = Mode::system;
 inline bool dark = true;
 
+// Typography is shared by all windows so spacing and hierarchy remain
+// consistent with the platform's system UI font.
+inline std::wstring font_family = L"Segoe UI";
+constexpr int font_size_body = 13;
+constexpr int font_size_title = 18;
+constexpr int font_size_section = 14;
+constexpr int font_size_small = 11;
+constexpr int font_size_translation = 14;
+
 inline COLORREF color_page = RGB(21, 22, 27);
 inline COLORREF color_sidebar = RGB(16, 17, 22);
 inline COLORREF color_card = RGB(27, 29, 35);
@@ -30,6 +39,8 @@ inline COLORREF color_translation = RGB(25, 27, 32);
 inline COLORREF color_line = RGB(40, 43, 51);
 inline COLORREF color_line_high = RGB(52, 56, 66);
 inline COLORREF color_hover = RGB(45, 48, 56);
+inline COLORREF color_nav_hover = RGB(34, 36, 42);
+inline COLORREF color_nav_active = RGB(39, 42, 49);
 inline COLORREF color_text = RGB(231, 233, 236);
 inline COLORREF color_text_dim = RGB(148, 154, 164);
 inline COLORREF color_text_faint = RGB(110, 116, 126);
@@ -62,6 +73,7 @@ inline COLORREF tray_color_text_faint = RGB(112, 112, 112);
 void initialize(const ConfigStore& config);
 void apply_mode(Mode value) noexcept;
 void refresh_system_mode() noexcept;
+void refresh_system_ui_font();
 
 void apply_window_theme(HWND window, bool round_corners = true,
                         bool custom_caption = false) noexcept;

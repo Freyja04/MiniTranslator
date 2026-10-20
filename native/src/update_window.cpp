@@ -2,6 +2,7 @@
 
 #include "resource.h"
 #include "theme.hpp"
+#include "ui_draw.hpp"
 #include "util.hpp"
 #include "version.hpp"
 
@@ -21,7 +22,7 @@ namespace screentrans {
 
 namespace {
 
-constexpr wchar_t class_name[] = L"ScreenTranslate.Native.UpdateWindow.v2";
+constexpr wchar_t class_name[] = L"MiniTranslator.Native.UpdateWindow.v2";
 constexpr int id_check = 8101;
 constexpr int id_release = 8102;
 constexpr int id_action = 8103;
@@ -61,27 +62,10 @@ void fill_round_rect(HDC dc, const RECT& rect, int radius,
     DeleteObject(brush);
 }
 
-void draw_text(HDC dc, std::wstring_view text, RECT rect, HFONT font,
-               COLORREF color, UINT format) {
-    const auto old_font = SelectObject(dc, font);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, color);
-    DrawTextW(dc, text.data(), static_cast<int>(text.size()), &rect,
-              format | DT_NOPREFIX);
-    SelectObject(dc, old_font);
-}
+using ui_draw::draw_text;
 
-std::wstring text_of(HWND control) {
-    const int length = GetWindowTextLengthW(control);
-    std::wstring value(static_cast<std::size_t>(std::max(0, length)) + 1, L'\0');
-    if (length > 0) GetWindowTextW(control, value.data(), length + 1);
-    value.resize(static_cast<std::size_t>(std::max(0, length)));
-    return value;
-}
-
-void set_font(HWND control, HFONT font) {
-    if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-}
+using ui_draw::set_font;
+using ui_draw::text_of;
 
 std::wstring format_size(std::uint64_t bytes) {
     constexpr std::array<std::wstring_view, 7> units{
@@ -185,12 +169,13 @@ public:
         instance_ = instance;
         owner_ = owner;
         accent_ = theme::accent;
-        prompt_ =
-            L"安装包已通过大小和 SHA-256 校验。\r\n\r\n"
-            L"ScreenTranslate 将退出并启动 " + std::move(version) +
-            L" 安装程序。\r\n"
-            L"由于安装包未使用代码签名，Windows 可能显示“未知发布者”。\r\n\r\n"
-            L"是否继续？";
+        prompt_ = std::wstring(
+                      L"安装包已通过大小和 SHA-256 校验。\r\n\r\n") +
+                  SCREENTRANS_DISPLAY_NAME + L" 将退出并启动 " +
+                  std::move(version) +
+                  L" 安装程序。\r\n"
+                  L"由于安装包未使用代码签名，Windows 可能显示“未知发布者”。\r\n\r\n"
+                  L"是否继续？";
 
         WNDCLASSEXW description{};
         description.cbSize = sizeof(description);
@@ -315,7 +300,7 @@ public:
 
 private:
     inline static constexpr wchar_t window_class_name[] =
-        L"ScreenTranslate.Native.InstallConfirmation.v1";
+        L"MiniTranslator.Native.InstallConfirmation.v1";
     static constexpr int id_confirm = 8201;
 
     static LRESULT CALLBACK window_proc(HWND window, UINT message,
@@ -412,11 +397,11 @@ private:
                                FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                CLEARTYPE_QUALITY, DEFAULT_PITCH,
-                               L"Microsoft YaHei UI");
+                               theme::font_family.c_str());
         };
-        font_ = make_font(13, FW_NORMAL);
-        title_font_ = make_font(17, FW_SEMIBOLD);
-        small_font_ = make_font(11, FW_NORMAL);
+        font_ = make_font(theme::font_size_body, FW_NORMAL);
+        title_font_ = make_font(theme::font_size_title, FW_SEMIBOLD);
+        small_font_ = make_font(theme::font_size_small, FW_NORMAL);
         background_ = CreateSolidBrush(color_page);
         const bool ready = font_ && title_font_ && small_font_ && background_;
         if (!ready) destroy_theme_resources();
@@ -607,7 +592,9 @@ UpdateWindow::~UpdateWindow() {
     invalidate_worker_dispatch();
     discard_worker_messages(window_);
     if (window_ && IsWindow(window_)) DestroyWindow(window_);
-    for (auto** font : {&font_, &title_font_, &state_font_, &small_font_}) {
+    if (brand_icon_) DestroyIcon(brand_icon_);
+    for (auto** font : {&font_, &title_font_, &status_heading_font_,
+                        &small_font_}) {
         if (*font) DeleteObject(*font);
     }
     if (background_) DeleteObject(background_);
@@ -785,8 +772,10 @@ void UpdateWindow::create_window(HWND owner) {
     const int y = owner_rect.top + std::max(0L, (owner_rect.bottom - owner_rect.top - height) / 2);
     window_error_.clear();
     auto dispatch = std::make_shared<WorkerDispatch>();
+    const std::wstring window_title =
+        std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 检查更新";
     window_ = CreateWindowExW(
-        ex_style, class_name, L"ScreenTranslate · 检查更新", style,
+        ex_style, class_name, window_title.c_str(), style,
         x, y, width, height, owner, nullptr, instance_, this);
     if (!window_) {
         if (!window_error_.empty()) throw AppError(window_error_);
@@ -798,9 +787,14 @@ void UpdateWindow::create_window(HWND owner) {
 }
 
 void UpdateWindow::create_theme_resources() {
-    for (auto** font : {&font_, &title_font_, &state_font_, &small_font_}) {
+    for (auto** font : {&font_, &title_font_, &status_heading_font_,
+                        &small_font_}) {
         if (*font) DeleteObject(*font);
         *font = nullptr;
+    }
+    if (brand_icon_) {
+        DestroyIcon(brand_icon_);
+        brand_icon_ = nullptr;
     }
     if (background_) DeleteObject(background_);
     if (card_background_) DeleteObject(card_background_);
@@ -810,16 +804,21 @@ void UpdateWindow::create_theme_resources() {
     const auto make_font = [&](int pixels, int weight) {
         return CreateFontW(-px(pixels, dpi_), 0, 0, 0, weight, FALSE, FALSE, FALSE,
                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                           CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+                           CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                           theme::font_family.c_str());
     };
-    font_ = make_font(13, FW_NORMAL);
-    title_font_ = make_font(18, FW_SEMIBOLD);
-    state_font_ = make_font(14, FW_SEMIBOLD);
-    small_font_ = make_font(11, FW_NORMAL);
+    font_ = make_font(theme::font_size_body, FW_NORMAL);
+    title_font_ = make_font(theme::font_size_title, FW_SEMIBOLD);
+    status_heading_font_ =
+        make_font(theme::font_size_section, FW_SEMIBOLD);
+    small_font_ = make_font(theme::font_size_small, FW_NORMAL);
+    brand_icon_ = static_cast<HICON>(LoadImageW(
+        instance_, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON, px(38, dpi_),
+        px(38, dpi_), LR_DEFAULTCOLOR));
     background_ = CreateSolidBrush(color_page);
     card_background_ = CreateSolidBrush(color_card);
-    if (!font_ || !title_font_ || !state_font_ || !small_font_ ||
-        !background_ || !card_background_) {
+    if (!font_ || !title_font_ || !status_heading_font_ || !small_font_ ||
+        !brand_icon_ || !background_ || !card_background_) {
         throw AppError("cannot create update window theme resources");
     }
 }
@@ -1039,27 +1038,14 @@ void UpdateWindow::paint() {
     const int margin = px(24, dpi_);
 
     RECT mark{margin, px(20, dpi_), margin + px(38, dpi_), px(58, dpi_)};
-    RECT bubble{mark.left, mark.top, mark.right, mark.bottom - px(5, dpi_)};
-    fill_round_rect(dc, bubble, px(9, dpi_), accent, accent);
-    POINT tail[3]{
-        {mark.left + px(5, dpi_), mark.bottom - px(10, dpi_)},
-        {mark.left + px(5, dpi_), mark.bottom},
-        {mark.left + px(14, dpi_), mark.bottom - px(6, dpi_)},
-    };
-    HBRUSH mark_brush = CreateSolidBrush(accent);
-    HPEN mark_pen = CreatePen(PS_SOLID, 1, accent);
-    const auto old_brush = SelectObject(dc, mark_brush);
-    const auto old_pen = SelectObject(dc, mark_pen);
-    Polygon(dc, tail, static_cast<int>(std::size(tail)));
-    SelectObject(dc, old_pen);
-    SelectObject(dc, old_brush);
-    DeleteObject(mark_pen);
-    DeleteObject(mark_brush);
-    draw_text(dc, L"译", bubble, state_font_, theme::accent_foreground,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    const int icon_size = mark.right - mark.left;
+    if (brand_icon_) {
+        DrawIconEx(dc, mark.left, mark.top, brand_icon_, icon_size, icon_size, 0,
+                   nullptr, DI_NORMAL);
+    }
 
     const int heading_left = mark.right + px(12, dpi_);
-    draw_text(dc, L"ScreenTranslate",
+    draw_text(dc, SCREENTRANS_DISPLAY_NAME,
               RECT{heading_left, px(17, dpi_), client.right - margin, px(42, dpi_)},
               title_font_, color_text,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -1097,7 +1083,8 @@ void UpdateWindow::paint() {
     draw_text(dc, state_title_,
               RECT{state_text_left, state_card.top + px(11, dpi_),
                    state_card.right - px(17, dpi_), state_card.top + px(35, dpi_)},
-              state_font_, state_color, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+              status_heading_font_, state_color,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     if (progress_visible_) {
         RECT progress{state_text_left, state_card.bottom - px(23, dpi_),
@@ -1528,6 +1515,13 @@ LRESULT UpdateWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
     case theme::changed_message:
         create_theme_resources();
         theme::apply_window_theme(window_, true, true);
+        set_font(check_button_, font_);
+        set_font(release_button_, font_);
+        set_font(action_button_, font_);
+        set_font(state_message_control_, small_font_);
+        set_font(published_value_control_, font_);
+        set_font(artifact_value_control_, font_);
+        set_font(source_control_, small_font_);
         layout_controls();
         RedrawWindow(window_, nullptr, nullptr,
                      RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);

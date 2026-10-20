@@ -154,6 +154,11 @@ ConfigStore::ConfigStore()
     load();
 }
 
+ConfigStore::ConfigStore(const std::filesystem::path& path)
+    : path_(path), root_(defaults()) {
+    load();
+}
+
 JsonObject ConfigStore::defaults() {
     auto result = parse_json(R"json({
       "hotkey":"Ctrl+Alt+Q",
@@ -174,7 +179,7 @@ JsonObject ConfigStore::defaults() {
       },
       "lang":{"zh_target":"en"},
       "appearance":{
-        "font_family":"Microsoft YaHei UI","min_font_px":9,"auto_copy":true,
+        "auto_copy":true,
         "theme":"system"
       },
       "updates":{"manifest_url":"","repository_url":"","channel":"stable"},
@@ -240,7 +245,9 @@ void ConfigStore::load() {
         }
     }
     // Custom accent colors are gone; themes now own the shared accent.
-    for (const auto* retired : {L"close_mode", L"timeout_ms", L"accent"}) {
+    // Font selection is retired as well; every window follows the Windows UI font.
+    for (const auto* retired : {L"close_mode", L"timeout_ms", L"accent",
+                                L"font_family", L"min_font_px"}) {
         const winrt::hstring key(retired);
         if (appearance.HasKey(key)) {
             appearance.Remove(key);

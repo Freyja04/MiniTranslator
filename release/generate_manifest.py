@@ -90,7 +90,7 @@ def build_manifest(
 
     return {
         "schema_version": 2,
-        "product": "ScreenTranslate",
+        "product": "MiniTranslator",
         "version": version,
         "channel": channel,
         "published_at": published_at(timestamp),

@@ -14,6 +14,16 @@ constexpr DWORD caption_color = 35;
 constexpr DWORD caption_text_color = 36;
 constexpr DWORD window_corner_preference = 33;
 
+std::wstring system_ui_font_family() {
+    NONCLIENTMETRICSW metrics{sizeof(metrics)};
+    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics),
+                              &metrics, 0) &&
+        metrics.lfMessageFont.lfFaceName[0] != L'\0') {
+        return metrics.lfMessageFont.lfFaceName;
+    }
+    return L"Segoe UI";
+}
+
 bool read_personalize_dword(const wchar_t* name, DWORD& value) noexcept {
     DWORD size = sizeof(value);
     return RegGetValueW(
@@ -31,6 +41,8 @@ void apply_dark_palette() noexcept {
     color_line = RGB(40, 43, 51);
     color_line_high = RGB(52, 56, 66);
     color_hover = RGB(45, 48, 56);
+    color_nav_hover = RGB(34, 36, 42);
+    color_nav_active = RGB(39, 42, 49);
     color_text = RGB(231, 233, 236);
     color_text_dim = RGB(148, 154, 164);
     color_text_faint = RGB(110, 116, 126);
@@ -58,6 +70,8 @@ void apply_light_palette() noexcept {
     color_line = RGB(217, 222, 230);
     color_line_high = RGB(197, 204, 214);
     color_hover = RGB(232, 235, 240);
+    color_nav_hover = RGB(224, 228, 234);
+    color_nav_active = RGB(218, 224, 232);
     color_text = RGB(30, 35, 42);
     color_text_dim = RGB(94, 103, 116);
     color_text_faint = RGB(138, 147, 160);
@@ -114,7 +128,12 @@ Mode parse_mode(std::wstring_view value) noexcept {
 
 void initialize(const ConfigStore& config) {
     mode = parse_mode(config.string(L"appearance.theme", L"system"));
+    font_family = system_ui_font_family();
     apply_mode(mode);
+}
+
+void refresh_system_ui_font() {
+    font_family = system_ui_font_family();
 }
 
 void apply_mode(Mode value) noexcept {

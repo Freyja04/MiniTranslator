@@ -19,6 +19,7 @@ namespace screentrans {
 class ConfigStore {
 public:
     ConfigStore();
+    explicit ConfigStore(const std::filesystem::path& path);
 
     void load();
     void save() const;

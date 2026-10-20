@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -25,7 +26,8 @@ class BlockEditor;
 
 class AppHost {
 public:
-    explicit AppHost(HINSTANCE instance);
+    explicit AppHost(HINSTANCE instance,
+                     std::filesystem::path config_path = {});
     ~AppHost();
 
     AppHost(const AppHost&) = delete;
@@ -35,7 +37,7 @@ public:
             bool text_translation_on_start = false);
     [[nodiscard]] HWND handle() const noexcept { return window_; }
     static constexpr const wchar_t* window_class_name() noexcept {
-        return L"ScreenTranslate.Native.MessageWindow.v1";
+        return L"MiniTranslator.Native.MessageWindow.v1";
     }
     static constexpr UINT activate_message = WM_APP + 1;
     static constexpr WPARAM activate_text_translation = 1;
@@ -94,7 +96,6 @@ private:
     UINT taskbar_created_message_{};
     NOTIFYICONDATAW tray_{};
     HICON icon_{};
-    std::wstring tray_accent_;
     ConfigStore config_;
     SettingsWindow settings_;
     UpdateWindow updates_;

@@ -107,8 +107,9 @@ private:
     HWND repository_tooltip_{};
     HFONT font_{};
     HFONT title_font_{};
-    HFONT state_font_{};
+    HFONT status_heading_font_{};
     HFONT small_font_{};
+    HICON brand_icon_{};
     HBRUSH background_{};
     HBRUSH card_background_{};
     std::wstring state_title_;

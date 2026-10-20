@@ -164,7 +164,6 @@ private:
     HWND ocr_engine_note_{};
     HWND ocr_languages_{};
     HWND ocr_upscale_{};
-    HWND font_family_{};
     HWND theme_mode_{};
     HWND auto_copy_{};
     HWND autostart_{};
@@ -173,6 +172,7 @@ private:
     HWND restart_{};
     HWND check_updates_{};
     HWND diagnostic_command_{};
+    HWND copy_diagnostic_{};
     HWND text_target_{};
     HWND text_input_{};
     HWND text_output_{};

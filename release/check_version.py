@@ -50,7 +50,7 @@ def source_versions() -> dict[str, str]:
     return {
         "native CMake": _one(
             "native/CMakeLists.txt",
-            r"^project\(ScreenTranslateNative VERSION ([0-9]+\.[0-9]+\.[0-9]+)",
+            r"^project\(MiniTranslatorNative VERSION ([0-9]+\.[0-9]+\.[0-9]+)",
             "native CMake",
         ),
         "native resource": ".".join(resource_parts),
@@ -91,12 +91,12 @@ def validate(expected: str) -> dict[str, str]:
         (
             "native HTTP user agent",
             "native/src/http.cpp",
-            r'WinHttpOpen\(L"Mozilla/5\.0 ScreenTranslate/([^"]+)"',
+            r'WinHttpOpen\(L"Mozilla/5\.0 MiniTranslator/([^"]+)"',
         ),
         (
             "native updater user agent",
             "native/src/updater.cpp",
-            r'\{L"User-Agent", L"ScreenTranslate/([^"]+)"\}',
+            r'\{L"User-Agent", L"MiniTranslator/([^"]+)"\}',
         ),
         (
             "native update status text",

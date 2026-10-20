@@ -46,6 +46,10 @@ $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
 if ([string]::IsNullOrWhiteSpace($versionInfo.FileVersion)) {
     throw 'Native executable has no Win32 version resource'
 }
+if ($versionInfo.OriginalFilename -cne 'MiniTranslator.exe' -or
+    $versionInfo.ProductName -cne 'MiniTranslator') {
+    throw "Native executable has unexpected product metadata: $($versionInfo.ProductName) / $($versionInfo.OriginalFilename)"
+}
 
 if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion)) {
     $match = [regex]::Match(

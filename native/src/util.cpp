@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstring>
 #include <cwctype>
 #include <fstream>
 #include <iterator>
@@ -108,7 +109,7 @@ std::filesystem::path app_data_directory() {
         throw_last_error("APPDATA is unavailable");
     }
     value.resize(written);
-    return std::filesystem::path(value) / L"ScreenTranslate";
+    return std::filesystem::path(value) / L"MiniTranslator";
 }
 
 COLORREF parse_rgb_color(std::wstring_view text, COLORREF fallback) noexcept {
@@ -251,6 +252,30 @@ std::wstring new_uuid() {
         throw AppError("cannot format UUID");
     }
     return std::wstring(buffer + 1, buffer + count - 2);
+}
+
+bool copy_text_to_clipboard(HWND owner, std::wstring_view text) noexcept {
+    if (text.empty() || !OpenClipboard(owner)) return false;
+    EmptyClipboard();
+    const SIZE_T bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (!memory) {
+        CloseClipboard();
+        return false;
+    }
+    void* destination = GlobalLock(memory);
+    if (!destination) {
+        GlobalFree(memory);
+        CloseClipboard();
+        return false;
+    }
+    std::memcpy(destination, text.data(), text.size() * sizeof(wchar_t));
+    static_cast<wchar_t*>(destination)[text.size()] = L'\0';
+    GlobalUnlock(memory);
+    const bool copied = SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
+    if (!copied) GlobalFree(memory);
+    CloseClipboard();
+    return copied;
 }
 
 bool constant_time_equal(std::span<const std::uint8_t> left,

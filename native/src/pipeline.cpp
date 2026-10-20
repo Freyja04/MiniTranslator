@@ -496,7 +496,7 @@ void PipelineController::worker_failed() noexcept {
             if (!affected[index]) continue;
             completions_.push_back(PipelineCompletion{
                 latest_requests_[index], static_cast<PipelineLane>(index), std::nullopt,
-                L"后台处理线程初始化失败，请重启 ScreenTranslate",
+                L"后台处理线程初始化失败，请重启 MiniTranslator",
             });
             notify = true;
         }

@@ -1,5 +1,6 @@
 #include "selection_overlay.hpp"
 
+#include "theme.hpp"
 #include "util.hpp"
 
 #include <windowsx.h>
@@ -14,7 +15,7 @@ namespace screentrans {
 
 namespace {
 
-constexpr wchar_t class_name[] = L"ScreenTranslate.Native.SelectionOverlay.v1";
+constexpr wchar_t class_name[] = L"MiniTranslator.Native.SelectionOverlay.v1";
 constexpr int minimum_selection = 6;
 constexpr int crosshair_half_length = 12;
 
@@ -168,7 +169,8 @@ void draw_size_badge(HDC dc, HDC alpha_dc, const RECT& selected,
                               std::to_wstring(logical_height);
     HFONT font = CreateFontW(-px(11, dpi), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                             theme::font_family.c_str());
     const auto old_font = SelectObject(dc, font);
     SIZE measured{};
     GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &measured);
@@ -503,7 +505,7 @@ void SelectionOverlay::finish_selection(WindowState& state) {
     try {
         if (callback) callback(physical, std::move(crop));
     } catch (...) {
-        OutputDebugStringW(L"ScreenTranslate: selection callback failed.\n");
+        OutputDebugStringW(L"MiniTranslator: selection callback failed.\n");
         close();
         return;
     }

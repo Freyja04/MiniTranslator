@@ -1,8 +1,8 @@
-# ScreenTranslate（划词截屏翻译）
+# MiniTranslator
 
-按下快捷键，在屏幕上框选一块区域，ScreenTranslate 会识别文字、翻译，并把译文覆盖回原位置。
+按下快捷键，在屏幕上框选一块区域，MiniTranslator 会识别文字、翻译，并把译文覆盖回原位置。
 
-ScreenTranslate 使用 **C++20 + 原生 Win32/C++/WinRT** 实现。发布产物是一个独立的 x64 EXE，静态链接 MSVC 运行库，不依赖 Python、Qt、.NET、Tauri、NuGet 或额外 DLL。
+MiniTranslator 使用 **C++20 + 原生 Win32/C++/WinRT** 实现。发布产物是一个独立的 x64 EXE，静态链接 MSVC 运行库，不依赖 Python、Qt、.NET、Tauri、NuGet 或额外 DLL。
 
 仅支持 Windows 10/11 x64。
 
@@ -15,8 +15,8 @@ ScreenTranslate 使用 **C++20 + 原生 Win32/C++/WinRT** 实现。发布产物�
 
 从本仓库的 [GitHub Releases](https://github.com/Freyja04/ScreenTranslate/releases) 下载：
 
-- `ScreenTranslate-<版本>-setup-x64.exe`：安装版，可从应用内直接更新；
-- `ScreenTranslate-<版本>-windows-x64.exe`：便携版，下载后直接运行。
+- `MiniTranslator-<版本>-setup-x64.exe`：安装版，可从应用内直接更新；
+- `MiniTranslator-<版本>-windows-x64.exe`：便携版，下载后直接运行。
 
 Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是运行依赖，但分发便携 EXE 时应一同提供。
 
@@ -89,7 +89,7 @@ Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是�
 配置文件位置：
 
 ```text
-%APPDATA%\ScreenTranslate\config.json
+%APPDATA%\MiniTranslator\config.json
 ```
 
 程序直接读取既有配置。API 密钥使用当前 Windows 账户的 DPAPI 加密，磁盘中的值以 `dpapi:v1:` 开头；换到其他账户或电脑后无法解密，需要重新填写。
@@ -120,7 +120,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 产物：
 
 ```text
-build\native\Release\ScreenTranslate.exe
+build\native\Release\MiniTranslator.exe
 ```
 
 `-RunSmokeTest` 会执行程序生命周期自检和更新器自检，不会留下后台进程。还可以验证最终 PE 文件的架构、版本资源、GUI 子系统以及是否意外依赖动态 CRT：
@@ -128,7 +128,7 @@ build\native\Release\ScreenTranslate.exe
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\release\check_native_binary.ps1 `
-  -Path .\build\native\Release\ScreenTranslate.exe `
+  -Path .\build\native\Release\MiniTranslator.exe `
   -ExpectedVersion 1.2.6
 ```
 
@@ -154,6 +154,8 @@ Debug 构建：
 
 工作流不接受任意仓库发布：`Validate release identity` 会从 `native/CMakeLists.txt` 读出更新信任根，要求 `GITHUB_REPOSITORY` 与之完全一致，否则直接失败。当前信任根是 `Freyja04/ScreenTranslate`。
 
+仓库名和 GitHub Releases 地址仍保留 `ScreenTranslate`，这是远程仓库与既有发布历史的兼容标识，不代表应用显示名。产品名、EXE、安装器和用户配置目录均已使用 `MiniTranslator`。
+
 ## 应用内更新
 
 程序只信任：
@@ -163,7 +165,9 @@ https://github.com/Freyja04/ScreenTranslate
 https://github.com/Freyja04/ScreenTranslate/releases/latest/download/update-manifest.json
 ```
 
-下载地址必须与同一仓库、`v<version>` 标签和 `ScreenTranslate-<version>-setup-x64.exe` 文件名完全一致。安装前会校验清单结构、版本、通道、文件大小和 SHA-256；下载缓存和更新辅助进程还会再次校验路径及文件内容。
+下载地址必须与同一仓库、`v<version>` 标签和 `MiniTranslator-<version>-setup-x64.exe` 文件名完全一致。安装前会校验清单结构、版本、通道、文件大小和 SHA-256；下载缓存和更新辅助进程还会再次校验路径及文件内容。
+
+为兼容改名前的线上清单，客户端会把 `product` 仍为 `ScreenTranslate` 的旧清单视为“暂无新版本”；只有 `product` 为 `MiniTranslator` 的新清单才会参与更新判断。
 
 更新不会静默绕过 Windows 安全提示。GitHub 在部分网络环境中可能访问较慢，失败时可稍后重试或从 Releases 页面手动下载。
 
@@ -187,4 +191,4 @@ release/                版本、PE 和更新清单校验工具
 
 ## 许可证
 
-ScreenTranslate 自有代码采用 [MIT License](LICENSE)。发布版使用 Windows SDK 提供的系统接口，不捆绑 Qt、Python 或第三方运行时；来源声明见 [native/THIRD_PARTY_NOTICES.txt](native/THIRD_PARTY_NOTICES.txt)。
+MiniTranslator 自有代码采用 [MIT License](LICENSE)。发布版使用 Windows SDK 提供的系统接口，不捆绑 Qt、Python 或第三方运行时；来源声明见 [native/THIRD_PARTY_NOTICES.txt](native/THIRD_PARTY_NOTICES.txt)。

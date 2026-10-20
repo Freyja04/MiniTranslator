@@ -15,7 +15,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstring>
 #include <cwchar>
 #include <filesystem>
 #include <vector>
@@ -102,7 +101,7 @@ HFONT create_tray_menu_font(UINT dpi) noexcept {
     return CreateFontW(-MulDiv(9, static_cast<int>(dpi), 72), 0, 0, 0, FW_NORMAL,
                        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                       DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+                       DEFAULT_PITCH | FF_DONTCARE, theme::font_family.c_str());
 }
 
 void CALLBACK style_tray_menu_window(HWINEVENTHOOK, DWORD event, HWND window,
@@ -393,148 +392,19 @@ void tray_menu_layout_self_test() {
     if (!rendered) throw AppError("tray menu render self-test failed");
 }
 
-HICON load_accent_icon(HINSTANCE instance, COLORREF accent) {
-    constexpr int icon_size = 32;
-    HICON source = static_cast<HICON>(LoadImageW(
+HICON load_brand_icon(HINSTANCE instance) {
+    return static_cast<HICON>(LoadImageW(
         instance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
-        icon_size, icon_size, LR_DEFAULTCOLOR));
-    if (!source) return nullptr;
-
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth = icon_size;
-    info.bmiHeader.biHeight = -icon_size;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    void* raw_bits = nullptr;
-    HDC screen = GetDC(nullptr);
-    HBITMAP color = screen
-        ? CreateDIBSection(screen, &info, DIB_RGB_COLORS, &raw_bits, nullptr, 0)
-        : nullptr;
-    HDC memory = screen ? CreateCompatibleDC(screen) : nullptr;
-    if (screen) ReleaseDC(nullptr, screen);
-    if (!color || !raw_bits || !memory) {
-        if (memory) DeleteDC(memory);
-        if (color) DeleteObject(color);
-        return source;
-    }
-
-    std::memset(raw_bits, 0, icon_size * icon_size * 4);
-    const HGDIOBJ previous = SelectObject(memory, color);
-    if (!previous || previous == HGDI_ERROR) {
-        DeleteDC(memory);
-        DeleteObject(color);
-        return source;
-    }
-    const BOOL drawn = DrawIconEx(memory, 0, 0, source, icon_size, icon_size,
-                                  0, nullptr, DI_NORMAL);
-    SelectObject(memory, previous);
-    DeleteDC(memory);
-    if (!drawn) {
-        DeleteObject(color);
-        return source;
-    }
-
-    auto* pixels = static_cast<BYTE*>(raw_bits);
-    constexpr int original_accent_peak = 199;
-    const std::array<int, 3> replacement{
-        GetBValue(accent), GetGValue(accent), GetRValue(accent),
-    };
-    for (int index = 0; index < icon_size * icon_size; ++index) {
-        BYTE* pixel = pixels + index * 4;
-        const int alpha = pixel[3];
-        if (alpha == 0) continue;
-        const int red = pixel[2];
-        const int green = pixel[1];
-        const int blue = pixel[0];
-        const int maximum = std::max({red, green, blue});
-        const int minimum = std::min({red, green, blue});
-        if (maximum - minimum <= 18 || green < red || green < blue) continue;
-
-        const bool premultiplied = maximum <= alpha + 2;
-        const int straight_peak = premultiplied && alpha < 255
-            ? std::min(255, maximum * 255 / std::max(1, alpha))
-            : maximum;
-        for (int channel = 0; channel < 3; ++channel) {
-            int value = std::clamp(
-                replacement[static_cast<std::size_t>(channel)] * straight_peak
-                    / original_accent_peak,
-                0, 255);
-            if (premultiplied && alpha < 255) value = value * alpha / 255;
-            pixel[channel] = static_cast<BYTE>(value);
-        }
-    }
-
-    std::array<BYTE, icon_size * icon_size / 8> mask_bits{};
-    HBITMAP mask = CreateBitmap(icon_size, icon_size, 1, 1, mask_bits.data());
-    ICONINFO icon_info{};
-    icon_info.fIcon = TRUE;
-    icon_info.hbmColor = color;
-    icon_info.hbmMask = mask;
-    HICON tinted = mask ? CreateIconIndirect(&icon_info) : nullptr;
-    if (mask) DeleteObject(mask);
-    DeleteObject(color);
-    if (!tinted) return source;
-    DestroyIcon(source);
-    return tinted;
-}
-
-bool icon_contains_red_accent(HICON icon) {
-    if (!icon) return false;
-    constexpr int icon_size = 32;
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth = icon_size;
-    info.bmiHeader.biHeight = -icon_size;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-
-    void* raw_bits = nullptr;
-    HDC screen = GetDC(nullptr);
-    HBITMAP bitmap = screen
-        ? CreateDIBSection(screen, &info, DIB_RGB_COLORS, &raw_bits, nullptr, 0)
-        : nullptr;
-    HDC memory = screen ? CreateCompatibleDC(screen) : nullptr;
-    if (screen) ReleaseDC(nullptr, screen);
-    if (!bitmap || !raw_bits || !memory) {
-        if (memory) DeleteDC(memory);
-        if (bitmap) DeleteObject(bitmap);
-        return false;
-    }
-
-    std::memset(raw_bits, 0, icon_size * icon_size * 4);
-    const HGDIOBJ previous = SelectObject(memory, bitmap);
-    const bool selected = previous && previous != HGDI_ERROR;
-    const bool drawn = selected && DrawIconEx(memory, 0, 0, icon, icon_size, icon_size,
-                                              0, nullptr, DI_NORMAL) != FALSE;
-    if (selected) SelectObject(memory, previous);
-    DeleteDC(memory);
-
-    bool found = false;
-    if (drawn) {
-        const auto* pixels = static_cast<const BYTE*>(raw_bits);
-        int matching_pixels = 0;
-        for (int index = 0; index < icon_size * icon_size; ++index) {
-            const BYTE* pixel = pixels + index * 4;
-            if (pixel[3] >= 32 && pixel[2] >= 48
-                && pixel[2] >= pixel[1] + 24 && pixel[2] >= pixel[0] + 16) {
-                if (++matching_pixels >= 8) {
-                    found = true;
-                    break;
-                }
-            }
-        }
-    }
-    DeleteObject(bitmap);
-    return found;
+        32, 32, LR_DEFAULTCOLOR));
 }
 
 }  // namespace
 
-AppHost::AppHost(HINSTANCE instance)
-    : instance_(instance), settings_(instance, config_), updates_(instance, config_),
+AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
+    : instance_(instance),
+      config_(config_path.empty() ? app_data_directory() / L"config.json"
+                                  : std::move(config_path)),
+      settings_(instance, config_), updates_(instance, config_),
       overlay_(instance), result_(instance) {
     theme::initialize(config_);
     create_message_window();
@@ -633,7 +503,7 @@ void AppHost::create_message_window() {
     if (!RegisterClassExW(&description) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         throw_last_error("register application window");
     }
-    window_ = CreateWindowExW(0, window_class_name(), L"划词截屏翻译", 0,
+    window_ = CreateWindowExW(0, window_class_name(), SCREENTRANS_DISPLAY_NAME, 0,
                               0, 0, 0, 0, nullptr, nullptr, instance_, this);
     if (!window_) throw_last_error("create application window");
     taskbar_created_message_ = RegisterWindowMessageW(L"TaskbarCreated");
@@ -645,9 +515,7 @@ void AppHost::add_tray_icon() {
         icon_ = nullptr;
     }
 
-    const auto theme_key = theme::mode_name(theme::mode) + L":" +
-                           std::to_wstring(static_cast<int>(theme::accent));
-    HICON icon = load_accent_icon(instance_, theme::accent);
+    HICON icon = load_brand_icon(instance_);
     if (!icon) throw_last_error("load notification icon");
 
     NOTIFYICONDATAW tray{};
@@ -660,7 +528,8 @@ void AppHost::add_tray_icon() {
     const auto capture = config_.string(L"hotkey", L"Ctrl+Alt+Q");
     const auto toggle = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
     const auto text = config_.string(L"hotkey_text_translate", L"Ctrl+Alt+Space");
-    const auto tip = L"划词截屏翻译\n截图翻译：" + capture + L"\n快速翻译：" + text +
+    const auto tip = std::wstring(SCREENTRANS_DISPLAY_NAME) +
+                     L"\n截图翻译：" + capture + L"\n快速翻译：" + text +
                      L"\n收起 / 显示：" + toggle;
     wcsncpy_s(tray.szTip, tip.c_str(), _TRUNCATE);
     if (!Shell_NotifyIconW(NIM_ADD, &tray)) {
@@ -671,7 +540,6 @@ void AppHost::add_tray_icon() {
     Shell_NotifyIconW(NIM_SETVERSION, &tray);
     tray_ = tray;
     icon_ = icon;
-    tray_accent_ = theme_key;
 }
 
 void AppHost::remove_tray_icon() {
@@ -683,22 +551,17 @@ void AppHost::remove_tray_icon() {
         DestroyIcon(icon_);
         icon_ = nullptr;
     }
-    tray_accent_.clear();
 }
 
 void AppHost::refresh_tray_icon() {
-    if (!tray_.hWnd) return;
-    const auto theme_key = theme::mode_name(theme::mode) + L":" +
-                           std::to_wstring(static_cast<int>(theme::accent));
-    if (icon_ && theme_key == tray_accent_) return;
-    HICON replacement = load_accent_icon(instance_, theme::accent);
+    if (!tray_.hWnd || icon_) return;
+    HICON replacement = load_brand_icon(instance_);
     if (!replacement) return;
     const HICON previous = icon_;
     tray_.uFlags = NIF_ICON;
     tray_.hIcon = replacement;
     if (Shell_NotifyIconW(NIM_MODIFY, &tray_)) {
         icon_ = replacement;
-        tray_accent_ = theme_key;
         if (previous) DestroyIcon(previous);
     } else {
         tray_.hIcon = previous;
@@ -711,7 +574,8 @@ void AppHost::refresh_tray_tooltip() {
     const auto capture = config_.string(L"hotkey", L"Ctrl+Alt+Q");
     const auto toggle = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
     const auto text = config_.string(L"hotkey_text_translate", L"Ctrl+Alt+Space");
-    const auto tip = L"划词截屏翻译\n截图翻译：" + capture + L"\n快速翻译：" + text +
+    const auto tip = std::wstring(SCREENTRANS_DISPLAY_NAME) +
+                     L"\n截图翻译：" + capture + L"\n快速翻译：" + text +
                      L"\n收起 / 显示：" + toggle;
     tray_.uFlags = NIF_TIP;
     wcsncpy_s(tray_.szTip, tip.c_str(), _TRUNCATE);
@@ -723,10 +587,10 @@ void AppHost::refresh_theme_windows() {
     updates_.refresh_appearance();
     if (quick_window_) quick_window_->refresh_appearance();
     if (result_.handle()) {
+        result_.refresh_appearance(result_appearance());
         PostMessageW(result_.handle(), theme::changed_message, 0, 0);
     }
     BlockEditor::refresh_active_theme();
-    tray_accent_.clear();
     refresh_tray_icon();
     refresh_tray_tooltip();
     if (window_) RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE);
@@ -841,21 +705,21 @@ bool AppHost::apply_hotkeys(bool announce_changes) {
         window_, hotkey_capture, capture_spec, &error);
     if (!capture_registered) {
         success = false;
-        notify(L"划词截屏翻译 · 截图翻译快捷键未生效", error);
+        notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 截图翻译快捷键未生效", error);
     }
     error.clear();
     const bool toggle_registered = register_hotkey(
         window_, hotkey_toggle, toggle_spec, &error);
     if (!toggle_registered) {
         success = false;
-        notify(L"划词截屏翻译 · 收起 / 显示快捷键未生效", error);
+        notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 收起 / 显示快捷键未生效", error);
     }
     error.clear();
     const bool text_registered = register_hotkey(
         window_, hotkey_text_translate, text_spec, &error);
     if (!text_registered) {
         success = false;
-        notify(L"划词截屏翻译 · 快速翻译快捷键未生效", error);
+        notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 快速翻译快捷键未生效", error);
     }
     if (!success) {
         unregister_all();
@@ -869,7 +733,7 @@ bool AppHost::apply_hotkeys(bool announce_changes) {
         restore(hotkey_toggle, registered_toggle_hotkey_);
         restore(hotkey_text_translate, registered_text_hotkey_);
         if (!restored) {
-            notify(L"划词截屏翻译 · 快捷键恢复失败",
+            notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 快捷键恢复失败",
                    L"原快捷键也被其他程序占用，请在设置中重新选择");
         }
         return false;
@@ -883,13 +747,13 @@ bool AppHost::apply_hotkeys(bool announce_changes) {
         registered_text_hotkey_ = text_spec;
         refresh_tray_tooltip();
         if (announce_changes && !old_capture.empty() && old_capture != capture_spec) {
-            notify(L"划词截屏翻译", L"截图翻译快捷键已改为 " + capture_spec);
+            notify(SCREENTRANS_DISPLAY_NAME, L"截图翻译快捷键已改为 " + capture_spec);
         }
         if (announce_changes && !old_toggle.empty() && old_toggle != toggle_spec) {
-            notify(L"划词截屏翻译", L"收起 / 显示快捷键已改为 " + toggle_spec);
+            notify(SCREENTRANS_DISPLAY_NAME, L"收起 / 显示快捷键已改为 " + toggle_spec);
         }
         if (announce_changes && !old_text.empty() && old_text != text_spec) {
-            notify(L"划词截屏翻译", L"快速翻译快捷键已改为 " + text_spec);
+            notify(SCREENTRANS_DISPLAY_NAME, L"快速翻译快捷键已改为 " + text_spec);
         }
     }
     return true;
@@ -919,14 +783,14 @@ void AppHost::begin_capture_now() {
                 try {
                     on_selected(rect, std::move(image));
                 } catch (const std::exception& error) {
-                    notify(L"划词截屏翻译", L"无法创建译文窗口：" + utf8_to_wide(error.what()));
+                    notify(SCREENTRANS_DISPLAY_NAME, L"无法创建译文窗口：" + utf8_to_wide(error.what()));
                 } catch (...) {
-                    notify(L"划词截屏翻译", L"无法创建译文窗口：未知错误");
+                    notify(SCREENTRANS_DISPLAY_NAME, L"无法创建译文窗口：未知错误");
                 }
             },
             [] {});
     } catch (const std::exception& error) {
-        notify(L"划词截屏翻译", L"无法截取屏幕：" + utf8_to_wide(error.what()));
+        notify(SCREENTRANS_DISPLAY_NAME, L"无法截取屏幕：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -984,7 +848,7 @@ void AppHost::open_text_translation() {
     try {
         settings_.show_text_translation(window_);
     } catch (const std::exception& error) {
-        notify(L"划词截屏翻译", L"无法打开文字翻译：" + utf8_to_wide(error.what()));
+        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开文字翻译：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -993,7 +857,7 @@ void AppHost::toggle_quick_translation() {
     try {
         quick_window_->toggle_near(window_, quick_translation_anchor(window_), true);
     } catch (const std::exception& error) {
-        notify(L"划词截屏翻译", L"无法打开快速翻译：" + utf8_to_wide(error.what()));
+        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开快速翻译：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1032,32 +896,17 @@ void AppHost::toggle_result() {
     if (result_.visible()) {
         result_.minimize();
         const auto key = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
-        notify(L"划词截屏翻译",
+        notify(SCREENTRANS_DISPLAY_NAME,
                L"译文已收起，按 " + key + L" 或从托盘菜单「显示上次译文」叫回来");
     } else if (last_image_) {
         result_.restore();
     } else {
-        notify(L"划词截屏翻译", L"现在没有译文可以显示");
+        notify(SCREENTRANS_DISPLAY_NAME, L"现在没有译文可以显示");
     }
 }
 
 void AppHost::copy_to_clipboard(std::wstring_view text) {
-    if (text.empty() || !OpenClipboard(window_)) return;
-    EmptyClipboard();
-    const SIZE_T bytes = (text.size() + 1) * sizeof(wchar_t);
-    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
-    if (memory) {
-        void* destination = GlobalLock(memory);
-        if (destination) {
-            std::memcpy(destination, text.data(), text.size() * sizeof(wchar_t));
-            static_cast<wchar_t*>(destination)[text.size()] = L'\0';
-            GlobalUnlock(memory);
-            if (!SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
-        } else {
-            GlobalFree(memory);
-        }
-    }
-    CloseClipboard();
+    copy_text_to_clipboard(window_, text);
 }
 
 void AppHost::retry_translation() {
@@ -1084,7 +933,7 @@ void AppHost::retry_translation() {
 void AppHost::open_block_editor() {
     if (!last_result_ || last_result_->blocks.empty() || !result_.handle()) return;
     if (block_translation_request_) {
-        notify(L"划词截屏翻译", L"文本块仍在重译，请稍后再打开校对窗口");
+        notify(SCREENTRANS_DISPLAY_NAME, L"文本块仍在重译，请稍后再打开校对窗口");
         return;
     }
     result_.set_editing(true);
@@ -1119,7 +968,7 @@ void AppHost::open_block_editor() {
         }
     } catch (const std::exception& error) {
         result_.set_editing(false);
-        notify(L"划词截屏翻译", L"无法打开校对窗口：" + utf8_to_wide(error.what()));
+        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开校对窗口：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1169,7 +1018,7 @@ bool AppHost::schedule_block_translations(std::vector<std::size_t> indices,
         if (editor) {
             for (const auto index : indices) editor->set_error(index, message);
         } else {
-            notify(L"划词截屏翻译 · 单块重译失败", message);
+            notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 单块重译失败", message);
         }
         return false;
     }
@@ -1201,7 +1050,7 @@ void AppHost::process_block_translation(PipelineCompletion completion) {
             }
         } else {
             result_.set_editing(false);
-            notify(L"划词截屏翻译 · 单块重译失败", message);
+            notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 单块重译失败", message);
         }
     };
 
@@ -1275,8 +1124,8 @@ void AppHost::recapture_now() {
 
 ResultAppearance AppHost::result_appearance() const {
     ResultAppearance value;
-    value.font_family = config_.string(L"appearance.font_family", L"Microsoft YaHei UI");
-    value.minimum_font_pixels = config_.integer(L"appearance.min_font_px", 9);
+    value.font_family = theme::font_family;
+    value.minimum_font_pixels = 9;
     return value;
 }
 
@@ -1285,7 +1134,7 @@ void AppHost::open_settings() {
         settings_.show(window_);
         refresh_tray_tooltip();
     } catch (const std::exception& error) {
-        notify(L"划词截屏翻译", L"无法打开设置：" + utf8_to_wide(error.what()));
+        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开设置：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1293,7 +1142,7 @@ void AppHost::open_translation_settings() {
     try {
         settings_.show_translation(window_);
     } catch (const std::exception& error) {
-        notify(L"划词截屏翻译", L"无法打开翻译设置：" + utf8_to_wide(error.what()));
+        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开翻译设置：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1301,7 +1150,7 @@ void AppHost::open_updates() {
     try {
         updates_.show(window_);
     } catch (const std::exception& error) {
-        notify(L"划词截屏翻译", L"无法检查更新：" + utf8_to_wide(error.what()));
+        notify(SCREENTRANS_DISPLAY_NAME, L"无法检查更新：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1348,8 +1197,8 @@ std::optional<UpdateInfo> AppHost::process_silent_update_check() {
 }
 
 void AppHost::handle_update_available(const UpdateInfo& update) {
-    notify(L"划词截屏翻译 · 有新版本",
-           L"ScreenTranslate " + update.version +
+    notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 有新版本",
+           std::wstring(SCREENTRANS_DISPLAY_NAME) + L" " + update.version +
            L" 已发布，可从检查更新窗口直接下载并安装。");
 }
 
@@ -1369,7 +1218,7 @@ void AppHost::restart() {
         CloseHandle(process.hProcess);
         quit();
     } catch (const std::exception& error) {
-        notify(L"划词截屏翻译", L"重启失败：" + utf8_to_wide(error.what()));
+        notify(SCREENTRANS_DISPLAY_NAME, L"重启失败：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1398,7 +1247,6 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             DestroyIcon(icon_);
             icon_ = nullptr;
         }
-        tray_accent_.clear();
         try {
             add_tray_icon();
         } catch (...) {
@@ -1415,15 +1263,16 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             if (text_translation_on_start_) {
                 open_text_translation();
             } else {
-                notify(L"划词截屏翻译",
+                notify(SCREENTRANS_DISPLAY_NAME,
                        L"已启动，左键打开快速翻译，右键菜单可进入设置；按 " +
                        config_.string(L"hotkey", L"Ctrl+Alt+Q") + L" 截图翻译");
             }
             SetTimer(window_, update_timer, 1500, nullptr);
         } catch (const std::exception& error) {
-            const auto message_text = L"ScreenTranslate 无法初始化通知区域图标。\n\n" +
+            const auto message_text = std::wstring(SCREENTRANS_DISPLAY_NAME) +
+                                      L" 无法初始化通知区域图标。\n\n" +
                                       utf8_to_wide(error.what());
-            MessageBoxW(nullptr, message_text.c_str(), L"ScreenTranslate",
+            MessageBoxW(nullptr, message_text.c_str(), SCREENTRANS_DISPLAY_NAME,
                         MB_OK | MB_ICONERROR);
             quit();
         }
@@ -1443,6 +1292,12 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
                    L"ImmersiveColorSet") == 0) {
             theme::refresh_system_mode();
             refresh_theme_windows();
+        } else if (!lparam || wcscmp(reinterpret_cast<const wchar_t*>(lparam),
+                                     L"WindowMetrics") == 0 ||
+                   wcscmp(reinterpret_cast<const wchar_t*>(lparam),
+                          L"Intl") == 0) {
+            theme::refresh_system_ui_font();
+            refresh_theme_windows();
         }
         return 0;
     case tray_message: {
@@ -1455,7 +1310,7 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
                     quick_window_->toggle_near(
                         nullptr, quick_translation_anchor(window_), false);
                 } catch (const std::exception& error) {
-                    notify(L"划词截屏翻译",
+                    notify(SCREENTRANS_DISPLAY_NAME,
                            L"无法打开快速翻译：" + utf8_to_wide(error.what()));
                 }
             }
@@ -1545,10 +1400,9 @@ int AppHost::run(bool self_test, bool update_self_test,
         PipelineController::self_test();
         if (text_session_) text_session_->self_test();
         tray_menu_layout_self_test();
-        HICON tinted_icon = load_accent_icon(instance_, RGB(236, 76, 92));
-        const bool tint_ok = icon_contains_red_accent(tinted_icon);
-        if (tinted_icon) DestroyIcon(tinted_icon);
-        if (!tint_ok) throw AppError("tray icon accent self-test failed");
+        HICON brand_icon = load_brand_icon(instance_);
+        if (!brand_icon) throw AppError("application icon self-test failed");
+        DestroyIcon(brand_icon);
         BlockEditor::self_test(instance_, window_);
         settings_.self_test(window_);
         updates_.self_test(window_);
