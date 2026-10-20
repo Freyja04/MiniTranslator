@@ -2597,7 +2597,7 @@ void SettingsWindow::layout_controls() {
 
     if (current_page_ == 0) {
         auto& c = page_controls_[0];
-        if (c.size() >= 8) {
+        if (c.size() >= 7) {
             const auto place_hotkey = [&](HWND label, HWND edit, int logical_top) {
                 const auto label_style = GetWindowLongPtrW(label, GWL_STYLE);
                 SetWindowLongPtrW(label, GWL_STYLE,
