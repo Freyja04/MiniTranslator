@@ -3465,6 +3465,15 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             align_combo_edit(source, dpi_);
             set_combo_edit_redraw(source, true);
             InvalidateRect(source, nullptr, FALSE);
+            if (source == theme_mode_) {
+                // The theme is applied while the drop-down is still open.
+                // Reapply after it closes so DWM rebuilds the caption instead
+                // of leaving the previous theme's title bar until next focus.
+                theme::apply_window_theme(window_, true, true);
+                RedrawWindow(window_, nullptr, nullptr,
+                             RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN |
+                                 RDW_UPDATENOW);
+            }
         }
         if (id == IDCANCEL) { close(); return 0; }
         if (id >= id_nav_first && id <= id_nav_last && notification == BN_CLICKED) {

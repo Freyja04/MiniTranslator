@@ -129,7 +129,7 @@ build\native\Release\ScreenTranslate.exe
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\release\check_native_binary.ps1 `
   -Path .\build\native\Release\ScreenTranslate.exe `
-  -ExpectedVersion 1.2.5
+  -ExpectedVersion 1.2.6
 ```
 
 Debug 构建：
@@ -149,7 +149,7 @@ Debug 构建：
 
 1. 同步修改 `native/CMakeLists.txt` 的 `project(... VERSION ...)` 与 `native/src/resource.h` 的 `SCREENTRANS_VERSION_*`，两处必须与标签一致；
 2. 提交并推送到 `main`，等 CI 变绿；
-3. 打标签并推送：`git tag v1.2.5` → `git push origin v1.2.5`；
+3. 打标签并推送：`git tag v1.2.6` → `git push origin v1.2.6`；
 4. Release 工作流自动完成编译、校验、打包和 `gh release create`。
 
 工作流不接受任意仓库发布：`Validate release identity` 会从 `native/CMakeLists.txt` 读出更新信任根，要求 `GITHUB_REPOSITORY` 与之完全一致，否则直接失败。当前信任根是 `Freyja04/ScreenTranslate`。

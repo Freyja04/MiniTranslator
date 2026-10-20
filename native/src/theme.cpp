@@ -155,17 +155,37 @@ void apply_window_theme(HWND window, bool round_corners, bool custom_caption) no
         DwmSetWindowAttribute(window, caption_text_color, &none, sizeof(none));
     }
 
-    // DWM keeps the old non-client frame until the window recalculates it.
-    // Without this, switching themes repaints the client area immediately but
-    // leaves the caption in the previous palette until the next activation.
+    // Windows 10 keeps the old DWM frame after a dynamic theme change. A
+    // non-client invalidation or SWP_FRAMECHANGED alone can be ignored, so
+    // resize the frame by one pixel and restore it to force DWM to rebuild.
     const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
     if ((style & WS_CAPTION) == WS_CAPTION &&
         GetAncestor(window, GA_ROOT) == window) {
-        SetWindowPos(window, nullptr, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
-                         SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        RECT bounds{};
+        if (!IsIconic(window) && !IsZoomed(window) &&
+            GetWindowRect(window, &bounds) &&
+            bounds.right - bounds.left > 2) {
+            const int width = bounds.right - bounds.left;
+            const int height = bounds.bottom - bounds.top;
+            SetWindowPos(window, nullptr, 0, 0, width - 1, height,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                             SWP_NOOWNERZORDER);
+            SetWindowPos(window, nullptr, 0, 0, width, height,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE |
+                             SWP_NOOWNERZORDER);
+        } else {
+            SetWindowPos(window, nullptr, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                             SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        }
         RedrawWindow(window, nullptr, nullptr,
                      RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+        if (IsWindowVisible(window)) {
+            const bool active = GetActiveWindow() == window;
+            SendMessageW(window, WM_NCACTIVATE, active ? FALSE : TRUE, 0);
+            SendMessageW(window, WM_NCACTIVATE, active ? TRUE : FALSE, 0);
+        }
+        DwmFlush();
     }
 }
 
