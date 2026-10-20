@@ -45,22 +45,17 @@ bool ai_profile_configured(const JsonObject& profile) {
            !trim(json_string(profile, L"model")).empty();
 }
 
-struct ResolvedEndpoint {
-    std::wstring provider;
-    std::wstring options_json;
-};
-
-ResolvedEndpoint resolve_endpoint(std::wstring_view requested_provider,
-                                  const JsonObject& requested_options,
-                                  const JsonArray& ai_profiles,
-                                  std::wstring_view selected_profile) {
+TranslationEndpoint resolve_endpoint(std::wstring_view requested_provider,
+                                     const JsonObject& requested_options,
+                                     const JsonArray& ai_profiles,
+                                     std::wstring_view selected_profile) {
     const auto fallback = [] {
-        return ResolvedEndpoint{std::wstring(traditional_fallback_order.front()),
-                                L"{}"};
+        return TranslationEndpoint{std::wstring(traditional_fallback_order.front()),
+                                   L"{}"};
     };
     if (requested_provider == L"deepl") {
         if (!trim(json_string(requested_options, L"key")).empty()) {
-            return ResolvedEndpoint{
+            return TranslationEndpoint{
                 std::wstring(requested_provider),
                 requested_options ? requested_options.Stringify().c_str() : L"{}",
             };
@@ -69,7 +64,7 @@ ResolvedEndpoint resolve_endpoint(std::wstring_view requested_provider,
     }
     if (std::find(traditional_fallback_order.begin(), traditional_fallback_order.end(),
                   requested_provider) != traditional_fallback_order.end()) {
-        return ResolvedEndpoint{
+        return TranslationEndpoint{
             std::wstring(requested_provider),
             requested_options ? requested_options.Stringify().c_str() : L"{}",
         };
@@ -84,7 +79,7 @@ ResolvedEndpoint resolve_endpoint(std::wstring_view requested_provider,
             json_string(profile, L"name") == selected_profile) {
             selected_exists = true;
             if (ai_profile_configured(profile)) {
-                return ResolvedEndpoint{
+                return TranslationEndpoint{
                     L"ai", profile.Stringify().c_str(),
                 };
             }
@@ -96,7 +91,7 @@ ResolvedEndpoint resolve_endpoint(std::wstring_view requested_provider,
             if (item.ValueType() != JsonValueType::Object) continue;
             const auto profile = item.GetObject();
             if (ai_profile_configured(profile)) {
-                return ResolvedEndpoint{
+                return TranslationEndpoint{
                     L"ai", profile.Stringify().c_str(),
                 };
             }
