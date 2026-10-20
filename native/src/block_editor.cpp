@@ -1075,7 +1075,8 @@ LRESULT BlockEditor::draw_item(const DRAWITEMSTRUCT& item) {
     if (item.CtlType == ODT_COMBOBOX && item.CtlID == id_target) {
         const bool list_item = (item.itemState & ODS_COMBOBOXEDIT) == 0;
         const bool highlighted = list_item && selected;
-        HBRUSH brush = CreateSolidBrush(highlighted ? color_hover : color_input);
+        HBRUSH brush =
+            CreateSolidBrush(highlighted ? theme::color_hover : color_input);
         FillRect(dc, &rect, brush ? brush : input_background_);
         if (brush) DeleteObject(brush);
         std::wstring value;
