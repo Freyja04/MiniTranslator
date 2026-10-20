@@ -166,7 +166,6 @@ private:
     HWND ocr_upscale_{};
     HWND font_family_{};
     HWND theme_mode_{};
-    HWND close_value_{};
     HWND auto_copy_{};
     HWND autostart_{};
     HWND config_path_{};

@@ -3,6 +3,7 @@
 #include "language.hpp"
 #include "resource.h"
 #include "theme.hpp"
+#include "ui_icons.hpp"
 #include "util.hpp"
 
 #include <commctrl.h>
@@ -302,7 +303,7 @@ std::wstring target_at(HWND combo) {
 std::wstring session_status(const TextTranslationSession& session) {
     switch (session.state()) {
     case TextTranslationState::idle:
-        return L"输入文字后，停止输入 500 毫秒自动翻译";
+        return L"等待输入中...";
     case TextTranslationState::waiting:
         return L"等待输入完成…";
     case TextTranslationState::translating:
@@ -425,100 +426,6 @@ bool point_in_window(HWND control, POINT screen_point) noexcept {
            PtInRect(&bounds, screen_point) != FALSE;
 }
 
-void draw_text_translation_icon(HDC dc, const RECT& bounds, COLORREF color) {
-    const int width = bounds.right - bounds.left;
-    const int height = bounds.bottom - bounds.top;
-    const int inset = std::max(2, width / 12);
-    const int left = bounds.left + inset;
-    const int right = bounds.right - inset;
-    const int top = bounds.top + height / 5;
-    const int bottom = bounds.bottom - height / 5;
-    const int middle = (top + bottom) / 2;
-    const int stroke = std::max(1, height / 18);
-    const int available = right - left;
-    const int a_width = std::max(7, available * 3 / 10);
-    const int arrow_width = std::max(4, available / 5);
-    HPEN pen = CreatePen(PS_SOLID, stroke, color);
-    const HGDIOBJ previous = SelectObject(dc, pen);
-
-    // Stylized A -> 文: writing becomes translated writing.
-    const int a_left = left;
-    const int a_right = left + a_width;
-    MoveToEx(dc, a_left, bottom, nullptr);
-    LineTo(dc, (a_left + a_right) / 2, top);
-    LineTo(dc, a_right, bottom);
-    MoveToEx(dc, a_left + std::max(1, (a_right - a_left) / 4), middle + 1, nullptr);
-    LineTo(dc, a_right - std::max(1, (a_right - a_left) / 4), middle + 1);
-
-    const int arrow_left = a_right + std::max(1, stroke);
-    const int arrow_right = arrow_left + arrow_width;
-    MoveToEx(dc, arrow_left, middle, nullptr);
-    LineTo(dc, arrow_right, middle);
-    LineTo(dc, arrow_right - std::max(2, stroke * 2), middle - std::max(2, height / 10));
-    MoveToEx(dc, arrow_right, middle, nullptr);
-    LineTo(dc, arrow_right - std::max(2, stroke * 2), middle + std::max(2, height / 10));
-
-    const int wen_left = arrow_right + std::max(1, stroke);
-    const int wen_right = right;
-    const int wen_top = top + std::max(1, height / 14);
-    MoveToEx(dc, wen_left, wen_top, nullptr);
-    LineTo(dc, wen_right, wen_top);
-    MoveToEx(dc, (wen_left + wen_right) / 2, wen_top + stroke, nullptr);
-    LineTo(dc, (wen_left + wen_right) / 2, bottom);
-    MoveToEx(dc, (wen_left + wen_right) / 2, middle, nullptr);
-    LineTo(dc, wen_left, bottom);
-    MoveToEx(dc, (wen_left + wen_right) / 2, middle, nullptr);
-    LineTo(dc, wen_right, bottom);
-
-    SelectObject(dc, previous);
-    DeleteObject(pen);
-}
-
-void draw_capture_translation_icon(HDC dc, const RECT& bounds, COLORREF color) {
-    const int width = bounds.right - bounds.left;
-    const int height = bounds.bottom - bounds.top;
-    const int size = std::clamp(height * 7 / 15, 14, 21);
-    const int left = bounds.left + (width - size) / 2;
-    const int top = bounds.top + (height - size) / 2;
-    const int right = left + size;
-    const int bottom = top + size;
-    const int corner = std::max(4, size / 3);
-    const int stroke = std::max(1, height / 18);
-    HPEN pen = CreatePen(PS_SOLID, stroke, color);
-    const HGDIOBJ previous = SelectObject(dc, pen);
-
-    // OCR crop frame with a 文 glyph inside.
-    MoveToEx(dc, left, top + corner, nullptr);
-    LineTo(dc, left, top);
-    LineTo(dc, left + corner, top);
-    MoveToEx(dc, right - corner, top, nullptr);
-    LineTo(dc, right, top);
-    LineTo(dc, right, top + corner);
-    MoveToEx(dc, left, bottom - corner, nullptr);
-    LineTo(dc, left, bottom);
-    LineTo(dc, left + corner, bottom);
-    MoveToEx(dc, right - corner, bottom, nullptr);
-    LineTo(dc, right, bottom);
-    LineTo(dc, right, bottom - corner);
-
-    const int glyph_left = left + size / 3;
-    const int glyph_right = right - size / 3;
-    const int glyph_top = top + size / 3;
-    const int glyph_bottom = bottom - size / 4;
-    MoveToEx(dc, glyph_left, glyph_top, nullptr);
-    LineTo(dc, glyph_right, glyph_top);
-    const int glyph_center = (glyph_left + glyph_right) / 2;
-    MoveToEx(dc, glyph_center, glyph_top + stroke, nullptr);
-    LineTo(dc, glyph_center, glyph_bottom);
-    MoveToEx(dc, glyph_center, (glyph_top + glyph_bottom) / 2, nullptr);
-    LineTo(dc, glyph_left, glyph_bottom);
-    MoveToEx(dc, glyph_center, (glyph_top + glyph_bottom) / 2, nullptr);
-    LineTo(dc, glyph_right, glyph_bottom);
-
-    SelectObject(dc, previous);
-    DeleteObject(pen);
-}
-
 LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
                         HFONT icon_font = nullptr,
                         bool compact_icon_buttons = false) {
@@ -530,16 +437,14 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
         const int identifier = GetDlgCtrlID(item.hwndItem);
         const bool clear_icon_button =
             compact_icon_buttons && identifier == id_clear;
-        const bool drawn_icon_button =
-            compact_icon_buttons &&
-            (identifier == id_quick_text || identifier == id_quick_capture);
         const bool font_icon_button = icon_font &&
             (compact_icon_buttons
-                 ? identifier == id_copy || identifier == id_close
+                 ? identifier == id_quick_text || identifier == id_quick_capture ||
+                       identifier == id_copy || identifier == id_close
                  : identifier == id_copy || identifier == id_settings ||
                        identifier == id_close);
         const bool icon_button =
-            clear_icon_button || drawn_icon_button || font_icon_button;
+            clear_icon_button || font_icon_button;
         if (icon_button) {
             SetDCBrushColor(item.hDC, color_background);
             FillRect(item.hDC, &item.rcItem,
@@ -553,11 +458,7 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
                                  focused ? accent : color_border, 7);
             const COLORREF icon_color = disabled ? color_faint
                                         : hot || focused ? color_text : color_dim;
-            if (identifier == id_quick_text) {
-                draw_text_translation_icon(item.hDC, item.rcItem, icon_color);
-            } else if (identifier == id_quick_capture) {
-                draw_capture_translation_icon(item.hDC, item.rcItem, icon_color);
-            } else if (identifier == id_clear) {
+            if (identifier == id_clear) {
                 // A hand-drawn trash can keeps the clear action recognizable
                 // even if the installed icon font lacks a matching glyph.
                 const int width = item.rcItem.right - item.rcItem.left;
@@ -597,9 +498,14 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
                 SelectObject(item.hDC, previous_pen);
                 DeleteObject(pen);
             } else {
-                const wchar_t glyph = identifier == id_copy ? 0xE8C8
-                                      : identifier == id_settings ? 0xE713
-                                                                  : 0xE711;
+                wchar_t glyph = 0;
+                switch (identifier) {
+                case id_quick_text: glyph = ui_icons::text_translation; break;
+                case id_quick_capture: glyph = ui_icons::capture_translation; break;
+                case id_copy: glyph = 0xE8C8; break;
+                case id_settings: glyph = 0xE713; break;
+                default: glyph = 0xE711; break;
+                }
                 draw_label(item.hDC, std::wstring_view(&glyph, 1), item.rcItem,
                            icon_font, icon_color,
                            DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -682,22 +588,6 @@ void position_centered(HWND window, HWND owner, int logical_width, int logical_h
     SetWindowPos(window, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-void position_quick(HWND window) {
-    HWND reference = GetForegroundWindow();
-    HMONITOR monitor = MonitorFromWindow(reference, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO info{sizeof(info)};
-    GetMonitorInfoW(monitor, &info);
-    const int dpi = static_cast<int>(GetDpiForWindow(window));
-    const int width = scaled(quick_window_logical_width, dpi);
-    const int height = scaled(quick_window_logical_height, dpi);
-    const int work_width = info.rcWork.right - info.rcWork.left;
-    const int work_height = info.rcWork.bottom - info.rcWork.top;
-    const int x = info.rcWork.left + (work_width - width) / 2;
-    const int y = info.rcWork.top + std::max(scaled(36, dpi), (work_height - height) / 6);
-    SetWindowPos(window, HWND_TOPMOST, x, y, width, height,
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
-}
-
 void position_near_anchor(HWND window, POINT anchor) {
     const HMONITOR monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info{sizeof(info)};
@@ -731,6 +621,15 @@ void position_near_anchor(HWND window, POINT anchor) {
 
     SetWindowPos(window, HWND_TOPMOST, x, y, panel_width, panel_height,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+
+POINT default_quick_anchor() noexcept {
+    const HMONITOR monitor = MonitorFromPoint(POINT{}, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO info{sizeof(info)};
+    if (monitor && GetMonitorInfoW(monitor, &info)) {
+        return POINT{info.rcWork.right, info.rcWork.bottom};
+    }
+    return POINT{GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
 }
 
 }  // namespace
@@ -1333,10 +1232,6 @@ void QuickTranslateWindow::layout_controls() {
                         body_bottom - divider_y - label_height - scaled(8, dpi_)), TRUE);
 }
 
-void QuickTranslateWindow::position_on_active_monitor() {
-    position_quick(window_);
-}
-
 void QuickTranslateWindow::sync_input() {
     if (window_text(input_) == session_.input()) return;
     syncing_ = true;
@@ -1382,35 +1277,22 @@ void QuickTranslateWindow::refresh_appearance() {
 }
 
 void QuickTranslateWindow::show(HWND owner) {
-    create_window(owner);
-    refresh();
-    position_on_active_monitor();
-    ShowWindow(window_, SW_SHOW);
-    SetForegroundWindow(window_);
-    SetFocus(input_);
-    SendMessageW(input_, EM_SETSEL, 0, -1);
+    show_at(owner, default_quick_anchor(), true);
 }
 
-void QuickTranslateWindow::show_near(POINT anchor) {
-    create_window(nullptr);
+void QuickTranslateWindow::show_at(HWND owner, POINT anchor, bool select_all) {
+    create_window(owner);
     refresh();
     position_near_anchor(window_, anchor);
     ShowWindow(window_, SW_SHOW);
     SetForegroundWindow(window_);
     SetFocus(input_);
+    if (select_all) SendMessageW(input_, EM_SETSEL, 0, -1);
 }
 
-void QuickTranslateWindow::toggle_from_tray(POINT anchor) {
-    if (visible()) {
-        hide();
-        return;
-    }
-    show_near(anchor);
-}
-
-void QuickTranslateWindow::toggle(HWND owner) {
+void QuickTranslateWindow::toggle_near(HWND owner, POINT anchor, bool select_all) {
     if (visible()) hide();
-    else show(owner);
+    else show_at(owner, anchor, select_all);
 }
 
 void QuickTranslateWindow::hide() {
@@ -1489,14 +1371,11 @@ void QuickTranslateWindow::paint() {
                     body.left + scaled(80, dpi_), divider_y + scaled(29, dpi_)},
                small_font_, output_focused ? accent_ : color_dim,
                DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    if (session_.state() != TextTranslationState::idle) {
-        const auto status = session_status(session_);
-        draw_label(dc, status,
-                   RECT{margin + scaled(2, dpi_), body.bottom + scaled(6, dpi_),
-                        client.right - margin, client.bottom - scaled(8, dpi_)},
-                   small_font_, status_error_ ? color_error : color_dim,
-                   DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    }
+    draw_label(dc, session_status(session_),
+               RECT{margin + scaled(2, dpi_), body.bottom + scaled(6, dpi_),
+                    client.right - margin, client.bottom - scaled(8, dpi_)},
+               small_font_, status_error_ ? color_error : color_dim,
+               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     EndPaint(window_, &paint);
 }
 
@@ -1710,32 +1589,6 @@ LRESULT CALLBACK QuickTranslateWindow::input_proc(HWND control, UINT message,
                                                   WPARAM wparam, LPARAM lparam,
                                                   UINT_PTR subclass_id, DWORD_PTR reference) {
     auto* self = reinterpret_cast<QuickTranslateWindow*>(reference);
-    if (message == WM_PAINT) {
-        const LRESULT result = DefSubclassProc(control, message, wparam, lparam);
-        if (self && control == self->input_ && window_text(control).empty()) {
-            // EM_SETCUEBANNER does not work on multiline edit controls, so
-            // paint the hint ourselves for the quick translation input.
-            HDC dc = GetDC(control);
-            if (dc) {
-                RECT bounds{};
-                GetClientRect(control, &bounds);
-                bounds.left += scaled(12, self->dpi_);
-                bounds.right -= scaled(12, self->dpi_);
-                bounds.top += scaled(6, self->dpi_);
-                if (bounds.right > bounds.left && bounds.bottom > bounds.top) {
-                    const HGDIOBJ previous = SelectObject(dc, self->small_font_);
-                    SetBkMode(dc, TRANSPARENT);
-                    SetTextColor(dc, color_faint);
-                    constexpr wchar_t hint[] = L"等待输入中...";
-                    DrawTextW(dc, hint, -1, &bounds,
-                              DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
-                    SelectObject(dc, previous);
-                }
-                ReleaseDC(control, dc);
-            }
-        }
-        return result;
-    }
     if (self && message == WM_IME_STARTCOMPOSITION && self->callbacks_.composition_changed) {
         self->callbacks_.composition_changed(true);
     } else if (self && message == WM_IME_ENDCOMPOSITION && self->callbacks_.composition_changed) {

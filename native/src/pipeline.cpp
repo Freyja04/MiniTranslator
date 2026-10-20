@@ -3,15 +3,18 @@
 #include "language.hpp"
 #include "layout.hpp"
 #include "ocr.hpp"
+#include "util.hpp"
 
 #include <winrt/Windows.Data.Json.h>
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 
 namespace screentrans {
 
 using winrt::Windows::Data::Json::JsonObject;
+using winrt::Windows::Data::Json::JsonArray;
 using winrt::Windows::Data::Json::JsonValueType;
 
 namespace {
@@ -20,43 +23,107 @@ constexpr std::size_t lane_index(PipelineLane lane) noexcept {
     return static_cast<std::size_t>(lane);
 }
 
+constexpr std::array<std::wstring_view, 4> traditional_fallback_order{
+    L"tencent_free", L"microsoft_free", L"iciba_free", L"yandex_free",
+};
+
+std::wstring json_string(const JsonObject& object, std::wstring_view name) {
+    try {
+        if (!object || !object.HasKey(name)) return {};
+        const auto value = object.Lookup(name);
+        if (value && value.ValueType() == JsonValueType::String) {
+            return value.GetString().c_str();
+        }
+    } catch (...) {
+    }
+    return {};
+}
+
+bool ai_profile_configured(const JsonObject& profile) {
+    return profile &&
+           !trim(json_string(profile, L"base_url")).empty() &&
+           !trim(json_string(profile, L"model")).empty();
+}
+
+struct ResolvedEndpoint {
+    std::wstring provider;
+    std::wstring options_json;
+};
+
+ResolvedEndpoint resolve_endpoint(std::wstring_view requested_provider,
+                                  const JsonObject& requested_options,
+                                  const JsonArray& ai_profiles,
+                                  std::wstring_view selected_profile) {
+    const auto fallback = [] {
+        return ResolvedEndpoint{std::wstring(traditional_fallback_order.front()),
+                                L"{}"};
+    };
+    if (requested_provider == L"deepl") {
+        if (!trim(json_string(requested_options, L"key")).empty()) {
+            return ResolvedEndpoint{
+                std::wstring(requested_provider),
+                requested_options ? requested_options.Stringify().c_str() : L"{}",
+            };
+        }
+        return fallback();
+    }
+    if (std::find(traditional_fallback_order.begin(), traditional_fallback_order.end(),
+                  requested_provider) != traditional_fallback_order.end()) {
+        return ResolvedEndpoint{
+            std::wstring(requested_provider),
+            requested_options ? requested_options.Stringify().c_str() : L"{}",
+        };
+    }
+    if (requested_provider != L"ai") return fallback();
+
+    bool selected_exists = false;
+    for (const auto& item : ai_profiles) {
+        if (item.ValueType() != JsonValueType::Object) continue;
+        const auto profile = item.GetObject();
+        if (!selected_profile.empty() &&
+            json_string(profile, L"name") == selected_profile) {
+            selected_exists = true;
+            if (ai_profile_configured(profile)) {
+                return ResolvedEndpoint{
+                    L"ai", profile.Stringify().c_str(),
+                };
+            }
+            break;
+        }
+    }
+    if (!selected_exists) {
+        for (const auto& item : ai_profiles) {
+            if (item.ValueType() != JsonValueType::Object) continue;
+            const auto profile = item.GetObject();
+            if (ai_profile_configured(profile)) {
+                return ResolvedEndpoint{
+                    L"ai", profile.Stringify().c_str(),
+                };
+            }
+        }
+    }
+    return fallback();
+}
+
 }  // namespace
+
+TranslationEndpoint resolve_translation_endpoint(const ConfigStore& config) {
+    const auto configured_provider =
+        config.string(L"translator.provider", L"microsoft_free");
+    return resolve_endpoint(
+        configured_provider,
+        config.object(L"translator." + configured_provider),
+        config.array(L"translator.ai_profiles"),
+        config.string(L"translator.ai_selected"));
+}
 
 PipelineOptions PipelineOptions::from_config(const ConfigStore& config) {
     PipelineOptions result;
     result.ocr_languages = config.strings(L"ocr.languages");
     result.ocr_upscale = config.boolean(L"ocr.upscale", true);
-    result.translator_provider = config.string(L"translator.provider", L"microsoft_free");
-    if (result.translator_provider == L"ai") {
-        // A large-model endpoint is a user-defined profile: the selected one
-        // lives in translator.ai_profiles instead of a per-provider object.
-        const auto profiles = config.array(L"translator.ai_profiles");
-        const auto selected = config.string(L"translator.ai_selected");
-        JsonObject options{nullptr};
-        for (const auto& item : profiles) {
-            if (item.ValueType() != JsonValueType::Object) continue;
-            auto candidate = item.GetObject();
-            if (std::wstring(candidate.GetNamedString(L"name", L"").c_str()) != selected) continue;
-            options = candidate;
-            break;
-        }
-        if (!options) {
-            // Fall back to the first profile so that removing the selected
-            // entry never leaves the pipeline without an endpoint to call.
-            for (const auto& item : profiles) {
-                if (item.ValueType() != JsonValueType::Object) continue;
-                options = item.GetObject();
-                break;
-            }
-        }
-        // An empty profile list still has to yield valid JSON, otherwise the
-        // worker fails while parsing instead of reporting a missing model.
-        result.translator_options_json =
-            options ? options.Stringify().c_str() : std::wstring(L"{}");
-    } else {
-        result.translator_options_json = config.object(
-            L"translator." + result.translator_provider).Stringify().c_str();
-    }
+    const auto endpoint = resolve_translation_endpoint(config);
+    result.translator_provider = endpoint.provider;
+    result.translator_options_json = endpoint.options_json;
     result.chinese_target = config.string(L"lang.zh_target", L"en");
     return result;
 }
@@ -197,6 +264,39 @@ std::uint64_t PipelineController::latest_request(PipelineLane lane) const noexce
 }
 
 void PipelineController::self_test() {
+    const auto empty_options = JsonObject::Parse(L"{}");
+    const auto empty_profiles = JsonArray::Parse(L"[]");
+    const auto unconfigured_deepl = resolve_endpoint(
+        L"deepl", JsonObject::Parse(L"{\"key\":\"\"}"), empty_profiles, L"");
+    if (unconfigured_deepl.provider != L"tencent_free") {
+        throw AppError("pipeline self-test did not fall back from an empty DeepL key");
+    }
+    const auto configured_deepl = resolve_endpoint(
+        L"deepl", JsonObject::Parse(L"{\"key\":\"secret\"}"), empty_profiles, L"");
+    if (configured_deepl.provider != L"deepl" ||
+        configured_deepl.options_json.find(L"secret") == std::wstring::npos) {
+        throw AppError("pipeline self-test replaced a configured DeepL endpoint");
+    }
+    const auto missing_ai = resolve_endpoint(L"ai", empty_options, empty_profiles, L"");
+    if (missing_ai.provider != L"tencent_free") {
+        throw AppError("pipeline self-test did not fall back from an empty AI profile");
+    }
+    const auto configured_ai = resolve_endpoint(
+        L"ai", empty_options,
+        JsonArray::Parse(
+            L"[{\"name\":\"work\",\"base_url\":\"https://example.test/v1\","
+            L"\"model\":\"test-model\"}]"),
+        L"work");
+    if (configured_ai.provider != L"ai" ||
+        configured_ai.options_json.find(L"test-model") == std::wstring::npos) {
+        throw AppError("pipeline self-test replaced a configured AI endpoint");
+    }
+    const auto explicit_free = resolve_endpoint(
+        L"microsoft_free", empty_options, empty_profiles, L"");
+    if (explicit_free.provider != L"microsoft_free") {
+        throw AppError("pipeline self-test replaced an explicit free provider");
+    }
+
     PipelineController pipeline(nullptr, false);
     PipelineOptions options;
     const auto blocks = [](std::wstring text) {

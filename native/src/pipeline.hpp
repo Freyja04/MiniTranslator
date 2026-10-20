@@ -38,6 +38,17 @@ struct PipelineOptions {
     static PipelineOptions from_config(const ConfigStore& config);
 };
 
+struct TranslationEndpoint {
+    std::wstring provider;
+    std::wstring options_json;
+};
+
+// Resolve the endpoint used for actual translation. A completely configured
+// user selection is preserved; an incomplete one falls back to the first
+// credential-free traditional provider without rewriting the configuration.
+[[nodiscard]] TranslationEndpoint resolve_translation_endpoint(
+    const ConfigStore& config);
+
 struct PipelineResult {
     std::vector<BlockTranslation> blocks;
     std::wstring plain_text;

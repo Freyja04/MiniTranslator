@@ -5,6 +5,7 @@
 #include "resource.h"
 #include "theme.hpp"
 #include "translator.hpp"
+#include "ui_icons.hpp"
 #include "util.hpp"
 
 #include <commctrl.h>
@@ -107,6 +108,34 @@ constexpr int logical_translation_output_panel_top =
 constexpr int logical_translation_output_panel_bottom =
     logical_translation_output_panel_top + logical_panel_header_height + 150 +
     logical_card_padding;
+constexpr int logical_ocr_engine_top =
+    logical_content_top + logical_card_padding;
+constexpr int logical_ocr_block_height =
+    logical_control_height + logical_hint_gap + logical_hint_height;
+constexpr int logical_ocr_language_top =
+    logical_ocr_engine_top + logical_ocr_block_height + logical_row_gap;
+constexpr int logical_ocr_upscale_top =
+    logical_ocr_language_top + logical_ocr_block_height + logical_row_gap;
+constexpr int logical_ocr_main_bottom =
+    logical_ocr_upscale_top + logical_control_height + logical_card_padding;
+constexpr int logical_ocr_language_section_top =
+    logical_ocr_main_bottom + logical_section_gap;
+constexpr int logical_ocr_language_card_top =
+    logical_ocr_language_section_top + logical_section_height +
+    logical_section_to_card;
+constexpr int logical_ocr_language_note_top =
+    logical_ocr_language_card_top + logical_card_padding;
+constexpr int logical_ocr_language_card_bottom =
+    logical_ocr_language_note_top + 40 + logical_card_padding;
+constexpr int logical_ocr_installed_section_top =
+    logical_ocr_language_card_bottom + logical_section_gap;
+constexpr int logical_ocr_installed_card_top =
+    logical_ocr_installed_section_top + logical_section_height +
+    logical_section_to_card;
+constexpr int logical_ocr_installed_note_top =
+    logical_ocr_installed_card_top + logical_card_padding;
+constexpr int logical_ocr_installed_card_bottom =
+    logical_ocr_installed_note_top + 40 + logical_card_padding;
 constexpr int logical_window_height = 650;
 constexpr int logical_status_height = 20;
 constexpr int logical_status_margin = 8;
@@ -115,6 +144,7 @@ constexpr int logical_status_top =
     logical_window_height - logical_status_bottom_margin - logical_status_height;
 constexpr int logical_content_limit =
     logical_status_top - logical_status_margin;
+static_assert(logical_ocr_installed_card_bottom <= logical_content_limit);
 
 constexpr std::array<std::wstring_view, 6> page_names{
     L"快捷键", L"翻译接口", L"截图识别", L"显示", L"其他", L"文本翻译",
@@ -137,10 +167,10 @@ constexpr std::array<int, 6> navigation_page_order{5, 2, 1, 0, 3, 4};
 constexpr std::array<wchar_t, 6> navigation_glyphs{
     0xE765,  // Keyboard -> 快捷键
     0xE8AB,  // Switch   -> 翻译接口
-    0xE7C3,  // Page     -> 截图识别
+    ui_icons::capture_translation,  // Crop -> 截图识别
     0xE7F4,  // Monitor  -> 显示
     0xE713,  // Settings -> 其他
-    0xE8C1,  // Message  -> 文本翻译
+    ui_icons::text_translation,  // Edit -> 文本翻译
 };
 
 std::size_t navigation_index_for_page(int page) noexcept {
@@ -499,7 +529,7 @@ std::wstring text_target_selector(const TextTranslationSession& session) {
 std::wstring text_translation_status(const TextTranslationSession& session) {
     switch (session.state()) {
     case TextTranslationState::idle:
-        return L"等待输入";
+        return L"等待输入中...";
     case TextTranslationState::waiting:
         return L"将在停止输入 500 毫秒后翻译";
     case TextTranslationState::translating:
@@ -803,7 +833,7 @@ void SettingsWindow::self_test(HWND owner) {
     if (hotkey_controls.size() < 7 ||
         text_of(hotkey_controls[0]) != L"文本翻译" ||
         hotkey_controls[1] != text_hotkey_ ||
-        text_of(hotkey_controls[2]) != L"框选翻译" ||
+        text_of(hotkey_controls[2]) != L"截图翻译" ||
         hotkey_controls[3] != capture_hotkey_ ||
         text_of(hotkey_controls[4]) != L"收起 / 显示" ||
         hotkey_controls[5] != toggle_hotkey_ ||
@@ -866,6 +896,15 @@ void SettingsWindow::self_test(HWND owner) {
     if (hotkey_region) DeleteObject(hotkey_region);
     if (!rounded_region) {
         throw AppError("settings self-test edit field did not receive rounded corners");
+    }
+    for (const HWND edit : {text_hotkey_, capture_hotkey_, toggle_hotkey_}) {
+        const LRESULT margins = SendMessageW(edit, EM_GETMARGINS, 0, 0);
+        if ((GetWindowLongPtrW(edit, GWL_STYLE) &
+             static_cast<LONG_PTR>(ES_CENTER)) != 0 ||
+            LOWORD(margins) < px(10, dpi_) ||
+            HIWORD(margins) < px(10, dpi_)) {
+            throw AppError("settings self-test hotkey text is not left aligned");
+        }
     }
     show_page(5);
     if (SendMessageW(text_target_, CB_GETCOUNT, 0, 0) != 10) {
@@ -983,34 +1022,37 @@ void SettingsWindow::self_test(HWND owner) {
     RECT ocr_engine_rect{};
     RECT ocr_note_rect{};
     RECT ocr_languages_rect{};
+    RECT ocr_upscale_rect{};
     RECT ocr_installed_note_rect{};
     if (!GetWindowRect(ocr_engine_value_, &ocr_engine_rect) ||
         !GetWindowRect(ocr_engine_note_, &ocr_note_rect) ||
         !GetWindowRect(ocr_languages_, &ocr_languages_rect) ||
+        !GetWindowRect(ocr_upscale_, &ocr_upscale_rect) ||
         !GetWindowRect(page_controls_[2][6], &ocr_installed_note_rect) ||
         ocr_note_rect.top < ocr_engine_rect.bottom ||
         ocr_note_rect.bottom > ocr_languages_rect.top ||
         ocr_note_rect.bottom - ocr_note_rect.top < px(20, dpi_) ||
-        std::abs((ocr_note_rect.top - ocr_engine_rect.top) -
-                 (ocr_installed_note_rect.top - ocr_languages_rect.top)) > 1) {
-        throw AppError("settings self-test OCR note spacing mismatch");
+        ocr_installed_note_rect.top <= ocr_upscale_rect.bottom ||
+        !text_of(page_controls_[2][6]).starts_with(L"系统已安装：")) {
+        throw AppError("settings self-test OCR sections are misaligned");
     }
     show_page(3);
     layout_controls();
     RECT copy_label_rect{};
     RECT copy_control_rect{};
-    RECT close_control_rect{};
-    if (page_controls_[3].size() < 8 ||
-        text_of(page_controls_[3][7]) != L"复制译文" ||
-        !GetWindowRect(page_controls_[3][7], &copy_label_rect) ||
+    if (page_controls_[3].size() < 6 ||
+        text_of(page_controls_[3][5]) != L"复制译文" ||
+        text_of(page_controls_[3][4]) != L"自动复制到剪贴板" ||
+        !GetWindowRect(page_controls_[3][5], &copy_label_rect) ||
         !GetWindowRect(auto_copy_, &copy_control_rect) ||
-        !GetWindowRect(close_value_, &close_control_rect) ||
-        text_of(close_value_) != L"点击关闭或按ESC" ||
         std::abs(copy_label_rect.top - copy_control_rect.top) > 1 ||
-        std::abs(copy_label_rect.bottom - copy_control_rect.bottom) > 1 ||
-        copy_control_rect.left != close_control_rect.left ||
-        copy_control_rect.top <= close_control_rect.bottom) {
+        std::abs(copy_label_rect.bottom - copy_control_rect.bottom) > 1) {
         throw AppError("settings self-test appearance rows are not aligned");
+    }
+    for (const HWND control : page_controls_[3]) {
+        if (text_of(control) == L"关闭方式") {
+            throw AppError("settings self-test close mode row is still present");
+        }
     }
     show_page(4);
     if (text_of(diagnostic_command_) != L"ScreenTranslate.exe --selftest") {
@@ -1189,7 +1231,8 @@ void SettingsWindow::refresh_appearance() {
     theme::apply_window_theme(window_, true, true);
     layout_controls();
     RedrawWindow(window_, nullptr, nullptr,
-                 RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
+                 RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE |
+                     RDW_UPDATENOW);
 }
 
 void SettingsWindow::apply_control_theme(HWND control) {
@@ -1210,8 +1253,10 @@ void SettingsWindow::apply_control_theme(HWND control) {
         SetWindowPos(control, nullptr, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                           SWP_FRAMECHANGED);
+        const int text_margin =
+            GetPropW(control, L"ScreenTranslate.Hotkey") ? 12 : 9;
         SendMessageW(control, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                     MAKELPARAM(px(9, dpi_), px(9, dpi_)));
+                     MAKELPARAM(px(text_margin, dpi_), px(text_margin, dpi_)));
         SetWindowSubclass(control, &SettingsWindow::edit_proc, edit_subclass_id,
                           reinterpret_cast<DWORD_PTR>(this));
     } else if (_wcsicmp(class_name_buffer, L"ComboBox") == 0) {
@@ -1534,15 +1579,15 @@ void SettingsWindow::create_controls() {
 void SettingsWindow::create_hotkey_page() {
     add_label(0, L"文本翻译");
     text_hotkey_ = add_control(0, 0, L"EDIT", L"",
-                               ES_AUTOHSCROLL | ES_CENTER | ES_READONLY |
+                               ES_AUTOHSCROLL | ES_READONLY |
                                WS_BORDER | WS_TABSTOP);
-    add_label(0, L"框选翻译");
+    add_label(0, L"截图翻译");
     capture_hotkey_ = add_control(0, 0, L"EDIT", L"",
-                                  ES_AUTOHSCROLL | ES_CENTER | ES_READONLY |
+                                  ES_AUTOHSCROLL | ES_READONLY |
                                   WS_BORDER | WS_TABSTOP);
     add_label(0, L"收起 / 显示");
     toggle_hotkey_ = add_control(0, 0, L"EDIT", L"",
-                                 ES_AUTOHSCROLL | ES_CENTER | ES_READONLY |
+                                 ES_AUTOHSCROLL | ES_READONLY |
                                  WS_BORDER | WS_TABSTOP);
     SetWindowSubclass(capture_hotkey_, &SettingsWindow::hotkey_proc,
                       hotkey_subclass_id, reinterpret_cast<DWORD_PTR>(this));
@@ -1550,6 +1595,11 @@ void SettingsWindow::create_hotkey_page() {
                       hotkey_subclass_id, reinterpret_cast<DWORD_PTR>(this));
     SetWindowSubclass(text_hotkey_, &SettingsWindow::hotkey_proc,
                       hotkey_subclass_id, reinterpret_cast<DWORD_PTR>(this));
+    for (HWND edit : {text_hotkey_, capture_hotkey_, toggle_hotkey_}) {
+        SetPropW(edit, L"ScreenTranslate.Hotkey", reinterpret_cast<HANDLE>(1));
+        SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                     MAKELPARAM(px(12, dpi_), px(12, dpi_)));
+    }
     add_label(0, L"拖动鼠标    画出要翻译的区域，松手立刻识别并翻译\r\nEsc / 右键    取消这次框选");
 }
 
@@ -1697,11 +1747,6 @@ void SettingsWindow::create_appearance_page() {
         SendMessageW(font_family_, CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(family.c_str()));
     }
-    add_label(3, L"关闭方式");
-    // Only one close behavior is offered, so render it as a value instead of
-    // a one-item drop-down.
-    close_value_ = add_control(
-        3, 0, L"STATIC", L"点击关闭或按ESC", SS_LEFT | SS_CENTERIMAGE, 0);
     auto_copy_ = add_control(3, 0, L"BUTTON", L"自动复制到剪贴板",
                              BS_OWNERDRAW | WS_TABSTOP);
     add_label(3, L"复制译文");
@@ -2523,7 +2568,7 @@ void SettingsWindow::layout_controls() {
         }
     } else if (current_page_ == 3) {
         const auto& controls = page_controls_[3];
-        for (const std::size_t index : {0U, 2U, 4U, 7U}) {
+        for (const std::size_t index : {0U, 2U, 5U}) {
             if (index < controls.size()) collect_label(controls[index]);
         }
     }
@@ -2701,38 +2746,31 @@ void SettingsWindow::layout_controls() {
     } else if (current_page_ == 2) {
         auto& c = page_controls_[2];
         if (c.size() >= 7) {
-            const int engine_top = logical_content_top + logical_card_padding;
-            const int block_height = logical_control_height + logical_hint_gap +
-                                     logical_hint_height;
-            const int language_top = engine_top + block_height + logical_row_gap;
-            place(c[0], ocr_engine_value_, engine_top);
+            place(c[0], ocr_engine_value_, logical_ocr_engine_top);
             MoveWindow(ocr_engine_note_, field_left,
-                       px(engine_top + logical_control_height + logical_hint_gap,
+                       px(logical_ocr_engine_top + logical_control_height +
+                              logical_hint_gap,
                           dpi_),
                        field_width, px(logical_hint_height, dpi_), FALSE);
-            place(c[3], ocr_languages_, language_top);
-            MoveWindow(c[6], field_left,
-                       px(language_top + logical_control_height + logical_hint_gap,
-                          dpi_),
-                       field_width, px(logical_hint_height, dpi_), FALSE);
-            const int upscale_top = language_top + block_height + logical_row_gap;
-            MoveWindow(ocr_upscale_, field_left, px(upscale_top, dpi_), px(230, dpi_),
-                       control_height, FALSE);
+            place(c[3], ocr_languages_, logical_ocr_language_top);
+            MoveWindow(ocr_upscale_, field_left, px(logical_ocr_upscale_top, dpi_),
+                       px(230, dpi_), control_height, FALSE);
+            MoveWindow(c[6], inner_left, px(logical_ocr_installed_note_top, dpi_),
+                       available_width, px(40, dpi_), FALSE);
         }
     } else if (current_page_ == 3) {
         auto& c = page_controls_[3];
-        if (c.size() >= 8) {
+        if (c.size() >= 6) {
             const int first_top = logical_content_top + logical_card_padding;
             const int theme_top = first_top;
             const int font_top = theme_top + logical_setting_row_height;
             const int font_block_height = logical_control_height +
                                           logical_hint_gap + logical_hint_height +
                                           logical_row_gap;
-            const int close_top = font_top + font_block_height;
+            const int copy_top = font_top + font_block_height;
             place(c[0], theme_mode_, theme_top);
             place(c[2], font_family_, font_top);
-            place(c[4], close_value_, close_top);
-            place(c[7], auto_copy_, close_top + logical_setting_row_height);
+            place(c[5], auto_copy_, copy_top);
         }
     } else if (current_page_ == 4) {
         auto& c = page_controls_[4];
@@ -3022,34 +3060,27 @@ void SettingsWindow::paint() {
         card(language_card_top, language_card_top + logical_card_padding +
                                       logical_control_height + logical_card_padding);
     } else if (current_page_ == 2) {
-        const int first_top = logical_content_top + logical_card_padding;
-        const int block_height = logical_control_height + logical_hint_gap +
-                                 logical_hint_height;
-        const int language_top = first_top + block_height + logical_row_gap;
-        const int upscale_top = language_top + block_height + logical_row_gap;
-        const int main_bottom =
-            upscale_top + logical_control_height + logical_card_padding;
-        card(logical_content_top, main_bottom);
-        const int language_section_top = main_bottom + logical_section_gap;
-        section(L"安装其他语言", language_section_top);
-        const int language_card_top = language_section_top +
-                                      logical_section_height +
-                                      logical_section_to_card;
-        const int note_top = language_card_top + logical_card_padding;
-        card(language_card_top, note_top + 40 + logical_card_padding);
+        card(logical_content_top, logical_ocr_main_bottom);
+        section(L"安装其他语言", logical_ocr_language_section_top);
+        card(logical_ocr_language_card_top,
+             logical_ocr_language_card_bottom);
         draw_text(dc,
                   L"需要日语、韩语等语言时，到 Windows 设置添加该语言，再进入语言选项安装光学字符识别，装好后重启本程序即可。",
-                  RECT{inner_left, px(note_top, dpi_), inner_right,
-                       px(note_top + 40, dpi_)},
+                  RECT{inner_left, px(logical_ocr_language_note_top, dpi_),
+                       inner_right,
+                       px(logical_ocr_language_note_top + 40, dpi_)},
                   small_font_, color_text_dim, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        section(L"已安装语言", logical_ocr_installed_section_top);
+        card(logical_ocr_installed_card_top,
+             logical_ocr_installed_card_bottom);
     } else if (current_page_ == 3) {
         const int first_top = logical_content_top + logical_card_padding;
         const int theme_block_height = logical_control_height + logical_row_gap;
         const int font_block_height = logical_control_height + logical_hint_gap +
                                       logical_hint_height + logical_row_gap;
-        const int close_top = first_top + theme_block_height + font_block_height;
-        const int main_bottom = close_top + logical_setting_row_height +
-                                logical_control_height + logical_card_padding;
+        const int copy_top = first_top + theme_block_height + font_block_height;
+        const int main_bottom = copy_top + logical_control_height +
+                                logical_card_padding;
         card(logical_content_top, main_bottom);
         const int font_top = first_top + theme_block_height;
         draw_text(dc,

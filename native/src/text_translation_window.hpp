@@ -90,10 +90,8 @@ public:
     QuickTranslateWindow(const QuickTranslateWindow&) = delete;
     QuickTranslateWindow& operator=(const QuickTranslateWindow&) = delete;
 
-    void toggle(HWND owner);
     void show(HWND owner);
-    void show_near(POINT anchor);
-    void toggle_from_tray(POINT anchor);
+    void toggle_near(HWND owner, POINT anchor, bool select_all);
     void hide();
     void refresh();
     void refresh_appearance();
@@ -120,7 +118,7 @@ private:
     void create_theme_resources();
     void destroy_theme_resources() noexcept;
     void layout_controls();
-    void position_on_active_monitor();
+    void show_at(HWND owner, POINT anchor, bool select_all);
     void sync_input();
     void sync_target();
     void on_input_changed();

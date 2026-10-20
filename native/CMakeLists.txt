@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(ScreenTranslateNative VERSION 1.2.4 LANGUAGES CXX RC)
+project(ScreenTranslateNative VERSION 1.2.5 LANGUAGES CXX RC)
 
 set(SCREENTRANS_UPDATE_REPOSITORY_URL
     "https://github.com/Freyja04/ScreenTranslate"
@@ -63,6 +63,7 @@ add_executable(ScreenTranslate WIN32
     src/theme.cpp
     src/theme.hpp
     src/types.hpp
+    src/ui_icons.hpp
     src/updater.cpp
     src/updater.hpp
     src/update_window.cpp

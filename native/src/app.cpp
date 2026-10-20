@@ -4,6 +4,7 @@
 #include "hotkey.hpp"
 #include "resource.h"
 #include "theme.hpp"
+#include "ui_icons.hpp"
 #include "util.hpp"
 
 #include <commctrl.h>
@@ -40,6 +41,7 @@ constexpr UINT command_updates = 3004;
 constexpr UINT command_restart = 3005;
 constexpr UINT command_exit = 3006;
 constexpr UINT command_text_translate = 3007;
+constexpr UINT tray_icon_id = 1;
 
 using theme::tray_color_background;
 using theme::tray_color_border;
@@ -146,6 +148,25 @@ const wchar_t* tray_icon_font(HDC dc) {
     return fluent_available ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets";
 }
 
+// Use the real tray icon position for both entry points so the panel has one
+// stable anchor even when the hotkey fires while the cursor is elsewhere.
+POINT quick_translation_anchor(HWND owner) noexcept {
+    NOTIFYICONIDENTIFIER identifier{};
+    identifier.cbSize = sizeof(identifier);
+    identifier.hWnd = owner;
+    identifier.uID = tray_icon_id;
+    RECT icon{};
+    if (SUCCEEDED(Shell_NotifyIconGetRect(&identifier, &icon))) {
+        return POINT{(icon.left + icon.right) / 2, (icon.top + icon.bottom) / 2};
+    }
+    const HMONITOR monitor = MonitorFromWindow(owner, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO info{sizeof(info)};
+    if (monitor && GetMonitorInfoW(monitor, &info)) {
+        return POINT{info.rcWork.right, info.rcWork.bottom};
+    }
+    return POINT{GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+}
+
 void draw_tray_menu_icon(HDC dc, const RECT& bounds, TrayMenuIcon icon,
                          COLORREF color, UINT dpi) {
     if (icon == TrayMenuIcon::none) return;
@@ -155,10 +176,10 @@ void draw_tray_menu_icon(HDC dc, const RECT& bounds, TrayMenuIcon icon,
         glyph = static_cast<wchar_t>(0xE73E);  // CheckMark
         break;
     case TrayMenuIcon::capture:
-        glyph = static_cast<wchar_t>(0xE7A8);  // Crop
+        glyph = ui_icons::capture_translation;
         break;
     case TrayMenuIcon::text:
-        glyph = static_cast<wchar_t>(0xE8D2);  // Edit
+        glyph = ui_icons::text_translation;
         break;
     case TrayMenuIcon::restore:
         glyph = static_cast<wchar_t>(0xE890);  // View
@@ -332,7 +353,7 @@ void tray_menu_layout_self_test() {
     TrayMenuItem item;
     item.command = command_capture;
     item.icon = TrayMenuIcon::capture;
-    item.label = L"框选翻译";
+    item.label = L"截图翻译";
     item.secondary = L"Ctrl+Alt+Q";
     item.dpi = 96;
     item.font = create_tray_menu_font(item.dpi);
@@ -632,14 +653,14 @@ void AppHost::add_tray_icon() {
     NOTIFYICONDATAW tray{};
     tray.cbSize = sizeof(tray);
     tray.hWnd = window_;
-    tray.uID = 1;
+    tray.uID = tray_icon_id;
     tray.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     tray.uCallbackMessage = tray_message;
     tray.hIcon = icon;
     const auto capture = config_.string(L"hotkey", L"Ctrl+Alt+Q");
     const auto toggle = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
     const auto text = config_.string(L"hotkey_text_translate", L"Ctrl+Alt+Space");
-    const auto tip = L"划词截屏翻译\n框选：" + capture + L"\n快速翻译：" + text +
+    const auto tip = L"划词截屏翻译\n截图翻译：" + capture + L"\n快速翻译：" + text +
                      L"\n收起 / 显示：" + toggle;
     wcsncpy_s(tray.szTip, tip.c_str(), _TRUNCATE);
     if (!Shell_NotifyIconW(NIM_ADD, &tray)) {
@@ -690,7 +711,7 @@ void AppHost::refresh_tray_tooltip() {
     const auto capture = config_.string(L"hotkey", L"Ctrl+Alt+Q");
     const auto toggle = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
     const auto text = config_.string(L"hotkey_text_translate", L"Ctrl+Alt+Space");
-    const auto tip = L"划词截屏翻译\n框选：" + capture + L"\n快速翻译：" + text +
+    const auto tip = L"划词截屏翻译\n截图翻译：" + capture + L"\n快速翻译：" + text +
                      L"\n收起 / 显示：" + toggle;
     tray_.uFlags = NIF_TIP;
     wcsncpy_s(tray_.szTip, tip.c_str(), _TRUNCATE);
@@ -757,7 +778,7 @@ void AppHost::show_tray_menu(POINT location) {
         items.push_back(std::move(item));
     };
     add_item(command_text_translate, TrayMenuIcon::text, L"文本翻译", text);
-    add_item(command_capture, TrayMenuIcon::capture, L"框选翻译", capture);
+    add_item(command_capture, TrayMenuIcon::capture, L"截图翻译", capture);
     add_item(command_restore, TrayMenuIcon::restore, L"显示上次译文", toggle, can_restore);
     TrayMenuItem separator;
     separator.separator = true;
@@ -820,7 +841,7 @@ bool AppHost::apply_hotkeys(bool announce_changes) {
         window_, hotkey_capture, capture_spec, &error);
     if (!capture_registered) {
         success = false;
-        notify(L"划词截屏翻译 · 框选翻译快捷键未生效", error);
+        notify(L"划词截屏翻译 · 截图翻译快捷键未生效", error);
     }
     error.clear();
     const bool toggle_registered = register_hotkey(
@@ -862,7 +883,7 @@ bool AppHost::apply_hotkeys(bool announce_changes) {
         registered_text_hotkey_ = text_spec;
         refresh_tray_tooltip();
         if (announce_changes && !old_capture.empty() && old_capture != capture_spec) {
-            notify(L"划词截屏翻译", L"框选翻译快捷键已改为 " + capture_spec);
+            notify(L"划词截屏翻译", L"截图翻译快捷键已改为 " + capture_spec);
         }
         if (announce_changes && !old_toggle.empty() && old_toggle != toggle_spec) {
             notify(L"划词截屏翻译", L"收起 / 显示快捷键已改为 " + toggle_spec);
@@ -970,7 +991,7 @@ void AppHost::open_text_translation() {
 void AppHost::toggle_quick_translation() {
     if (!quick_window_ || shutting_down_ || overlay_.active()) return;
     try {
-        quick_window_->toggle(window_);
+        quick_window_->toggle_near(window_, quick_translation_anchor(window_), true);
     } catch (const std::exception& error) {
         notify(L"划词截屏翻译", L"无法打开快速翻译：" + utf8_to_wide(error.what()));
     }
@@ -1396,7 +1417,7 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             } else {
                 notify(L"划词截屏翻译",
                        L"已启动，左键打开快速翻译，右键菜单可进入设置；按 " +
-                       config_.string(L"hotkey", L"Ctrl+Alt+Q") + L" 框选翻译");
+                       config_.string(L"hotkey", L"Ctrl+Alt+Q") + L" 截图翻译");
             }
             SetTimer(window_, update_timer, 1500, nullptr);
         } catch (const std::exception& error) {
@@ -1429,11 +1450,10 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         // NOTIFYICON_VERSION_4 reports a left click as NIN_SELECT; handling the
         // raw mouse messages too would toggle the panel twice in one click.
         if (event == NIN_SELECT || event == NIN_KEYSELECT) {
-            POINT point{};
-            GetCursorPos(&point);
             if (quick_window_ && !overlay_.active()) {
                 try {
-                    quick_window_->toggle_from_tray(point);
+                    quick_window_->toggle_near(
+                        nullptr, quick_translation_anchor(window_), false);
                 } catch (const std::exception& error) {
                     notify(L"划词截屏翻译",
                            L"无法打开快速翻译：" + utf8_to_wide(error.what()));

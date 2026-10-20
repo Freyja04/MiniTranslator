@@ -154,6 +154,19 @@ void apply_window_theme(HWND window, bool round_corners, bool custom_caption) no
         DwmSetWindowAttribute(window, caption_color, &none, sizeof(none));
         DwmSetWindowAttribute(window, caption_text_color, &none, sizeof(none));
     }
+
+    // DWM keeps the old non-client frame until the window recalculates it.
+    // Without this, switching themes repaints the client area immediately but
+    // leaves the caption in the previous palette until the next activation.
+    const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+    if ((style & WS_CAPTION) == WS_CAPTION &&
+        GetAncestor(window, GA_ROOT) == window) {
+        SetWindowPos(window, nullptr, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                         SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        RedrawWindow(window, nullptr, nullptr,
+                     RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    }
 }
 
 void apply_control_theme(HWND control) noexcept {
