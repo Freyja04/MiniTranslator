@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(MiniTranslatorNative VERSION 1.2.6 LANGUAGES CXX RC)
+project(MiniTranslatorNative VERSION 1.2.7 LANGUAGES CXX RC)
 
 set(MINITRANS_UPDATE_REPOSITORY_URL
     "https://github.com/Freyja04/MiniTranslator"
