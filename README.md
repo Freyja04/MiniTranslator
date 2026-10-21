@@ -1,57 +1,23 @@
 # MiniTranslator
 
-按下快捷键，在屏幕上框选一块区域，MiniTranslator 会识别文字、翻译，并把译文覆盖回原位置。
+MiniTranslator 是一个 Windows 屏幕翻译工具：框选屏幕区域后，在本地识别文字，调用所选翻译服务，并把译文覆盖回原位置。
 
-MiniTranslator 使用 **C++20 + 原生 Win32/C++/WinRT** 实现。发布产物是一个独立的 x64 EXE，静态链接 MSVC 运行库，不依赖 Python、Qt、.NET、NuGet 或额外 DLL。
-
-仅支持 Windows 10/11 x64。
-
-<img width="1630" height="931" alt="image" src="https://github.com/user-attachments/assets/37024f2e-2c5b-48c9-afbb-95f6e9eb3317" />
-
----
-
-## 下载与启动
-
-从本仓库的 [GitHub Releases](https://github.com/Freyja04/MiniTranslator/releases) 下载：
-
-- `MiniTranslator-<版本>-setup-x64.exe`：安装版，可从应用内直接更新；
-- `MiniTranslator-<版本>-windows-x64.exe`：便携版，下载后直接运行。
-
-Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是运行依赖，但分发便携 EXE 时应一同提供。
-
-安装版和便携版运行的是同一个原生程序。启动后程序常驻通知区域，默认快捷键如下：
-
-| 快捷键 | 作用 |
-| --- | --- |
-| `Ctrl+Alt+Q` | 冻结屏幕并开始截图翻译 |
-| `Ctrl+Alt+W` | 收起或重新显示上一次译文 |
-| `Ctrl+Alt+Space` | 显示或隐藏快速文字翻译框 |
-
-左键单击托盘图标会弹出固定大小的快速翻译面板，再次点击托盘图标或按 `Esc` 收起；右键菜单把文本翻译排在最上面，并提供截图翻译、显示上次译文、设置、重启和退出，检查更新在「设置 → 其他」里。快捷键可在设置中修改，三个快捷键不能重复。快速文字翻译也可以改成 `Ctrl+Space`，但可能与输入法切换冲突。
-
-设置中的「显示」页可以选择「跟随系统」「浅色」「深色」三种主题。跟随系统时，程序会读取 Windows 的应用主题并在系统切换深浅色后实时同步；截图遮罩和选区边框始终使用固定强调色，以保证叠在任意屏幕内容上都清晰可见。
-
-本项目目前不使用 Authenticode 证书。Windows SmartScreen 可能显示“未知发布者”或首次下载警告，请只从上面的官方 Releases 页面下载。
+它使用 **C++20 + 原生 Win32/C++/WinRT** 实现，发布产物是静态链接 MSVC 运行库的独立 x64 EXE，不依赖 Python、Qt、.NET、NuGet 或额外 DLL。仅支持 Windows 10/11 x64。
 
 ## 主要功能
 
 - 多显示器、物理像素坐标和 Per-Monitor V2 DPI 支持；
 - 框选结束后重新截取干净画面，避免把选区遮罩截进 OCR 图片；
-- Windows 系统自带 OCR（本地、离线）；
-- 四个免密钥传统翻译接口、DeepL，以及可添加多个自定义端点的大模型翻译接口；
-- 结果窗口可移动、缩放、收起、复制、查看原文和重新翻译；
+- Windows 系统自带 OCR，识别在本地完成；
+- 免密钥传统翻译接口、DeepL，以及可配置多个端点的大模型翻译接口；
+- 结果窗口支持移动、缩放、收起、复制、查看原文和重新翻译；
 - 分块 OCR 校对，可只重译修改过的文本块；
-- 托盘菜单提供双栏文字翻译窗口，输入停止 500 毫秒后自动翻译；
-- 聚焦式快速翻译框与常规文字翻译窗口共享当前输入、目标语言和结果；
-- 截图与文字翻译使用隔离的后台请求通道，各通道只保留最新一次请求；
+- 托盘菜单提供文字翻译窗口和快速翻译面板；
+- 截图与文字翻译使用隔离的后台请求通道；
 - API 密钥使用当前 Windows 账户的 DPAPI 加密存储；
 - 基于 GitHub Releases 的更新检查、下载、SHA-256 校验和安装。
 
-框选时按 `Esc` 或右键可取消。结果窗口支持 `E` 打开校对、`R` 重新翻译、`M` 收起、`Esc` 关闭；方向键可微调位置，按住 `Shift` 时步长为 10 像素。
-
 ## 翻译接口
-
-设置中的翻译接口分为两类，可以随时切换：
 
 **传统翻译 API**
 
@@ -65,7 +31,7 @@ Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是�
 
 **大模型翻译 API**
 
-可添加任意多个接口，每个接口自定义名称，并各自填写 Base URL、API Key 和模型。接口协议三选一：
+可添加多个接口，每个接口配置名称、Base URL、API Key 和模型。支持三种协议：
 
 | 接口类型 | 请求格式 |
 | --- | --- |
@@ -73,107 +39,30 @@ Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是�
 | OpenAI Responses | `POST <base_url>/responses` |
 | Anthropic Messages | `POST <base_url>/v1/messages` |
 
-「获取模型」从当前接口拉取可用模型列表，与「测试连接」并排放在模型字段下一行。名称是大模型接口的唯一标识，管道按名称读取当前选中的那一个。
+免密接口不是服务商承诺稳定的公开 API，可能限流、改版或停止工作。正式或高频用途应优先选择官方 API 或自建大模型端点。
 
-免密接口不等于服务商承诺稳定的公开 API，可能限流、改版或停止工作。正式或高频用途应优先选择官方 API 或自建大模型端点。
-
-如果当前选择的接口缺少必需配置（例如 DeepL 未填密钥、大模型未填 Base URL 或模型），翻译时会自动回退到传统接口列表中第一个免密钥接口；已完整配置的接口始终按用户选择使用。
+当前接口缺少必需配置时，程序会回退到传统接口列表中第一个免密钥接口；已完整配置的接口始终按用户选择使用。
 
 ## 文字识别
 
-截图识别固定使用 Windows 系统自带 OCR：识别在本地完成，不上传截图，也不需要密钥。识别的语言取决于系统已安装的 OCR 语言包，可在“Windows 设置 → 时间和语言 → 语言和区域 → 语言选项 → 可选功能”中添加；装好后重启本程序即可在语言列表中选用。
+截图识别固定使用 Windows 系统自带 OCR。识别在本地完成，不上传截图，也不需要密钥。可用语言取决于系统已安装的 OCR 语言包。
 
 ## 配置与隐私
 
-配置文件位置：
+配置文件位于 `%APPDATA%\MiniTranslator\config.json`。
 
-```text
-%APPDATA%\MiniTranslator\config.json
-```
+API 密钥使用当前 Windows 账户的 DPAPI 加密，磁盘中的值以 `dpapi:v1:` 开头；换到其他账户或电脑后无法解密。DPAPI 可以降低误传配置文件的泄露风险，但同一 Windows 账户下运行的其他程序仍可能解密。
 
-API 密钥使用当前 Windows 账户的 DPAPI 加密，磁盘中的值以 `dpapi:v1:` 开头；换到其他账户或电脑后无法解密，需要重新填写。
+翻译文字会发送给当前选择的网络翻译服务。处理敏感内容时应关闭“翻译后自动复制”和 Windows 剪贴板历史，并避免把配置文件、日志或带密钥的截图提交到仓库。
 
-DPAPI 可以降低误传配置文件造成的泄露风险，但同一 Windows 账户下运行的其他程序仍可能解密。不要把配置文件、日志或带有密钥的截图提交到仓库。
-
-如果开启“翻译后自动复制”，译文还可能进入 Windows 剪贴板历史或跨设备同步。处理敏感文字时应关闭该选项以及系统剪贴板历史。
-
-文字翻译窗口中的内容只保存在本次程序运行的内存中，不写入配置或历史，也不会自动复制。文字仍会发送给设置中当前选择的网络翻译服务；请勿提交不应交给该服务处理的敏感内容。
-
-## 构建原生版
-
-需要：
-
-- Visual Studio 2022 或更新版本；
-- “使用 C++ 的桌面开发”工作负载；
-- Windows 10/11 SDK。
-
-在仓库根目录运行：
-
-```powershell
-.\scripts\build-native.ps1 -Configuration Release -RunSmokeTest
-```
-
-产物：
-
-```text
-build\native\Release\MiniTranslator.exe
-```
-
-`-RunSmokeTest` 会执行程序生命周期自检和更新器自检，不会留下后台进程。默认每次都全量重建；本地开发可加 `-NoClean` 跳过 `--clean-first` 以加快迭代。
-
-还可以验证最终 PE 文件的架构、版本资源、GUI 子系统以及是否意外依赖动态 CRT：
-
-```powershell
-.\release\check_native_binary.ps1 `
-  -Path .\build\native\Release\MiniTranslator.exe `
-  -ExpectedVersion 1.2.7
-```
-
-没有安装 Visual Studio 的机器上做本地校验时，加 `-SkipDependencyCheck` 跳过 dumpbin 依赖检查。
-
-Debug 构建：
-
-```powershell
-.\scripts\build-native.ps1 -Configuration Debug -NoClean
-```
-
-构建脚本会自动查找 Visual Studio 和它自带的 CMake，无需打开 Developer PowerShell。推荐始终通过 `scripts\build-native.ps1` 构建，避免不同 IDE 的缓存策略造成过期产物。
-
-## 自动构建与发布
-
-- `.github/workflows/windows-ci.yml`：推送到 `main` 或提交拉取请求时构建、自测并校验原生 x64 单 EXE，产物作为 Actions 构件保留 14 天；也可以在工作流页面手动触发；
-- `.github/workflows/windows-release.yml`：推送 `v<SemVer>` 标签后构建原生 EXE、Inno Setup 安装器和 `update-manifest.json`，再创建 GitHub Release。
-
-发布新版本的流程：
-
-1. 同步修改 `native/CMakeLists.txt` 的 `project(... VERSION ...)` 与 `native/src/resource.h` 的 `MINITRANS_VERSION_*`，两处必须与标签一致；
-2. 提交并推送到 `main`，等 CI 变绿；
-3. 打标签并推送：`git tag v1.2.7` → `git push origin v1.2.7`；
-4. Release 工作流自动完成编译、校验、打包和 `gh release create`。
-
-工作流不接受任意仓库发布：`Validate release identity` 会从 `native/CMakeLists.txt` 读出更新信任根，要求 `GITHUB_REPOSITORY` 与之完全一致，否则直接失败。当前信任根是 `Freyja04/MiniTranslator`。
-
-## 应用内更新
-
-程序只信任：
-
-```text
-https://github.com/Freyja04/MiniTranslator
-https://github.com/Freyja04/MiniTranslator/releases/latest/download/update-manifest.json
-```
-
-下载地址必须与同一仓库、`v<version>` 标签和 `MiniTranslator-<version>-setup-x64.exe` 文件名完全一致。安装前会校验清单结构、版本、通道、文件大小和 SHA-256；下载缓存和更新辅助进程还会再次校验路径及文件内容。
-
-更新不会静默绕过 Windows 安全提示。GitHub 在部分网络环境中可能访问较慢，失败时可稍后重试或从 Releases 页面手动下载。
-
-## 目录结构
+## 技术结构
 
 ```text
 native/                 原生 C++20 / Win32 / C++/WinRT 客户端
 scripts/build-native.ps1 原生构建入口
 installer/              Inno Setup 安装器
 release/                版本、PE 和更新清单校验工具
-.github/workflows/      原生 CI 与 Release 流程
+.github/workflows/      CI 与 Release 流程
 ```
 
 ## 已知限制
@@ -182,7 +71,7 @@ release/                版本、PE 和更新清单校验工具
 - 文字识别只有 Windows 系统 OCR，依赖系统语言包，艺术字、竖排字和手写体的识别率有限；
 - 免密翻译接口不是稳定性受保证的开发者 API；
 - 复杂照片背景上的原文修补和译文排版仍可能不如纯色界面自然；
-- 当前发布包没有代码签名证书，SmartScreen 警告属于预期行为。
+- 当前发布包没有 Authenticode 代码签名证书，Windows SmartScreen 警告属于预期行为。
 
 ## 许可证
 

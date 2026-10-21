@@ -1,0 +1,42 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Build native x64 executable
+        shell: pwsh
+        run: >-
+          .\scripts\build-native.ps1
+          -Configuration Release
+          -Architecture x64
+          -RunSmokeTest
+      - name: Validate native release binary
+        shell: pwsh
+        run: >-
+          .\release\check_native_binary.ps1
+          -Path .\build\native\Release\MiniTranslator.exe
+      - name: Upload unsigned native executable
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: MiniTranslator-native-windows-x64-unsigned
+          path: build/native/Release/MiniTranslator.exe
+          if-no-files-found: error
+          retention-days: 14
