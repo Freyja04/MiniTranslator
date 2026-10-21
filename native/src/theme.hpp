@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-namespace screentrans::theme {
+namespace minitrans::theme {
 
 inline constexpr UINT changed_message = WM_APP + 90;
 
@@ -79,4 +79,4 @@ void apply_window_theme(HWND window, bool round_corners = true,
                         bool custom_caption = false) noexcept;
 void apply_control_theme(HWND control) noexcept;
 
-}  // namespace screentrans::theme
+}  // namespace minitrans::theme

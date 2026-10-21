@@ -13,7 +13,7 @@
 #include <string>
 #include <string_view>
 
-namespace screentrans {
+namespace minitrans {
 
 inline constexpr std::uint64_t maximum_update_size = 512ULL * 1024 * 1024;
 
@@ -66,4 +66,4 @@ bool is_update_helper_request();
 int run_update_helper();
 void updater_self_test();
 
-}  // namespace screentrans
+}  // namespace minitrans

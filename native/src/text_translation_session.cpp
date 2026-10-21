@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cwctype>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -240,4 +240,4 @@ void TextTranslationSession::self_test() {
     clear();
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

@@ -11,6 +11,9 @@ param(
     [ValidateSet('stable', 'preview')]
     [string]$UpdateChannel = 'stable',
 
+    # 本地开发可跳过 clean-first 全量重建；CI 和发布始终使用干净构建。
+    [switch]$NoClean,
+
     [switch]$RunSmokeTest
 )
 
@@ -81,6 +84,15 @@ if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
     $BuildDirectory = [System.IO.Path]::GetFullPath($BuildDirectory)
 }
 
+# 旧命名的中间产物混在同一构建树中会导致 CMake/MSBuild 复用过期目标。
+$staleTargets = @(
+    Get-ChildItem -LiteralPath $BuildDirectory -Recurse -Directory -Filter 'ScreenTranslate.dir' `
+        -ErrorAction SilentlyContinue
+)
+if ($staleTargets.Count -ne 0) {
+    throw "Build directory contains stale ScreenTranslate artifacts. Delete '$BuildDirectory' and run again."
+}
+
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path -LiteralPath $vswhere)) {
     throw 'Visual Studio Installer (vswhere.exe) was not found.'
@@ -126,7 +138,7 @@ $configureArguments = @(
     '-B', $BuildDirectory,
     '-G', $generator,
     '-A', $Architecture,
-    "-DSCREENTRANS_UPDATE_CHANNEL=$UpdateChannel"
+    "-DMINITRANS_UPDATE_CHANNEL=$UpdateChannel"
 )
 Invoke-NativeCommand -Executable $cmake -Arguments $configureArguments
 
@@ -134,9 +146,11 @@ Write-Host "Building $Configuration..."
 $buildArguments = @(
     '--build', $BuildDirectory,
     '--config', $Configuration,
-    '--clean-first',
     '--parallel'
 )
+if (-not $NoClean) {
+    $buildArguments += '--clean-first'
+}
 Invoke-NativeCommand -Executable $cmake -Arguments $buildArguments
 
 if ($sourceSnapshot -ne (Get-NativeSourceSnapshot)) {

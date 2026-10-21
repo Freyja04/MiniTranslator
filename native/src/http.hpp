@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 inline constexpr std::size_t max_json_response = 4 * 1024 * 1024;
 
@@ -83,4 +83,4 @@ std::vector<std::uint8_t> form_body(
 std::wstring redact_sensitive(std::wstring value,
                               std::span<const std::wstring> secrets = {});
 
-}  // namespace screentrans
+}  // namespace minitrans

@@ -7,7 +7,7 @@
 #include <map>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 std::optional<HotkeySpec> parse_hotkey(std::wstring_view value, std::wstring* error) {
     std::vector<std::wstring> parts;
@@ -80,4 +80,4 @@ bool register_hotkey(HWND window, int identifier, std::wstring_view value,
     return true;
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

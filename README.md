@@ -2,18 +2,17 @@
 
 按下快捷键，在屏幕上框选一块区域，MiniTranslator 会识别文字、翻译，并把译文覆盖回原位置。
 
-MiniTranslator 使用 **C++20 + 原生 Win32/C++/WinRT** 实现。发布产物是一个独立的 x64 EXE，静态链接 MSVC 运行库，不依赖 Python、Qt、.NET、Tauri、NuGet 或额外 DLL。
+MiniTranslator 使用 **C++20 + 原生 Win32/C++/WinRT** 实现。发布产物是一个独立的 x64 EXE，静态链接 MSVC 运行库，不依赖 Python、Qt、.NET、NuGet 或额外 DLL。
 
 仅支持 Windows 10/11 x64。
 
-在原文上进行直接翻译，也可以右键或空格显示原文
 <img width="1630" height="931" alt="image" src="https://github.com/user-attachments/assets/37024f2e-2c5b-48c9-afbb-95f6e9eb3317" />
 
 ---
 
 ## 下载与启动
 
-从本仓库的 [GitHub Releases](https://github.com/Freyja04/ScreenTranslate/releases) 下载：
+从本仓库的 [GitHub Releases](https://github.com/Freyja04/MiniTranslator/releases) 下载：
 
 - `MiniTranslator-<版本>-setup-x64.exe`：安装版，可从应用内直接更新；
 - `MiniTranslator-<版本>-windows-x64.exe`：便携版，下载后直接运行。
@@ -45,7 +44,7 @@ Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是�
 - 托盘菜单提供双栏文字翻译窗口，输入停止 500 毫秒后自动翻译；
 - 聚焦式快速翻译框与常规文字翻译窗口共享当前输入、目标语言和结果；
 - 截图与文字翻译使用隔离的后台请求通道，各通道只保留最新一次请求；
-- 兼容既有 `config.json` 和 DPAPI 密钥格式；
+- API 密钥使用当前 Windows 账户的 DPAPI 加密存储；
 - 基于 GitHub Releases 的更新检查、下载、SHA-256 校验和安装。
 
 框选时按 `Esc` 或右键可取消。结果窗口支持 `E` 打开校对、`R` 重新翻译、`M` 收起、`Esc` 关闭；方向键可微调位置，按住 `Shift` 时步长为 10 像素。
@@ -92,7 +91,7 @@ Release 同时附带 `LICENSE.txt` 和 `THIRD_PARTY_NOTICES.txt`。它们不是�
 %APPDATA%\MiniTranslator\config.json
 ```
 
-程序直接读取既有配置。API 密钥使用当前 Windows 账户的 DPAPI 加密，磁盘中的值以 `dpapi:v1:` 开头；换到其他账户或电脑后无法解密，需要重新填写。
+API 密钥使用当前 Windows 账户的 DPAPI 加密，磁盘中的值以 `dpapi:v1:` 开头；换到其他账户或电脑后无法解密，需要重新填写。
 
 DPAPI 可以降低误传配置文件造成的泄露风险，但同一 Windows 账户下运行的其他程序仍可能解密。不要把配置文件、日志或带有密钥的截图提交到仓库。
 
@@ -111,10 +110,7 @@ DPAPI 可以降低误传配置文件造成的泄露风险，但同一 Windows �
 在仓库根目录运行：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File .\scripts\build-native.ps1 `
-  -Configuration Release `
-  -RunSmokeTest
+.\scripts\build-native.ps1 -Configuration Release -RunSmokeTest
 ```
 
 产物：
@@ -123,22 +119,25 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 build\native\Release\MiniTranslator.exe
 ```
 
-`-RunSmokeTest` 会执行程序生命周期自检和更新器自检，不会留下后台进程。还可以验证最终 PE 文件的架构、版本资源、GUI 子系统以及是否意外依赖动态 CRT：
+`-RunSmokeTest` 会执行程序生命周期自检和更新器自检，不会留下后台进程。默认每次都全量重建；本地开发可加 `-NoClean` 跳过 `--clean-first` 以加快迭代。
+
+还可以验证最终 PE 文件的架构、版本资源、GUI 子系统以及是否意外依赖动态 CRT：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File .\release\check_native_binary.ps1 `
+.\release\check_native_binary.ps1 `
   -Path .\build\native\Release\MiniTranslator.exe `
   -ExpectedVersion 1.2.6
 ```
 
+没有安装 Visual Studio 的机器上做本地校验时，加 `-SkipDependencyCheck` 跳过 dumpbin 依赖检查。
+
 Debug 构建：
 
 ```powershell
-.\scripts\build-native.ps1 -Configuration Debug
+.\scripts\build-native.ps1 -Configuration Debug -NoClean
 ```
 
-构建脚本会自动查找 Visual Studio 和它自带的 CMake，无需打开 Developer PowerShell。
+构建脚本会自动查找 Visual Studio 和它自带的 CMake，无需打开 Developer PowerShell。推荐始终通过 `scripts\build-native.ps1` 构建，避免不同 IDE 的缓存策略造成过期产物。
 
 ## 自动构建与发布
 
@@ -147,27 +146,23 @@ Debug 构建：
 
 发布新版本的流程：
 
-1. 同步修改 `native/CMakeLists.txt` 的 `project(... VERSION ...)` 与 `native/src/resource.h` 的 `SCREENTRANS_VERSION_*`，两处必须与标签一致；
+1. 同步修改 `native/CMakeLists.txt` 的 `project(... VERSION ...)` 与 `native/src/resource.h` 的 `MINITRANS_VERSION_*`，两处必须与标签一致；
 2. 提交并推送到 `main`，等 CI 变绿；
 3. 打标签并推送：`git tag v1.2.6` → `git push origin v1.2.6`；
 4. Release 工作流自动完成编译、校验、打包和 `gh release create`。
 
-工作流不接受任意仓库发布：`Validate release identity` 会从 `native/CMakeLists.txt` 读出更新信任根，要求 `GITHUB_REPOSITORY` 与之完全一致，否则直接失败。当前信任根是 `Freyja04/ScreenTranslate`。
-
-仓库名和 GitHub Releases 地址仍保留 `ScreenTranslate`，这是远程仓库与既有发布历史的兼容标识，不代表应用显示名。产品名、EXE、安装器和用户配置目录均已使用 `MiniTranslator`。
+工作流不接受任意仓库发布：`Validate release identity` 会从 `native/CMakeLists.txt` 读出更新信任根，要求 `GITHUB_REPOSITORY` 与之完全一致，否则直接失败。当前信任根是 `Freyja04/MiniTranslator`。
 
 ## 应用内更新
 
 程序只信任：
 
 ```text
-https://github.com/Freyja04/ScreenTranslate
-https://github.com/Freyja04/ScreenTranslate/releases/latest/download/update-manifest.json
+https://github.com/Freyja04/MiniTranslator
+https://github.com/Freyja04/MiniTranslator/releases/latest/download/update-manifest.json
 ```
 
 下载地址必须与同一仓库、`v<version>` 标签和 `MiniTranslator-<version>-setup-x64.exe` 文件名完全一致。安装前会校验清单结构、版本、通道、文件大小和 SHA-256；下载缓存和更新辅助进程还会再次校验路径及文件内容。
-
-为兼容改名前的线上清单，客户端会把 `product` 仍为 `ScreenTranslate` 的旧清单视为“暂无新版本”；只有 `product` 为 `MiniTranslator` 的新清单才会参与更新判断。
 
 更新不会静默绕过 Windows 安全提示。GitHub 在部分网络环境中可能访问较慢，失败时可稍后重试或从 Releases 页面手动下载。
 

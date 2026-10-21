@@ -16,7 +16,7 @@
 #include <cwctype>
 #include <set>
 
-namespace screentrans {
+namespace minitrans {
 
 using winrt::Windows::Globalization::Language;
 using winrt::Windows::Graphics::Imaging::BitmapAlphaMode;
@@ -262,4 +262,4 @@ std::vector<OcrLine> recognize_windows_ocr(
     return best;
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

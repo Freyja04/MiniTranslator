@@ -13,7 +13,7 @@
 #include <string>
 #include <thread>
 
-namespace screentrans {
+namespace minitrans {
 
 class UpdateWindow {
 public:
@@ -139,4 +139,4 @@ private:
     std::function<void(const UpdateInfo&)> update_available_callback_;
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

@@ -75,24 +75,24 @@ void wait_for_restart_parent() {
     if (!process_id) return;
 
     SetLastError(ERROR_SUCCESS);
-    screentrans::UniqueHandle process(OpenProcess(SYNCHRONIZE, FALSE, *process_id));
+    minitrans::UniqueHandle process(OpenProcess(SYNCHRONIZE, FALSE, *process_id));
     if (!process) {
         const DWORD error = GetLastError();
         if (error == ERROR_INVALID_PARAMETER) return;
-        screentrans::throw_last_error("open previous process", error);
+        minitrans::throw_last_error("open previous process", error);
     }
     const DWORD wait_result = WaitForSingleObject(process.get(), restart_wait_timeout_ms);
-    if (wait_result == WAIT_FAILED) screentrans::throw_last_error("wait for previous process");
+    if (wait_result == WAIT_FAILED) minitrans::throw_last_error("wait for previous process");
     if (wait_result == WAIT_TIMEOUT) {
-        throw screentrans::AppError("previous MiniTranslator process did not exit in time");
+        throw minitrans::AppError("previous MiniTranslator process did not exit in time");
     }
 }
 
 void signal_existing_instance(bool text_translation) noexcept {
-    if (const HWND window = FindWindowW(screentrans::AppHost::window_class_name(), nullptr)) {
-        PostMessageW(window, screentrans::AppHost::activate_message,
+    if (const HWND window = FindWindowW(minitrans::AppHost::window_class_name(), nullptr)) {
+        PostMessageW(window, minitrans::AppHost::activate_message,
                      text_translation
-                         ? screentrans::AppHost::activate_text_translation : 0,
+                         ? minitrans::AppHost::activate_text_translation : 0,
                      0);
     }
 }
@@ -108,14 +108,14 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
     const bool text_translation = has_argument(L"--text-translation");
     bool update_helper = false;
     try {
-        update_helper = screentrans::is_update_helper_request();
-        if (update_helper) return screentrans::run_update_helper();
+        update_helper = minitrans::is_update_helper_request();
+        if (update_helper) return minitrans::run_update_helper();
         if (self_test) {
-            screentrans::util_self_test();
-            screentrans::updater_self_test();
-            screentrans::result_renderer_self_test();
+            minitrans::util_self_test();
+            minitrans::updater_self_test();
+            minitrans::result_renderer_self_test();
         }
-        screentrans::UniqueHandle mutex;
+        minitrans::UniqueHandle mutex;
         if (!self_test && !update_self_test) {
             wait_for_restart_parent();
             SetLastError(ERROR_SUCCESS);
@@ -123,7 +123,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
             const DWORD mutex_error = GetLastError();
             mutex.reset(mutex_handle);
             if (!mutex && mutex_error != ERROR_ACCESS_DENIED) {
-                screentrans::throw_last_error("create mutex", mutex_error);
+                minitrans::throw_last_error("create mutex", mutex_error);
             }
             if (!mutex || mutex_error == ERROR_ALREADY_EXISTS) {
                 signal_existing_instance(text_translation);
@@ -132,7 +132,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
         }
         int result = EXIT_FAILURE;
         {
-            screentrans::WinrtApartment apartment(winrt::apartment_type::single_threaded);
+            minitrans::WinrtApartment apartment(winrt::apartment_type::single_threaded);
             {
                 std::filesystem::path config_path;
                 if (self_test || update_self_test) {
@@ -142,13 +142,13 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
                     config_path /= L"MiniTranslator-self-test";
                     std::filesystem::create_directories(config_path, error);
                     if (error) {
-                        throw screentrans::AppError(
+                        throw minitrans::AppError(
                             "cannot create isolated self-test data directory");
                     }
                     config_path /= L"config.json";
                     std::filesystem::remove(config_path, error);
                 }
-                screentrans::AppHost app(instance, std::move(config_path));
+                minitrans::AppHost app(instance, std::move(config_path));
                 result = app.run(self_test, update_self_test, text_translation);
             }
         }
@@ -160,9 +160,9 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
         }
         const auto message = std::wstring(update_helper ? L"无法启动更新安装程序。\n\n"
                                                          : L"MiniTranslator 无法启动。\n\n") +
-                             screentrans::utf8_to_wide(error.what());
+                             minitrans::utf8_to_wide(error.what());
         MessageBoxW(nullptr, message.c_str(),
-                    update_helper ? L"MiniTranslator 更新" : SCREENTRANS_DISPLAY_NAME,
+                    update_helper ? L"MiniTranslator 更新" : MINITRANS_DISPLAY_NAME,
                     MB_OK | MB_ICONERROR);
         return EXIT_FAILURE;
     } catch (...) {
@@ -171,7 +171,7 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
             return EXIT_FAILURE;
         }
         MessageBoxW(nullptr, L"MiniTranslator 遇到未知启动错误。",
-                    SCREENTRANS_DISPLAY_NAME, MB_OK | MB_ICONERROR);
+                    MINITRANS_DISPLAY_NAME, MB_OK | MB_ICONERROR);
         return EXIT_FAILURE;
     }
 }

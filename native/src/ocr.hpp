@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 class OcrError : public std::runtime_error {
 public:
@@ -20,4 +20,4 @@ std::vector<OcrLine> recognize_windows_ocr(
     bool upscale,
     std::stop_token stop = {});
 
-}  // namespace screentrans
+}  // namespace minitrans

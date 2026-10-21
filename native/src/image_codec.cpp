@@ -7,7 +7,7 @@
 
 #include <cstring>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -124,4 +124,4 @@ PixelBuffer resize_bgra(const PixelBuffer& image, int width, int height) {
     return result;
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

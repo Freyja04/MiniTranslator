@@ -20,7 +20,7 @@
 #include <thread>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 class BlockEditor;
 
@@ -129,4 +129,4 @@ private:
     bool text_translation_on_start_{};
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

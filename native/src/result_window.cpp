@@ -16,7 +16,7 @@
 #include <cmath>
 #include <utility>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -344,7 +344,7 @@ void ResultWindow::create_window() {
         throw_last_error("register result window");
     }
     window_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
-                              class_name, SCREENTRANS_DISPLAY_NAME,
+                              class_name, MINITRANS_DISPLAY_NAME,
                               WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                               0, 0, 1, 1, nullptr, nullptr, instance_, this);
     if (!window_) throw_last_error("create result window");
@@ -1685,4 +1685,4 @@ LRESULT ResultWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
     return DefWindowProcW(window_, message, wparam, lparam);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 struct RectF {
     float x{};
@@ -98,4 +98,4 @@ struct BlockTranslation {
     std::wstring target_language;
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

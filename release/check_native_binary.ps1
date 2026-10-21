@@ -76,7 +76,7 @@ if ($adjacentDlls.Count -ne 0) {
 if (-not $SkipDependencyCheck) {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path -LiteralPath $vswhere)) {
-        throw 'Visual Studio Installer (vswhere.exe) was not found for dependency inspection'
+        throw 'Visual Studio Installer (vswhere.exe) was not found for dependency inspection. Add -SkipDependencyCheck for local validation without Visual Studio.'
     }
     $visualStudioPath = & $vswhere -latest -products '*' `
         -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `

@@ -39,7 +39,7 @@ def source_versions() -> dict[str, str]:
     resource_parts: list[str] = []
     for name in ("MAJOR", "MINOR", "PATCH", "BUILD"):
         matches = re.findall(
-            rf"^#define SCREENTRANS_VERSION_{name}\s+([0-9]+)\s*$",
+            rf"^#define MINITRANS_VERSION_{name}\s+([0-9]+)\s*$",
             resource,
             flags=re.MULTILINE,
         )
@@ -70,10 +70,10 @@ def validate(expected: str) -> dict[str, str]:
 
     cmake = _read("native/CMakeLists.txt")
     version_header = _read("native/src/version.hpp")
-    if r'SCREENTRANS_VERSION_WIDE=L\"${PROJECT_VERSION}\"' not in cmake:
+    if r'MINITRANS_VERSION_WIDE=L\"${PROJECT_VERSION}\"' not in cmake:
         raise VersionError("native runtime version is not derived from CMake PROJECT_VERSION")
-    if "native_version = SCREENTRANS_VERSION_WIDE" not in version_header:
-        raise VersionError("native version.hpp is not derived from SCREENTRANS_VERSION_WIDE")
+    if "native_version = MINITRANS_VERSION_WIDE" not in version_header:
+        raise VersionError("native version.hpp is not derived from MINITRANS_VERSION_WIDE")
 
     versions = source_versions()
     expected_by_source = {

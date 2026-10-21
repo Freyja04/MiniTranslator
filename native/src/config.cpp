@@ -13,17 +13,17 @@
 #include <limits>
 #include <string_view>
 
-#ifndef SCREENTRANS_UPDATE_MANIFEST_URL
-#define SCREENTRANS_UPDATE_MANIFEST_URL L""
+#ifndef MINITRANS_UPDATE_MANIFEST_URL
+#define MINITRANS_UPDATE_MANIFEST_URL L""
 #endif
-#ifndef SCREENTRANS_UPDATE_REPOSITORY_URL
-#define SCREENTRANS_UPDATE_REPOSITORY_URL L""
+#ifndef MINITRANS_UPDATE_REPOSITORY_URL
+#define MINITRANS_UPDATE_REPOSITORY_URL L""
 #endif
-#ifndef SCREENTRANS_UPDATE_CHANNEL
-#define SCREENTRANS_UPDATE_CHANNEL L"stable"
+#ifndef MINITRANS_UPDATE_CHANNEL
+#define MINITRANS_UPDATE_CHANNEL L"stable"
 #endif
 
-namespace screentrans {
+namespace minitrans {
 
 using namespace winrt::Windows::Data::Json;
 
@@ -186,9 +186,9 @@ JsonObject ConfigStore::defaults() {
       "autostart":false
     })json");
     auto updates = result.GetNamedObject(L"updates");
-    updates.SetNamedValue(L"manifest_url", JsonValue::CreateStringValue(SCREENTRANS_UPDATE_MANIFEST_URL));
-    updates.SetNamedValue(L"repository_url", JsonValue::CreateStringValue(SCREENTRANS_UPDATE_REPOSITORY_URL));
-    updates.SetNamedValue(L"channel", JsonValue::CreateStringValue(SCREENTRANS_UPDATE_CHANNEL));
+    updates.SetNamedValue(L"manifest_url", JsonValue::CreateStringValue(MINITRANS_UPDATE_MANIFEST_URL));
+    updates.SetNamedValue(L"repository_url", JsonValue::CreateStringValue(MINITRANS_UPDATE_REPOSITORY_URL));
+    updates.SetNamedValue(L"channel", JsonValue::CreateStringValue(MINITRANS_UPDATE_CHANNEL));
     return result;
 }
 
@@ -410,4 +410,4 @@ void ConfigStore::set_json(std::wstring_view path, const IJsonValue& value) {
     parent_for(path, leaf).SetNamedValue(leaf, value);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

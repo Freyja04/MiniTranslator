@@ -4,7 +4,7 @@
 #include <uxtheme.h>
 
 #include <algorithm>
-namespace screentrans::theme {
+namespace minitrans::theme {
 
 namespace {
 
@@ -212,4 +212,4 @@ void apply_control_theme(HWND control) noexcept {
     if (control) SetWindowTheme(control, dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
 }
 
-}  // namespace screentrans::theme
+}  // namespace minitrans::theme

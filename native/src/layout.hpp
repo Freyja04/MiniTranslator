@@ -4,8 +4,8 @@
 
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 std::vector<TextBlock> group_lines(std::vector<OcrLine> lines, float pitch_ratio = 1.9F);
 
-}  // namespace screentrans
+}  // namespace minitrans

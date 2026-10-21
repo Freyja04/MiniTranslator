@@ -20,7 +20,7 @@
 #include <string_view>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 class AppError : public std::runtime_error {
 public:
@@ -97,4 +97,4 @@ bool constant_time_equal(std::span<const std::uint8_t> left,
                          std::span<const std::uint8_t> right) noexcept;
 void util_self_test();
 
-}  // namespace screentrans
+}  // namespace minitrans

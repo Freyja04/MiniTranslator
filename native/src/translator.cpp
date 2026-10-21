@@ -12,7 +12,7 @@
 #include <functional>
 #include <set>
 
-namespace screentrans {
+namespace minitrans {
 
 using namespace winrt::Windows::Data::Json;
 
@@ -816,4 +816,4 @@ std::vector<std::wstring> TranslatorService::list_models(
     }
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

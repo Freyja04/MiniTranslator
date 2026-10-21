@@ -8,7 +8,7 @@
 #include <limits>
 #include <sstream>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -441,4 +441,4 @@ std::vector<std::uint8_t> form_body(
     return utf8_body(value);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

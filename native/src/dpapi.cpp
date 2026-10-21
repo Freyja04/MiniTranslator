@@ -7,7 +7,7 @@
 #include <span>
 #include <vector>
 
-namespace screentrans::dpapi {
+namespace minitrans::dpapi {
 
 namespace {
 
@@ -58,4 +58,4 @@ std::string decrypt(std::string_view protected_value) {
     }
 }
 
-}  // namespace screentrans::dpapi
+}  // namespace minitrans::dpapi

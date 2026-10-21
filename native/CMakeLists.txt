@@ -2,13 +2,13 @@ cmake_minimum_required(VERSION 3.25)
 
 project(MiniTranslatorNative VERSION 1.2.6 LANGUAGES CXX RC)
 
-set(SCREENTRANS_UPDATE_REPOSITORY_URL
-    "https://github.com/Freyja04/ScreenTranslate"
+set(MINITRANS_UPDATE_REPOSITORY_URL
+    "https://github.com/Freyja04/MiniTranslator"
     CACHE STRING "Immutable GitHub repository trusted by the native updater")
-set(SCREENTRANS_UPDATE_MANIFEST_URL
-    "https://github.com/Freyja04/ScreenTranslate/releases/latest/download/update-manifest.json"
+set(MINITRANS_UPDATE_MANIFEST_URL
+    "https://github.com/Freyja04/MiniTranslator/releases/latest/download/update-manifest.json"
     CACHE STRING "Immutable GitHub Release manifest URL trusted by the native updater")
-set(SCREENTRANS_UPDATE_CHANNEL "stable" CACHE STRING "Native update channel")
+set(MINITRANS_UPDATE_CHANNEL "stable" CACHE STRING "Native update channel")
 
 if(NOT WIN32)
     message(FATAL_ERROR "The native MiniTranslator client only supports Windows.")
@@ -92,10 +92,10 @@ target_compile_definitions(MiniTranslator PRIVATE
     STRICT
     WINVER=0x0A00
     _WIN32_WINNT=0x0A00
-    "SCREENTRANS_VERSION_WIDE=L\"${PROJECT_VERSION}\""
-    "SCREENTRANS_UPDATE_REPOSITORY_URL=L\"${SCREENTRANS_UPDATE_REPOSITORY_URL}\""
-    "SCREENTRANS_UPDATE_MANIFEST_URL=L\"${SCREENTRANS_UPDATE_MANIFEST_URL}\""
-    "SCREENTRANS_UPDATE_CHANNEL=L\"${SCREENTRANS_UPDATE_CHANNEL}\""
+    "MINITRANS_VERSION_WIDE=L\"${PROJECT_VERSION}\""
+    "MINITRANS_UPDATE_REPOSITORY_URL=L\"${MINITRANS_UPDATE_REPOSITORY_URL}\""
+    "MINITRANS_UPDATE_MANIFEST_URL=L\"${MINITRANS_UPDATE_MANIFEST_URL}\""
+    "MINITRANS_UPDATE_CHANNEL=L\"${MINITRANS_UPDATE_CHANNEL}\""
 )
 
 target_include_directories(MiniTranslator PRIVATE

@@ -4,7 +4,7 @@
 #include <array>
 #include <cwctype>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -179,4 +179,4 @@ bool matches_target(std::wstring_view text, std::wstring_view target) {
     return true;
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

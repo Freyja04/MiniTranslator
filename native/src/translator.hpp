@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 class TranslateError : public AppError {
 public:
@@ -54,4 +54,4 @@ private:
     HttpClient http_;
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

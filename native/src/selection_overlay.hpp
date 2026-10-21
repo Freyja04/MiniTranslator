@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 class SelectionOverlay {
 public:
@@ -53,4 +53,4 @@ private:
     CancelledCallback cancelled_;
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

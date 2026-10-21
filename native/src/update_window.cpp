@@ -18,7 +18,7 @@
 #include <memory>
 #include <mutex>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -171,7 +171,7 @@ public:
         accent_ = theme::accent;
         prompt_ = std::wstring(
                       L"安装包已通过大小和 SHA-256 校验。\r\n\r\n") +
-                  SCREENTRANS_DISPLAY_NAME + L" 将退出并启动 " +
+                  MINITRANS_DISPLAY_NAME + L" 将退出并启动 " +
                   std::move(version) +
                   L" 安装程序。\r\n"
                   L"由于安装包未使用代码签名，Windows 可能显示“未知发布者”。\r\n\r\n"
@@ -773,7 +773,7 @@ void UpdateWindow::create_window(HWND owner) {
     window_error_.clear();
     auto dispatch = std::make_shared<WorkerDispatch>();
     const std::wstring window_title =
-        std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 检查更新";
+        std::wstring(MINITRANS_DISPLAY_NAME) + L" · 检查更新";
     window_ = CreateWindowExW(
         ex_style, class_name, window_title.c_str(), style,
         x, y, width, height, owner, nullptr, instance_, this);
@@ -1045,7 +1045,7 @@ void UpdateWindow::paint() {
     }
 
     const int heading_left = mark.right + px(12, dpi_);
-    draw_text(dc, SCREENTRANS_DISPLAY_NAME,
+    draw_text(dc, MINITRANS_DISPLAY_NAME,
               RECT{heading_left, px(17, dpi_), client.right - margin, px(42, dpi_)},
               title_font_, color_text,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -1717,4 +1717,4 @@ LRESULT UpdateWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam)
     return DefWindowProcW(window_, message, wparam, lparam);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

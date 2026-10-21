@@ -19,7 +19,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 inline constexpr UINT pipeline_completed_message = WM_APP + 40;
 
@@ -116,4 +116,4 @@ private:
     TranslatorService translators_;
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

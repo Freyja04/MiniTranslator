@@ -18,7 +18,7 @@
 #include <cstdlib>
 #include <stdexcept>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -652,7 +652,7 @@ void TextTranslateWindow::create_window(HWND owner) {
     if (window_) return;
     register_window_class(instance_, full_window_class, &TextTranslateWindow::window_proc);
     window_ = CreateWindowExW(
-        WS_EX_APPWINDOW, full_window_class, SCREENTRANS_DISPLAY_NAME,
+        WS_EX_APPWINDOW, full_window_class, MINITRANS_DISPLAY_NAME,
         WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
         CW_USEDEFAULT, CW_USEDEFAULT, 920, 600, nullptr, nullptr, instance_, this);
     if (!window_) throw_last_error("create text translation window");
@@ -1102,7 +1102,7 @@ void QuickTranslateWindow::create_window(HWND owner) {
     if (window_) return;
     register_window_class(instance_, quick_window_class, &QuickTranslateWindow::window_proc);
     window_ = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, quick_window_class, SCREENTRANS_DISPLAY_NAME,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, quick_window_class, MINITRANS_DISPLAY_NAME,
         WS_POPUP | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
         quick_window_logical_width, quick_window_logical_height,
         owner, nullptr, instance_, this);
@@ -1747,4 +1747,4 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
     return DefWindowProcW(window_, message, wparam, lparam);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

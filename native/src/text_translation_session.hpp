@@ -10,7 +10,7 @@
 #include <string>
 #include <string_view>
 
-namespace screentrans {
+namespace minitrans {
 
 enum class TextTranslationState {
     idle,
@@ -82,4 +82,4 @@ private:
 
 const std::array<std::wstring_view, 9>& text_translation_targets() noexcept;
 
-}  // namespace screentrans
+}  // namespace minitrans

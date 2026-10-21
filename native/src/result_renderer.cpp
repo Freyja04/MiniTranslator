@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -844,4 +844,4 @@ void result_renderer_self_test() {
     }
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

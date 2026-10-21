@@ -12,7 +12,7 @@
 #include <iterator>
 #include <sstream>
 
-namespace screentrans {
+namespace minitrans {
 
 [[noreturn]] void throw_last_error(std::string_view operation, DWORD code) {
     LPWSTR raw = nullptr;
@@ -305,4 +305,4 @@ void util_self_test() {
     }
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

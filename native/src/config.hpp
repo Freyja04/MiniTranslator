@@ -14,7 +14,7 @@
 #include <string_view>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 class ConfigStore {
 public:
@@ -56,4 +56,4 @@ private:
     winrt::Windows::Data::Json::JsonObject root_{nullptr};
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

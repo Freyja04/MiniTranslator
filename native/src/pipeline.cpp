@@ -11,7 +11,7 @@
 #include <array>
 #include <iterator>
 
-namespace screentrans {
+namespace minitrans {
 
 using winrt::Windows::Data::Json::JsonObject;
 using winrt::Windows::Data::Json::JsonArray;
@@ -506,4 +506,4 @@ void PipelineController::worker_failed() noexcept {
     if (notify) PostMessageW(dispatcher_, pipeline_completed_message, 0, 0);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

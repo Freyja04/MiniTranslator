@@ -26,7 +26,7 @@
 #include <filesystem>
 #include <memory>
 
-namespace screentrans {
+namespace minitrans {
 
 using winrt::Windows::Data::Json::JsonArray;
 using winrt::Windows::Data::Json::JsonObject;
@@ -1251,7 +1251,7 @@ void SettingsWindow::create_window(HWND owner) {
     const int y = owner_rect.top + std::max(0L, (owner_rect.bottom - owner_rect.top - height) / 2);
     window_error_.clear();
     window_ = CreateWindowExW(
-        extended_style, class_name, SCREENTRANS_DISPLAY_NAME,
+        extended_style, class_name, MINITRANS_DISPLAY_NAME,
         style,
         x, y, width, height, nullptr, nullptr, instance_, this);
     if (!window_) {
@@ -3849,4 +3849,4 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
     return DefWindowProcW(window_, message, wparam, lparam);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

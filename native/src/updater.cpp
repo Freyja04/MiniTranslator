@@ -21,7 +21,7 @@
 #include <sstream>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 using namespace winrt::Windows::Data::Json;
 
@@ -124,11 +124,6 @@ struct Repository {
     std::wstring owner;
     std::wstring name;
     [[nodiscard]] std::wstring url() const { return L"https://github.com/" + owner + L"/" + name; }
-};
-
-class LegacyManifest final : public UpdateError {
-public:
-    LegacyManifest() : UpdateError("legacy ScreenTranslate update manifest") {}
 };
 
 Repository parse_repository(std::wstring_view input) {
@@ -328,7 +323,6 @@ UpdateInfo parse_manifest(std::string_view payload, const Repository& repository
         throw UpdateError("unsupported update manifest");
     }
     const auto product = root.GetNamedString(L"product", L"");
-    if (product == L"ScreenTranslate") throw LegacyManifest();
     if (product != L"MiniTranslator") throw UpdateError("unsupported update manifest");
     UpdateInfo info;
     info.version = required_string(root, L"version");
@@ -636,12 +630,7 @@ std::optional<UpdateInfo> check_for_update(
     if (channel != L"stable" && channel != L"preview") throw UpdateError("update channel is invalid");
     HttpClient client;
     const auto response = github_get(client, std::wstring(manifest_url), manifest_limit, stop);
-    UpdateInfo info;
-    try {
-        info = parse_manifest(response.utf8(), repository);
-    } catch (const LegacyManifest&) {
-        return std::nullopt;
-    }
+    UpdateInfo info = parse_manifest(response.utf8(), repository);
     if (channel == L"stable" && info.channel != L"stable") return std::nullopt;
     return compare_semver(parse_semver(info.version), parse_semver(native_version)) > 0
         ? std::optional<UpdateInfo>(std::move(info)) : std::nullopt;
@@ -799,18 +788,18 @@ void updater_self_test() {
     try { (void)parse_semver(L"1.2.3-"); } catch (const UpdateError&) { rejected = true; }
     if (!rejected) throw UpdateError("invalid SemVer was accepted");
 
-    const Repository repository{L"Freyja04", L"ScreenTranslate"};
+    const Repository repository{L"Freyja04", L"MiniTranslator"};
     constexpr std::string_view manifest = R"json({
       "schema_version":2,
       "product":"MiniTranslator",
       "version":"1.0.3",
       "channel":"stable",
       "published_at":"2026-07-29T12:00:00Z",
-      "release_url":"https://github.com/Freyja04/ScreenTranslate/releases/tag/v1.0.3",
+      "release_url":"https://github.com/Freyja04/MiniTranslator/releases/tag/v1.0.3",
       "platform":{"os":"windows","arch":"x86_64","minimum":"10"},
       "artifact":{
         "name":"MiniTranslator-1.0.3-setup-x64.exe",
-        "url":"https://github.com/Freyja04/ScreenTranslate/releases/download/v1.0.3/MiniTranslator-1.0.3-setup-x64.exe",
+        "url":"https://github.com/Freyja04/MiniTranslator/releases/download/v1.0.3/MiniTranslator-1.0.3-setup-x64.exe",
         "size":123456,
         "sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       }
@@ -820,19 +809,19 @@ void updater_self_test() {
     if (parsed.version != L"1.0.3" || parsed.artifact.size != 123456) {
         throw UpdateError("manifest self-test failed");
     }
-    bool legacy_ignored = false;
-    constexpr std::string_view legacy_manifest = R"json({
+    bool wrong_product_rejected = false;
+    constexpr std::string_view wrong_product_manifest = R"json({
       "schema_version":2,
-      "product":"ScreenTranslate"
+      "product":"OtherApp"
     })json";
     try {
-        (void)parse_manifest(legacy_manifest, repository);
-    } catch (const LegacyManifest&) {
-        legacy_ignored = true;
+        (void)parse_manifest(wrong_product_manifest, repository);
+    } catch (const UpdateError&) {
+        wrong_product_rejected = true;
     }
-    if (!legacy_ignored) {
-        throw UpdateError("legacy manifest was not recognized");
+    if (!wrong_product_rejected) {
+        throw UpdateError("wrong product manifest was accepted");
     }
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

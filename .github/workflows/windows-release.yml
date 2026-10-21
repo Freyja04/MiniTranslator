@@ -28,7 +28,7 @@ jobs:
         shell: pwsh
         run: |
           $cmake = Get-Content -LiteralPath native/CMakeLists.txt -Raw
-          $pin = [regex]::Match($cmake, 'SCREENTRANS_UPDATE_REPOSITORY_URL\s+"https://github\.com/([^"/]+)/([^"/]+)"')
+          $pin = [regex]::Match($cmake, 'MINITRANS_UPDATE_REPOSITORY_URL\s+"https://github\.com/([^"/]+)/([^"/]+)"')
           if (-not $pin.Success) {
             throw "Could not read the updater trust root from native/CMakeLists.txt"
           }
@@ -52,8 +52,7 @@ jobs:
       - name: Build native release
         shell: pwsh
         run: >-
-          powershell.exe -NoProfile -ExecutionPolicy Bypass
-          -File .\scripts\build-native.ps1
+          .\scripts\build-native.ps1
           -Configuration Release
           -Architecture x64
           -UpdateChannel $env:RELEASE_CHANNEL
@@ -61,8 +60,7 @@ jobs:
       - name: Validate native release binary
         shell: pwsh
         run: >-
-          powershell.exe -NoProfile -ExecutionPolicy Bypass
-          -File .\release\check_native_binary.ps1
+          .\release\check_native_binary.ps1
           -Path .\build\native\Release\MiniTranslator.exe
           -ExpectedVersion $env:RELEASE_VERSION
       - name: Install locked Inno Setup compiler

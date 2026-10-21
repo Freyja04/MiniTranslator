@@ -10,7 +10,7 @@
 #include <numeric>
 #include <optional>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -365,4 +365,4 @@ std::vector<TextBlock> group_lines(std::vector<OcrLine> lines, float pitch_ratio
     return blocks;
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

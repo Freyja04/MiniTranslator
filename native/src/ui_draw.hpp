@@ -4,7 +4,7 @@
 
 #include <string_view>
 
-namespace screentrans::ui_draw {
+namespace minitrans::ui_draw {
 
 // Draws single-shot UI text without leaking the caller's font or text color.
 inline void draw_text(HDC dc, std::wstring_view text, RECT rect, HFONT font,
@@ -33,4 +33,4 @@ inline void set_font(HWND control, HFONT font) {
     }
 }
 
-}  // namespace screentrans::ui_draw
+}  // namespace minitrans::ui_draw

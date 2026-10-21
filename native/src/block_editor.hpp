@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 class BlockEditor {
 public:
@@ -169,4 +169,4 @@ private:
     bool list_mouse_tracking_{};
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

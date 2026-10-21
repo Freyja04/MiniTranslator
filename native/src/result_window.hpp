@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 struct ResultAppearance {
     std::wstring font_family{L"Segoe UI"};
@@ -136,4 +136,4 @@ private:
     std::function<void(const RECT&)> recapture_callback_;
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 struct PreparedTextLayer {
     std::size_t block_index{};
@@ -37,4 +37,4 @@ PreparedResultRender prepare_result_render(
 
 void result_renderer_self_test();
 
-}  // namespace screentrans
+}  // namespace minitrans

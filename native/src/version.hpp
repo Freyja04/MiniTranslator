@@ -2,12 +2,12 @@
 
 #include <string_view>
 
-#ifndef SCREENTRANS_VERSION_WIDE
-#define SCREENTRANS_VERSION_WIDE L"0.0.0"
+#ifndef MINITRANS_VERSION_WIDE
+#define MINITRANS_VERSION_WIDE L"0.0.0"
 #endif
 
-namespace screentrans {
+namespace minitrans {
 
-inline constexpr std::wstring_view native_version = SCREENTRANS_VERSION_WIDE;
+inline constexpr std::wstring_view native_version = MINITRANS_VERSION_WIDE;
 
-}  // namespace screentrans
+}  // namespace minitrans

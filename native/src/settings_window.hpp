@@ -13,7 +13,7 @@
 #include <thread>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 class SettingsWindow {
 public:
@@ -211,4 +211,4 @@ private:
     std::function<void()> updates_callback_;
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

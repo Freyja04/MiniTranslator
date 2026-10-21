@@ -18,7 +18,7 @@
 #include <cwctype>
 #include <string_view>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -1452,4 +1452,4 @@ LRESULT BlockEditor::handle_message(UINT message, WPARAM wparam, LPARAM lparam) 
     return DefWindowProcW(window_, message, wparam, lparam);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

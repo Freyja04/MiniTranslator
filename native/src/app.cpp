@@ -19,7 +19,7 @@
 #include <filesystem>
 #include <vector>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -503,7 +503,7 @@ void AppHost::create_message_window() {
     if (!RegisterClassExW(&description) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         throw_last_error("register application window");
     }
-    window_ = CreateWindowExW(0, window_class_name(), SCREENTRANS_DISPLAY_NAME, 0,
+    window_ = CreateWindowExW(0, window_class_name(), MINITRANS_DISPLAY_NAME, 0,
                               0, 0, 0, 0, nullptr, nullptr, instance_, this);
     if (!window_) throw_last_error("create application window");
     taskbar_created_message_ = RegisterWindowMessageW(L"TaskbarCreated");
@@ -528,7 +528,7 @@ void AppHost::add_tray_icon() {
     const auto capture = config_.string(L"hotkey", L"Ctrl+Alt+Q");
     const auto toggle = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
     const auto text = config_.string(L"hotkey_text_translate", L"Ctrl+Alt+Space");
-    const auto tip = std::wstring(SCREENTRANS_DISPLAY_NAME) +
+    const auto tip = std::wstring(MINITRANS_DISPLAY_NAME) +
                      L"\n截图翻译：" + capture + L"\n快速翻译：" + text +
                      L"\n收起 / 显示：" + toggle;
     wcsncpy_s(tray.szTip, tip.c_str(), _TRUNCATE);
@@ -574,7 +574,7 @@ void AppHost::refresh_tray_tooltip() {
     const auto capture = config_.string(L"hotkey", L"Ctrl+Alt+Q");
     const auto toggle = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
     const auto text = config_.string(L"hotkey_text_translate", L"Ctrl+Alt+Space");
-    const auto tip = std::wstring(SCREENTRANS_DISPLAY_NAME) +
+    const auto tip = std::wstring(MINITRANS_DISPLAY_NAME) +
                      L"\n截图翻译：" + capture + L"\n快速翻译：" + text +
                      L"\n收起 / 显示：" + toggle;
     tray_.uFlags = NIF_TIP;
@@ -705,21 +705,21 @@ bool AppHost::apply_hotkeys(bool announce_changes) {
         window_, hotkey_capture, capture_spec, &error);
     if (!capture_registered) {
         success = false;
-        notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 截图翻译快捷键未生效", error);
+        notify(std::wstring(MINITRANS_DISPLAY_NAME) + L" · 截图翻译快捷键未生效", error);
     }
     error.clear();
     const bool toggle_registered = register_hotkey(
         window_, hotkey_toggle, toggle_spec, &error);
     if (!toggle_registered) {
         success = false;
-        notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 收起 / 显示快捷键未生效", error);
+        notify(std::wstring(MINITRANS_DISPLAY_NAME) + L" · 收起 / 显示快捷键未生效", error);
     }
     error.clear();
     const bool text_registered = register_hotkey(
         window_, hotkey_text_translate, text_spec, &error);
     if (!text_registered) {
         success = false;
-        notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 快速翻译快捷键未生效", error);
+        notify(std::wstring(MINITRANS_DISPLAY_NAME) + L" · 快速翻译快捷键未生效", error);
     }
     if (!success) {
         unregister_all();
@@ -733,7 +733,7 @@ bool AppHost::apply_hotkeys(bool announce_changes) {
         restore(hotkey_toggle, registered_toggle_hotkey_);
         restore(hotkey_text_translate, registered_text_hotkey_);
         if (!restored) {
-            notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 快捷键恢复失败",
+            notify(std::wstring(MINITRANS_DISPLAY_NAME) + L" · 快捷键恢复失败",
                    L"原快捷键也被其他程序占用，请在设置中重新选择");
         }
         return false;
@@ -747,13 +747,13 @@ bool AppHost::apply_hotkeys(bool announce_changes) {
         registered_text_hotkey_ = text_spec;
         refresh_tray_tooltip();
         if (announce_changes && !old_capture.empty() && old_capture != capture_spec) {
-            notify(SCREENTRANS_DISPLAY_NAME, L"截图翻译快捷键已改为 " + capture_spec);
+            notify(MINITRANS_DISPLAY_NAME, L"截图翻译快捷键已改为 " + capture_spec);
         }
         if (announce_changes && !old_toggle.empty() && old_toggle != toggle_spec) {
-            notify(SCREENTRANS_DISPLAY_NAME, L"收起 / 显示快捷键已改为 " + toggle_spec);
+            notify(MINITRANS_DISPLAY_NAME, L"收起 / 显示快捷键已改为 " + toggle_spec);
         }
         if (announce_changes && !old_text.empty() && old_text != text_spec) {
-            notify(SCREENTRANS_DISPLAY_NAME, L"快速翻译快捷键已改为 " + text_spec);
+            notify(MINITRANS_DISPLAY_NAME, L"快速翻译快捷键已改为 " + text_spec);
         }
     }
     return true;
@@ -783,14 +783,14 @@ void AppHost::begin_capture_now() {
                 try {
                     on_selected(rect, std::move(image));
                 } catch (const std::exception& error) {
-                    notify(SCREENTRANS_DISPLAY_NAME, L"无法创建译文窗口：" + utf8_to_wide(error.what()));
+                    notify(MINITRANS_DISPLAY_NAME, L"无法创建译文窗口：" + utf8_to_wide(error.what()));
                 } catch (...) {
-                    notify(SCREENTRANS_DISPLAY_NAME, L"无法创建译文窗口：未知错误");
+                    notify(MINITRANS_DISPLAY_NAME, L"无法创建译文窗口：未知错误");
                 }
             },
             [] {});
     } catch (const std::exception& error) {
-        notify(SCREENTRANS_DISPLAY_NAME, L"无法截取屏幕：" + utf8_to_wide(error.what()));
+        notify(MINITRANS_DISPLAY_NAME, L"无法截取屏幕：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -848,7 +848,7 @@ void AppHost::open_text_translation() {
     try {
         settings_.show_text_translation(window_);
     } catch (const std::exception& error) {
-        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开文字翻译：" + utf8_to_wide(error.what()));
+        notify(MINITRANS_DISPLAY_NAME, L"无法打开文字翻译：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -857,7 +857,7 @@ void AppHost::toggle_quick_translation() {
     try {
         quick_window_->toggle_near(window_, quick_translation_anchor(window_), true);
     } catch (const std::exception& error) {
-        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开快速翻译：" + utf8_to_wide(error.what()));
+        notify(MINITRANS_DISPLAY_NAME, L"无法打开快速翻译：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -896,12 +896,12 @@ void AppHost::toggle_result() {
     if (result_.visible()) {
         result_.minimize();
         const auto key = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
-        notify(SCREENTRANS_DISPLAY_NAME,
+        notify(MINITRANS_DISPLAY_NAME,
                L"译文已收起，按 " + key + L" 或从托盘菜单「显示上次译文」叫回来");
     } else if (last_image_) {
         result_.restore();
     } else {
-        notify(SCREENTRANS_DISPLAY_NAME, L"现在没有译文可以显示");
+        notify(MINITRANS_DISPLAY_NAME, L"现在没有译文可以显示");
     }
 }
 
@@ -933,7 +933,7 @@ void AppHost::retry_translation() {
 void AppHost::open_block_editor() {
     if (!last_result_ || last_result_->blocks.empty() || !result_.handle()) return;
     if (block_translation_request_) {
-        notify(SCREENTRANS_DISPLAY_NAME, L"文本块仍在重译，请稍后再打开校对窗口");
+        notify(MINITRANS_DISPLAY_NAME, L"文本块仍在重译，请稍后再打开校对窗口");
         return;
     }
     result_.set_editing(true);
@@ -968,7 +968,7 @@ void AppHost::open_block_editor() {
         }
     } catch (const std::exception& error) {
         result_.set_editing(false);
-        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开校对窗口：" + utf8_to_wide(error.what()));
+        notify(MINITRANS_DISPLAY_NAME, L"无法打开校对窗口：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1018,7 +1018,7 @@ bool AppHost::schedule_block_translations(std::vector<std::size_t> indices,
         if (editor) {
             for (const auto index : indices) editor->set_error(index, message);
         } else {
-            notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 单块重译失败", message);
+            notify(std::wstring(MINITRANS_DISPLAY_NAME) + L" · 单块重译失败", message);
         }
         return false;
     }
@@ -1050,7 +1050,7 @@ void AppHost::process_block_translation(PipelineCompletion completion) {
             }
         } else {
             result_.set_editing(false);
-            notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 单块重译失败", message);
+            notify(std::wstring(MINITRANS_DISPLAY_NAME) + L" · 单块重译失败", message);
         }
     };
 
@@ -1134,7 +1134,7 @@ void AppHost::open_settings() {
         settings_.show(window_);
         refresh_tray_tooltip();
     } catch (const std::exception& error) {
-        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开设置：" + utf8_to_wide(error.what()));
+        notify(MINITRANS_DISPLAY_NAME, L"无法打开设置：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1142,7 +1142,7 @@ void AppHost::open_translation_settings() {
     try {
         settings_.show_translation(window_);
     } catch (const std::exception& error) {
-        notify(SCREENTRANS_DISPLAY_NAME, L"无法打开翻译设置：" + utf8_to_wide(error.what()));
+        notify(MINITRANS_DISPLAY_NAME, L"无法打开翻译设置：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1150,7 +1150,7 @@ void AppHost::open_updates() {
     try {
         updates_.show(window_);
     } catch (const std::exception& error) {
-        notify(SCREENTRANS_DISPLAY_NAME, L"无法检查更新：" + utf8_to_wide(error.what()));
+        notify(MINITRANS_DISPLAY_NAME, L"无法检查更新：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1163,7 +1163,7 @@ void AppHost::start_silent_update_check() {
     if (update_self_test_mode_) {
         // Exercise the complete worker/message/shutdown path without making a
         // smoke test depend on GitHub or the machine's proxy configuration.
-        manifest = L"https://github.com/screentrans-self-test/invalid/"
+        manifest = L"https://github.com/minitrans-self-test/invalid/"
                    L"releases/latest/download/update-manifest.json";
     }
     const HWND dispatcher = window_;
@@ -1197,8 +1197,8 @@ std::optional<UpdateInfo> AppHost::process_silent_update_check() {
 }
 
 void AppHost::handle_update_available(const UpdateInfo& update) {
-    notify(std::wstring(SCREENTRANS_DISPLAY_NAME) + L" · 有新版本",
-           std::wstring(SCREENTRANS_DISPLAY_NAME) + L" " + update.version +
+    notify(std::wstring(MINITRANS_DISPLAY_NAME) + L" · 有新版本",
+           std::wstring(MINITRANS_DISPLAY_NAME) + L" " + update.version +
            L" 已发布，可从检查更新窗口直接下载并安装。");
 }
 
@@ -1218,7 +1218,7 @@ void AppHost::restart() {
         CloseHandle(process.hProcess);
         quit();
     } catch (const std::exception& error) {
-        notify(SCREENTRANS_DISPLAY_NAME, L"重启失败：" + utf8_to_wide(error.what()));
+        notify(MINITRANS_DISPLAY_NAME, L"重启失败：" + utf8_to_wide(error.what()));
     }
 }
 
@@ -1263,16 +1263,16 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             if (text_translation_on_start_) {
                 open_text_translation();
             } else {
-                notify(SCREENTRANS_DISPLAY_NAME,
+                notify(MINITRANS_DISPLAY_NAME,
                        L"已启动，左键打开快速翻译，右键菜单可进入设置；按 " +
                        config_.string(L"hotkey", L"Ctrl+Alt+Q") + L" 截图翻译");
             }
             SetTimer(window_, update_timer, 1500, nullptr);
         } catch (const std::exception& error) {
-            const auto message_text = std::wstring(SCREENTRANS_DISPLAY_NAME) +
+            const auto message_text = std::wstring(MINITRANS_DISPLAY_NAME) +
                                       L" 无法初始化通知区域图标。\n\n" +
                                       utf8_to_wide(error.what());
-            MessageBoxW(nullptr, message_text.c_str(), SCREENTRANS_DISPLAY_NAME,
+            MessageBoxW(nullptr, message_text.c_str(), MINITRANS_DISPLAY_NAME,
                         MB_OK | MB_ICONERROR);
             quit();
         }
@@ -1310,7 +1310,7 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
                     quick_window_->toggle_near(
                         nullptr, quick_translation_anchor(window_), false);
                 } catch (const std::exception& error) {
-                    notify(SCREENTRANS_DISPLAY_NAME,
+                    notify(MINITRANS_DISPLAY_NAME,
                            L"无法打开快速翻译：" + utf8_to_wide(error.what()));
                 }
             }
@@ -1427,4 +1427,4 @@ int AppHost::run(bool self_test, bool update_self_test,
     return static_cast<int>(message.wParam);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

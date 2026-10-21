@@ -4,7 +4,7 @@
 
 #include <windows.h>
 
-namespace screentrans {
+namespace minitrans {
 
 struct DesktopImage {
     RECT bounds{};
@@ -14,4 +14,4 @@ struct DesktopImage {
 PixelBuffer capture_rect(const RECT& physical_rect);
 DesktopImage capture_virtual_desktop();
 
-}  // namespace screentrans
+}  // namespace minitrans

@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-namespace screentrans {
+namespace minitrans {
 
 struct ScriptCounts {
     int han{};
@@ -22,4 +22,4 @@ std::wstring target_prompt_name(std::wstring_view code);
 bool matches_target(std::wstring_view text, std::wstring_view target);
 bool is_cjk(wchar_t value) noexcept;
 
-}  // namespace screentrans
+}  // namespace minitrans

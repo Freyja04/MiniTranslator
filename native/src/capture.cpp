@@ -4,7 +4,7 @@
 
 #include <cstring>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -101,4 +101,4 @@ DesktopImage capture_virtual_desktop() {
     return result;
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

@@ -6,7 +6,7 @@
 
 #include <limits>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -103,4 +103,4 @@ std::wstring hex_lower(std::span<const std::uint8_t> data) {
     return output;
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

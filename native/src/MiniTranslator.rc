@@ -9,8 +9,8 @@ BEGIN
 END
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION SCREENTRANS_VERSION_TUPLE
- PRODUCTVERSION SCREENTRANS_VERSION_TUPLE
+ FILEVERSION MINITRANS_VERSION_TUPLE
+ PRODUCTVERSION MINITRANS_VERSION_TUPLE
  FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
  FILEFLAGS 0x0L
  FILEOS VOS_NT_WINDOWS32
@@ -23,12 +23,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "MiniTranslator\0"
             VALUE "FileDescription", "MiniTranslator\0"
-            VALUE "FileVersion", SCREENTRANS_VERSION_STRING
+            VALUE "FileVersion", MINITRANS_VERSION_STRING
             VALUE "InternalName", "MiniTranslator\0"
             VALUE "LegalCopyright", "Copyright (c) MiniTranslator contributors\0"
             VALUE "OriginalFilename", "MiniTranslator.exe\0"
             VALUE "ProductName", "MiniTranslator\0"
-            VALUE "ProductVersion", SCREENTRANS_VERSION_STRING
+            VALUE "ProductVersion", MINITRANS_VERSION_STRING
         END
     END
     BLOCK "VarFileInfo"

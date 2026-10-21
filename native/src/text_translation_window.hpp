@@ -8,7 +8,7 @@
 #include <functional>
 #include <string>
 
-namespace screentrans {
+namespace minitrans {
 
 class TextTranslateWindow {
 public:
@@ -152,4 +152,4 @@ private:
     bool status_error_{};
 };
 
-}  // namespace screentrans
+}  // namespace minitrans

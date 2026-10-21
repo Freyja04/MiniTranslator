@@ -11,7 +11,7 @@
 #include <array>
 #include <cwchar>
 
-namespace screentrans {
+namespace minitrans {
 
 namespace {
 
@@ -656,4 +656,4 @@ void SelectionOverlay::paint(WindowState& state) {
     EndPaint(state.window, &paint_state);
 }
 
-}  // namespace screentrans
+}  // namespace minitrans

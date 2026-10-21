@@ -24,16 +24,14 @@ jobs:
       - name: Build native x64 executable
         shell: pwsh
         run: >-
-          powershell.exe -NoProfile -ExecutionPolicy Bypass
-          -File .\scripts\build-native.ps1
+          .\scripts\build-native.ps1
           -Configuration Release
           -Architecture x64
           -RunSmokeTest
       - name: Validate native release binary
         shell: pwsh
         run: >-
-          powershell.exe -NoProfile -ExecutionPolicy Bypass
-          -File .\release\check_native_binary.ps1
+          .\release\check_native_binary.ps1
           -Path .\build\native\Release\MiniTranslator.exe
       - name: Upload unsigned native executable
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

@@ -6,7 +6,7 @@
 #include <string>
 #include <string_view>
 
-namespace screentrans {
+namespace minitrans {
 
 struct HotkeySpec {
     UINT modifiers{};
@@ -18,4 +18,4 @@ std::optional<HotkeySpec> parse_hotkey(std::wstring_view value,
 bool register_hotkey(HWND window, int identifier, std::wstring_view value,
                      std::wstring* error = nullptr);
 
-}  // namespace screentrans
+}  // namespace minitrans

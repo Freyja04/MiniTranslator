@@ -1,7 +1,7 @@
-ScreenTranslate Native Third-Party Notices
+MiniTranslator Native Third-Party Notices
 ==========================================
 
-The native ScreenTranslate executable is built with the Microsoft Visual C++
+The native MiniTranslator executable is built with the Microsoft Visual C++
 toolchain and Windows SDK. It uses Win32, Windows Runtime, Windows OCR, and
 C++/WinRT system interfaces. No Qt, Python, .NET, Tauri, NuGet package, OCR
 model, or third-party runtime DLL is bundled in the default native release.
