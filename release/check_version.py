@@ -34,6 +34,22 @@ def _one(relative: str, pattern: str, label: str) -> str:
     return matches[0]
 
 
+def _runtime_sources() -> tuple[tuple[str, str], ...]:
+    """Return every native source file that can carry runtime version text."""
+    source_root = ROOT / "native" / "src"
+    paths = sorted(
+        path for path in source_root.rglob("*")
+        if path.suffix in {".cpp", ".hpp", ".h"}
+    )
+    return tuple(
+        (
+            path.relative_to(ROOT).as_posix(),
+            _read(path.relative_to(ROOT).as_posix()),
+        )
+        for path in paths
+    )
+
+
 def source_versions() -> dict[str, str]:
     resource = _read("native/src/resource.h")
     resource_parts: list[str] = []
@@ -87,51 +103,65 @@ def validate(expected: str) -> dict[str, str]:
     ]
 
     # User-facing runtime strings must derive from the single CMake version.
+    # Scan the whole native source tree so moving code between translation units
+    # cannot silently turn these checks into no-ops.
+    runtime_sources = _runtime_sources()
     runtime_derivations = (
         (
             "native HTTP user agent",
-            "native/src/http.cpp",
             'L"Mozilla/5.0 MiniTranslator/" + std::wstring(native_version)',
         ),
         (
             "native updater user agent",
-            "native/src/updater.cpp",
             '{L"User-Agent", L"MiniTranslator/" + std::wstring(native_version)}',
         ),
         (
             "native update status text",
-            "native/src/update_window.cpp",
             'L"当前安装的 " + std::wstring(native_version)',
         ),
     )
-    for label, relative, fragment in runtime_derivations:
-        count = _read(relative).count(fragment)
-        if count != 1:
+    for label, fragment in runtime_derivations:
+        occurrences = [
+            (relative, text.count(fragment))
+            for relative, text in runtime_sources
+        ]
+        total = sum(count for _, count in occurrences)
+        if total != 1:
+            found = ", ".join(
+                f"{relative}:{count}" for relative, count in occurrences if count
+            )
             errors.append(
-                f"{label} must use native_version exactly once; found {count} occurrences"
+                f"{label} must use native_version exactly once; "
+                f"found {total} occurrences"
+                + (f" ({found})" if found else "")
             )
 
     # A hard-coded version in these strings would bypass the derivation check.
     literal_version_markers = (
         (
             "native HTTP user agent",
-            "native/src/http.cpp",
             r'MiniTranslator/([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)',
         ),
         (
             "native updater user agent",
-            "native/src/updater.cpp",
             r'MiniTranslator/([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)',
         ),
         (
             "native update status text",
-            "native/src/update_window.cpp",
             r'当前安装的 ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)',
         ),
+        (
+            "native update version header",
+            r'当前版本 ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)',
+        ),
     )
-    for label, relative, pattern in literal_version_markers:
-        for actual in re.findall(pattern, _read(relative)):
-            errors.append(f"{label} hard-codes version {actual}; use native_version")
+    for label, pattern in literal_version_markers:
+        for relative, text in runtime_sources:
+            for actual in re.findall(pattern, text):
+                errors.append(
+                    f"{label} hard-codes version {actual} in {relative}; "
+                    "use native_version"
+                )
 
     if errors:
         raise VersionError("; ".join(errors))
