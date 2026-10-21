@@ -86,28 +86,52 @@ def validate(expected: str) -> dict[str, str]:
         if actual != expected_by_source[label]
     ]
 
-    # Any remaining version literals must agree with the single CMake version.
-    runtime_markers = (
+    # User-facing runtime strings must derive from the single CMake version.
+    runtime_derivations = (
         (
             "native HTTP user agent",
             "native/src/http.cpp",
-            r'WinHttpOpen\(L"Mozilla/5\.0 MiniTranslator/([^"]+)"',
+            'L"Mozilla/5.0 MiniTranslator/" + std::wstring(native_version)',
         ),
         (
             "native updater user agent",
             "native/src/updater.cpp",
-            r'\{L"User-Agent", L"MiniTranslator/([^"]+)"\}',
+            '{L"User-Agent", L"MiniTranslator/" + std::wstring(native_version)}',
         ),
         (
             "native update status text",
             "native/src/update_window.cpp",
-            r'L"当前安装的 ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?) 已是',
+            'L"当前安装的 " + std::wstring(native_version)',
         ),
     )
-    for label, relative, pattern in runtime_markers:
+    for label, relative, fragment in runtime_derivations:
+        count = _read(relative).count(fragment)
+        if count != 1:
+            errors.append(
+                f"{label} must use native_version exactly once; found {count} occurrences"
+            )
+
+    # A hard-coded version in these strings would bypass the derivation check.
+    literal_version_markers = (
+        (
+            "native HTTP user agent",
+            "native/src/http.cpp",
+            r'MiniTranslator/([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)',
+        ),
+        (
+            "native updater user agent",
+            "native/src/updater.cpp",
+            r'MiniTranslator/([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)',
+        ),
+        (
+            "native update status text",
+            "native/src/update_window.cpp",
+            r'当前安装的 ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)',
+        ),
+    )
+    for label, relative, pattern in literal_version_markers:
         for actual in re.findall(pattern, _read(relative)):
-            if actual != expected:
-                errors.append(f"{label} is {actual}, expected {expected}")
+            errors.append(f"{label} hard-codes version {actual}; use native_version")
 
     if errors:
         raise VersionError("; ".join(errors))

@@ -779,6 +779,8 @@ int run_update_helper() {
 }
 
 void updater_self_test() {
+    // Fixed SemVer ordering fixtures. They exercise comparison rules only and
+    // are intentionally unrelated to the version of the running build.
     if (compare_semver(parse_semver(L"1.2.4"), parse_semver(L"1.2.3")) <= 0 ||
         compare_semver(parse_semver(L"1.2.4-rc.1"), parse_semver(L"1.2.4")) >= 0 ||
         compare_semver(parse_semver(L"2.0.0+build.7"), parse_semver(L"1.99.99")) <= 0) {
@@ -788,27 +790,59 @@ void updater_self_test() {
     try { (void)parse_semver(L"1.2.3-"); } catch (const UpdateError&) { rejected = true; }
     if (!rejected) throw UpdateError("invalid SemVer was accepted");
 
-    const Repository repository{L"Freyja04", L"MiniTranslator"};
-    constexpr std::string_view manifest = R"json({
+    // This manifest is a parser/validator fixture only; it is never fetched or
+    // installed. The repository comes from the same build-time pin as production.
+    const Repository repository = parse_repository(MINITRANS_UPDATE_REPOSITORY_URL);
+    constexpr std::string_view manifest_template = R"json({
       "schema_version":2,
       "product":"MiniTranslator",
       "version":"1.0.3",
       "channel":"stable",
       "published_at":"2026-07-29T12:00:00Z",
-      "release_url":"https://github.com/Freyja04/MiniTranslator/releases/tag/v1.0.3",
+      "release_url":"@REPOSITORY@/releases/tag/v1.0.3",
       "platform":{"os":"windows","arch":"x86_64","minimum":"10"},
       "artifact":{
         "name":"MiniTranslator-1.0.3-setup-x64.exe",
-        "url":"https://github.com/Freyja04/MiniTranslator/releases/download/v1.0.3/MiniTranslator-1.0.3-setup-x64.exe",
+        "url":"@REPOSITORY@/releases/download/v1.0.3/MiniTranslator-1.0.3-setup-x64.exe",
         "size":123456,
         "sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       }
     })json";
+    std::string manifest(manifest_template);
+    const std::string repository_marker = "@REPOSITORY@";
+    const auto repository_url = wide_to_utf8(repository.url());
+    for (auto position = manifest.find(repository_marker);
+         position != std::string::npos;
+         position = manifest.find(repository_marker, position + repository_url.size())) {
+        manifest.replace(position, repository_marker.size(), repository_url);
+    }
     const auto parsed = parse_manifest(manifest, repository);
     validate_info(parsed, repository, false);
     if (parsed.version != L"1.0.3" || parsed.artifact.size != 123456) {
         throw UpdateError("manifest self-test failed");
     }
+
+    // Keep one independently fixed repository URL so the test cannot pass just
+    // because the fixture was rewritten with the same build-time pin.
+    auto foreign_manifest = manifest;
+    const std::string expected_release = repository_url + "/releases/tag/v1.0.3";
+    const std::string foreign_release =
+        "https://github.com/example/OtherRepository/releases/tag/v1.0.3";
+    const auto release_position = foreign_manifest.find(expected_release);
+    if (release_position == std::string::npos) {
+        throw UpdateError("manifest self-test fixture is inconsistent");
+    }
+    foreign_manifest.replace(release_position, expected_release.size(), foreign_release);
+    bool foreign_repository_rejected = false;
+    try {
+        (void)parse_manifest(foreign_manifest, repository);
+    } catch (const UpdateError&) {
+        foreign_repository_rejected = true;
+    }
+    if (!foreign_repository_rejected) {
+        throw UpdateError("foreign repository manifest was accepted");
+    }
+
     bool wrong_product_rejected = false;
     constexpr std::string_view wrong_product_manifest = R"json({
       "schema_version":2,

@@ -86,7 +86,8 @@ begin
     end;
   end;
 
-  // 迁移 Python onedir 旧布局时，只清理本程序明确拥有的路径。
+  // 兼容 pre-1.0.3 的 Python onedir 布局，只清理本程序明确拥有的路径。
+  // 仅当不再支持从 pre-1.0.3 直接升级时移除这段清理。
   DelTree(ExpandConstant('{app}\_internal'), True, True, True);
   DeleteFile(ExpandConstant('{app}\{#AppExeName}'));
 end;
