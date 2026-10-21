@@ -51,11 +51,21 @@ add_executable(MiniTranslator WIN32
     src/result_renderer.hpp
     src/result_window.cpp
     src/result_window.hpp
+    src/result_window_control_bar.cpp
+    src/result_window_internal.hpp
+    src/result_window_render.cpp
     src/MiniTranslator.rc
     src/selection_overlay.cpp
     src/selection_overlay.hpp
     src/settings_window.cpp
     src/settings_window.hpp
+    src/settings_window_internal.cpp
+    src/settings_window_internal.hpp
+    src/settings_window_layout.cpp
+    src/settings_window_pages.cpp
+    src/settings_window_paint.cpp
+    src/settings_window_self_test.cpp
+    src/settings_window_state.cpp
     src/text_translation_session.cpp
     src/text_translation_session.hpp
     src/text_translation_window.cpp
@@ -69,6 +79,12 @@ add_executable(MiniTranslator WIN32
     src/updater.hpp
     src/update_window.cpp
     src/update_window.hpp
+    src/update_window_controls.cpp
+    src/update_window_install_dialog.cpp
+    src/update_window_internal.hpp
+    src/update_window_render.cpp
+    src/update_window_self_test.cpp
+    src/update_window_worker.cpp
     src/translator.cpp
     src/translator.hpp
     src/util.cpp
