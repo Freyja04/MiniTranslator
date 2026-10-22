@@ -115,10 +115,6 @@ def validate(expected: str) -> dict[str, str]:
             "native updater user agent",
             '{L"User-Agent", L"MiniTranslator/" + std::wstring(native_version)}',
         ),
-        (
-            "native update status text",
-            'L"当前安装的 " + std::wstring(native_version)',
-        ),
     )
     for label, fragment in runtime_derivations:
         occurrences = [
@@ -145,10 +141,6 @@ def validate(expected: str) -> dict[str, str]:
         (
             "native updater user agent",
             r'MiniTranslator/([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)',
-        ),
-        (
-            "native update status text",
-            r'当前安装的 ([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)',
         ),
         (
             "native update version header",

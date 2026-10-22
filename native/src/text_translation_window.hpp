@@ -70,12 +70,15 @@ private:
     HWND copy_button_{};
     HWND clear_button_{};
     HWND capture_button_{};
+    HWND close_button_{};
     HFONT font_{};
     HFONT small_font_{};
     HFONT icon_font_{};
     // Clear/copy sit next to their 原文/译文 captions, so their glyphs stay at
     // caption size instead of the larger toolbar icon size.
     HFONT action_icon_font_{};
+    // The close cross needs to read slightly smaller than the capture glyph.
+    HFONT close_icon_font_{};
     HBRUSH background_{};
     HBRUSH surface_{};
     HBRUSH input_background_{};

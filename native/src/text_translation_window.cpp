@@ -48,6 +48,7 @@ constexpr int id_copy = 4105;
 constexpr int id_quick_capture = 4109;
 constexpr int id_source = 4110;
 constexpr int id_swap = 4111;
+constexpr int id_quick_close = 4112;
 
 struct ProcessResourceSnapshot {
     DWORD gdi_objects{};
@@ -505,7 +506,8 @@ bool point_in_window(HWND control, POINT screen_point) noexcept {
 }
 
 LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
-                        HFONT icon_font, HFONT action_icon_font) {
+                        HFONT icon_font, HFONT action_icon_font,
+                        HFONT close_icon_font) {
     if (item.CtlType == ODT_BUTTON) {
         const bool selected = (item.itemState & ODS_SELECTED) != 0;
         const bool disabled = (item.itemState & ODS_DISABLED) != 0;
@@ -541,12 +543,19 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
         wchar_t glyph = 0;
         if (identifier == id_quick_capture) {
             glyph = ui_icons::capture_translation;
+        } else if (identifier == id_quick_close) {
+            glyph = 0xE8BB;  // ChromeClose
         } else if (identifier == id_swap) {
             glyph = 0xE8AB;
         } else {
             return TRUE;
         }
-        draw_label(item.hDC, std::wstring_view(&glyph, 1), item.rcItem, icon_font,
+        // The close cross reads heavier than the capture glyph at the same
+        // font size, so draw it with its own slightly smaller icon font.
+        const HFONT glyph_font = identifier == id_quick_close
+                                     ? (close_icon_font ? close_icon_font : icon_font)
+                                     : icon_font;
+        draw_label(item.hDC, std::wstring_view(&glyph, 1), item.rcItem, glyph_font,
                    content_color, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return TRUE;
     }
@@ -677,6 +686,8 @@ void QuickTranslateWindow::create_theme_resources() {
                               theme::font_family);
     icon_font_ = create_icon_font(dpi_, 15);
     action_icon_font_ = create_icon_font(dpi_, 12);
+    // The close cross reads heavier than the capture glyph at the same size.
+    close_icon_font_ = create_icon_font(dpi_, 13);
     background_ = CreateSolidBrush(color_background);
     surface_ = CreateSolidBrush(color_surface);
     input_background_ = CreateSolidBrush(color_surface);
@@ -687,10 +698,12 @@ void QuickTranslateWindow::destroy_theme_resources() noexcept {
     if (small_font_) DeleteObject(small_font_);
     if (icon_font_) DeleteObject(icon_font_);
     if (action_icon_font_) DeleteObject(action_icon_font_);
+    if (close_icon_font_) DeleteObject(close_icon_font_);
     if (background_) DeleteObject(background_);
     if (surface_) DeleteObject(surface_);
     if (input_background_) DeleteObject(input_background_);
     font_ = small_font_ = icon_font_ = action_icon_font_ = nullptr;
+    close_icon_font_ = nullptr;
     background_ = surface_ = input_background_ = nullptr;
 }
 
@@ -734,6 +747,9 @@ void QuickTranslateWindow::create_controls() {
     capture_button_ = CreateWindowExW(0, L"BUTTON", L"截图翻译",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
         0, 0, 0, 0, window_, control_id(id_quick_capture), instance_, nullptr);
+    close_button_ = CreateWindowExW(0, L"BUTTON", L"关闭",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+        0, 0, 0, 0, window_, control_id(id_quick_close), instance_, nullptr);
     copy_button_ = CreateWindowExW(0, L"BUTTON", L"复制",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
         0, 0, 0, 0, window_, control_id(id_copy), instance_, nullptr);
@@ -741,7 +757,8 @@ void QuickTranslateWindow::create_controls() {
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
         0, 0, 0, 0, window_, control_id(id_clear), instance_, nullptr);
     for (HWND control : {source_combo_, swap_button_, target_combo_, input_, output_,
-                         capture_button_, copy_button_, clear_button_}) {
+                         capture_button_, close_button_, copy_button_,
+                         clear_button_}) {
         theme::apply_control_theme(control);
         set_control_font(control, font_);
     }
@@ -771,6 +788,7 @@ void QuickTranslateWindow::create_controls() {
     add_tooltip(window_, clear_button_, L"清空原文");
     add_tooltip(window_, swap_button_, L"对调原文与译文语种");
     add_tooltip(window_, capture_button_, L"截图翻译");
+    add_tooltip(window_, close_button_, L"关闭");
     layout_controls();
 }
 void QuickTranslateWindow::layout_controls() {
@@ -794,16 +812,18 @@ void QuickTranslateWindow::layout_controls() {
         return control_height + count * scaled(30, dpi_);
     };
 
-    const int right_edge = width - margin;
-    MoveWindow(target_combo_, right_edge - combo_width, header_top,
-               combo_width, combo_height_for(target_combo_), TRUE);
-    MoveWindow(swap_button_, right_edge - combo_width - gap - icon_width,
-               header_top, icon_width, control_height, TRUE);
-    MoveWindow(source_combo_,
-               right_edge - combo_width * 2 - gap * 2 - icon_width,
-               header_top, combo_width, combo_height_for(source_combo_), TRUE);
-    MoveWindow(capture_button_, margin, header_top, icon_width,
+    // The language selectors sit on the left edge; capture and its matching
+    // close button share the right edge.
+    MoveWindow(source_combo_, margin, header_top, combo_width,
+               combo_height_for(source_combo_), TRUE);
+    MoveWindow(swap_button_, margin + combo_width + gap, header_top, icon_width,
                control_height, TRUE);
+    MoveWindow(target_combo_, margin + combo_width + gap * 2 + icon_width,
+               header_top, combo_width, combo_height_for(target_combo_), TRUE);
+    MoveWindow(close_button_, width - margin - icon_width, header_top,
+               icon_width, control_height, TRUE);
+    MoveWindow(capture_button_, width - margin - icon_width * 2 - gap,
+               header_top, icon_width, control_height, TRUE);
 
     const int body_top = header_top + control_height + scaled(14, dpi_);
     const int body_bottom = height - scaled(34, dpi_);
@@ -1021,7 +1041,8 @@ LRESULT QuickTranslateWindow::draw_item(const DRAWITEMSTRUCT& item) {
                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         return TRUE;
     }
-    return draw_owner_item(item, font_, accent_, icon_font_, action_icon_font_);
+    return draw_owner_item(item, font_, accent_, icon_font_, action_icon_font_,
+                           close_icon_font_);
 }
 
 void QuickTranslateWindow::draw_target_combo(HDC dc) {
@@ -1165,6 +1186,27 @@ void QuickTranslateWindow::self_test(HWND owner) {
     if (!capture_called || visible()) {
         throw AppError("quick translation window self-test capture button mismatch");
     }
+    RECT capture_rect{};
+    RECT close_rect{};
+    RECT source_combo_rect{};
+    if (!GetWindowRect(capture_button_, &capture_rect) ||
+        !GetWindowRect(close_button_, &close_rect) ||
+        !GetWindowRect(source_combo_, &source_combo_rect)) {
+        throw AppError("quick translation window self-test header buttons missing");
+    }
+    if (close_rect.right - close_rect.left != capture_rect.right - capture_rect.left ||
+        close_rect.bottom - close_rect.top != capture_rect.bottom - capture_rect.top ||
+        close_rect.top != capture_rect.top || close_rect.left <= capture_rect.right ||
+        capture_rect.left <= source_combo_rect.right ||
+        close_rect.right > source_combo_rect.left + scaled(480, dpi_)) {
+        throw AppError("quick translation window self-test header layout mismatch");
+    }
+    show(owner);
+    SendMessageW(window_, WM_COMMAND, MAKEWPARAM(id_quick_close, BN_CLICKED),
+                 reinterpret_cast<LPARAM>(close_button_));
+    if (visible()) {
+        throw AppError("quick translation window self-test close button mismatch");
+    }
     RECT copy_button_rect{};
     RECT clear_button_rect{};
     RECT quick_input_rect{};
@@ -1227,8 +1269,14 @@ void QuickTranslateWindow::self_test(HWND owner) {
         throw AppError("quick translation window self-test close path did not hide");
     }
     show(owner);
-    POINT drag_point{scaled(180, dpi_), scaled(34, dpi_)};
-    ClientToScreen(window_, &drag_point);
+    // The language selectors now sit on the left edge, so the draggable header
+    // area is the gap between the last selector and the right-side buttons.
+    RECT header_target{};
+    RECT header_capture{};
+    GetWindowRect(target_combo_, &header_target);
+    GetWindowRect(capture_button_, &header_capture);
+    const POINT drag_point{(header_target.right + header_capture.left) / 2,
+                           (header_target.top + header_target.bottom) / 2};
     const auto drag_hit = SendMessageW(
         window_, WM_NCHITTEST, 0,
         MAKELPARAM(static_cast<short>(drag_point.x),
@@ -1401,6 +1449,9 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
                 if (callbacks_.capture) callbacks_.capture();
             }
             return 0;
+        case id_quick_close:
+            if (HIWORD(wparam) == BN_CLICKED) hide();
+            return 0;
         default: break;
         }
         break;
@@ -1461,7 +1512,7 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
         window_ = nullptr;
         source_combo_ = swap_button_ = nullptr;
         target_combo_ = input_ = output_ = nullptr;
-        capture_button_ = nullptr;
+        capture_button_ = close_button_ = nullptr;
         copy_button_ = clear_button_ = nullptr;
         return 0;
     default: break;
