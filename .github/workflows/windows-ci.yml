@@ -21,6 +21,9 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
+      - name: Check shared version fixtures
+        shell: pwsh
+        run: python release/check_version_cases.py
       - name: Build native x64 executable
         shell: pwsh
         run: >-

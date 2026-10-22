@@ -6,7 +6,7 @@
 #include "selection_overlay.hpp"
 #include "settings_window.hpp"
 #include "text_translation_window.hpp"
-#include "update_window.hpp"
+#include "updater.hpp"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -41,6 +41,16 @@ public:
     }
     static constexpr UINT activate_message = WM_APP + 1;
     static constexpr WPARAM activate_text_translation = 1;
+    // Inline update flow: the worker reports download progress and the final
+    // outcome back to the message window so the settings page can stay open.
+    static constexpr UINT settings_update_stage_message = WM_APP + 43;
+    static constexpr UINT settings_update_completed_message = WM_APP + 42;
+    enum class SettingsUpdateOutcome : WPARAM {
+        no_update = 0,
+        updated = 1,
+        failed = 2,
+        cancelled = 3,
+    };
 
 private:
     static LRESULT CALLBACK window_proc(HWND window, UINT message,
@@ -56,6 +66,7 @@ private:
     void notify(std::wstring_view title, std::wstring_view message);
     bool apply_hotkeys(bool announce_changes);
     void start_capture();
+    void start_capture_from_settings();
     void begin_capture_now();
     void on_selected(const RECT& rect, PixelBuffer image);
     void start_pipeline(std::shared_ptr<const PixelBuffer> image, const RECT& rect);
@@ -63,6 +74,7 @@ private:
     void open_text_translation();
     void toggle_quick_translation();
     void on_text_input_changed(std::wstring value);
+    void on_text_source_changed(std::wstring value);
     void on_text_target_changed(std::wstring value);
     void on_text_composition_changed(bool composing);
     void schedule_text_translation(bool immediate = false);
@@ -83,7 +95,8 @@ private:
     void recapture_now();
     void open_settings();
     void open_translation_settings();
-    void open_updates();
+    void start_update_check();
+    void handle_settings_update_completed(WPARAM outcome);
     void start_silent_update_check();
     std::optional<UpdateInfo> process_silent_update_check();
     void handle_update_available(const UpdateInfo& update);
@@ -98,7 +111,6 @@ private:
     HICON icon_{};
     ConfigStore config_;
     SettingsWindow settings_;
-    UpdateWindow updates_;
     SelectionOverlay overlay_;
     ResultWindow result_;
     std::unique_ptr<PipelineController> pipeline_;
@@ -114,15 +126,16 @@ private:
     std::shared_ptr<const PixelBuffer> last_image_;
     std::vector<TextBlock> last_blocks_;
     std::optional<PipelineResult> last_result_;
-    RECT last_rect_{};
     std::optional<RECT> pending_recapture_;
     std::jthread silent_update_thread_;
     std::mutex silent_update_mutex_;
     std::optional<UpdateInfo> silent_update_result_;
+    std::jthread settings_update_thread_;
     std::wstring registered_capture_hotkey_;
     std::wstring registered_toggle_hotkey_;
     std::wstring registered_text_hotkey_;
     bool text_composing_{};
+    bool settings_hidden_for_capture_{};
     bool shutting_down_{};
     bool self_test_mode_{};
     bool update_self_test_mode_{};

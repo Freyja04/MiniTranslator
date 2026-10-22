@@ -2,6 +2,7 @@
 
 #include "block_editor.hpp"
 #include "hotkey.hpp"
+#include "language.hpp"
 #include "resource.h"
 #include "theme.hpp"
 #include "ui_icons.hpp"
@@ -36,14 +37,11 @@ constexpr int hotkey_text_translate = 3;
 constexpr UINT command_capture = 3001;
 constexpr UINT command_restore = 3002;
 constexpr UINT command_settings = 3003;
-constexpr UINT command_updates = 3004;
-constexpr UINT command_restart = 3005;
 constexpr UINT command_exit = 3006;
 constexpr UINT command_text_translate = 3007;
 constexpr UINT tray_icon_id = 1;
 
 using theme::tray_color_background;
-using theme::tray_color_border;
 using theme::tray_color_hover;
 using theme::tray_color_separator;
 using theme::tray_color_text;
@@ -60,10 +58,9 @@ enum class TrayMenuIcon {
     check,
     capture,
     text,
+    brand,
     restore,
-    settings,
-    update,
-    restart,
+    home,
     exit,
 };
 
@@ -169,6 +166,13 @@ POINT quick_translation_anchor(HWND owner) noexcept {
 void draw_tray_menu_icon(HDC dc, const RECT& bounds, TrayMenuIcon icon,
                          COLORREF color, UINT dpi) {
     if (icon == TrayMenuIcon::none) return;
+    // The text translation entry leads with the application mark instead of a
+    // generic glyph; it is redrawn in the menu foreground color so it matches
+    // the neighbouring icons.
+    if (icon == TrayMenuIcon::brand) {
+        theme::draw_brand_mark(dc, bounds, color);
+        return;
+    }
     wchar_t glyph = 0;
     switch (icon) {
     case TrayMenuIcon::check:
@@ -183,19 +187,15 @@ void draw_tray_menu_icon(HDC dc, const RECT& bounds, TrayMenuIcon icon,
     case TrayMenuIcon::restore:
         glyph = static_cast<wchar_t>(0xE890);  // View
         break;
-    case TrayMenuIcon::settings:
-        glyph = static_cast<wchar_t>(0xE713);  // Settings
-        break;
-    case TrayMenuIcon::update:
-        glyph = static_cast<wchar_t>(0xE896);  // Download
-        break;
-    case TrayMenuIcon::restart:
-        glyph = static_cast<wchar_t>(0xE72C);  // Refresh
+    case TrayMenuIcon::home:
+        glyph = static_cast<wchar_t>(0xE80F);  // Home
         break;
     case TrayMenuIcon::exit:
         glyph = static_cast<wchar_t>(0xE7E8);  // PowerButton
         break;
     case TrayMenuIcon::none:
+        break;
+    case TrayMenuIcon::brand:
         break;
     }
     if (!glyph) return;
@@ -404,16 +404,21 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
     : instance_(instance),
       config_(config_path.empty() ? app_data_directory() / L"config.json"
                                   : std::move(config_path)),
-      settings_(instance, config_), updates_(instance, config_),
+      settings_(instance, config_),
       overlay_(instance), result_(instance) {
     theme::initialize(config_);
     create_message_window();
     pipeline_ = std::make_unique<PipelineController>(window_);
     text_session_ = std::make_unique<TextTranslationSession>(config_, *pipeline_);
-    quick_window_ = std::make_unique<QuickTranslateWindow>(instance_, config_, *text_session_);
+    text_session_->set_source(config_.string(L"text.source", L"zh-Hans"));
+    text_session_->set_target(config_.string(L"text.target", L"en"));
+    quick_window_ = std::make_unique<QuickTranslateWindow>(instance_, *text_session_);
     TextTranslationCallbacks text_callbacks;
     text_callbacks.input_changed = [this](std::wstring value) {
         on_text_input_changed(std::move(value));
+    };
+    text_callbacks.source_changed = [this](std::wstring value) {
+        on_text_source_changed(std::move(value));
     };
     text_callbacks.target_changed = [this](std::wstring value) {
         on_text_target_changed(std::move(value));
@@ -429,9 +434,16 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
     text_callbacks.copy = [this] {
         if (text_session_) copy_to_clipboard(text_session_->output());
     };
+    text_callbacks.copy_source = [this] {
+        if (text_session_) copy_to_clipboard(text_session_->input());
+    };
+    text_callbacks.clear_output = [this] {
+        if (text_session_) text_session_->clear_output();
+    };
     text_callbacks.capture = [this] { start_capture(); };
     text_callbacks.open_settings = [this] { open_translation_settings(); };
     settings_.attach_text_translation(*text_session_, text_callbacks);
+    settings_.set_capture_callback([this] { start_capture_from_settings(); });
     quick_window_->set_callbacks(std::move(text_callbacks));
     text_session_->set_changed_callback([this] { refresh_text_translation_views(); });
     result_.set_copy_callback([this](std::wstring_view text) { copy_to_clipboard(text); });
@@ -451,7 +463,7 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
     result_.set_recapture_callback([this](const RECT& rect) { request_recapture(rect); });
     settings_.set_hotkeys_changed_callback([this] { return apply_hotkeys(true); });
     settings_.set_restart_callback([this] { restart(); });
-    settings_.set_updates_callback([this] { open_updates(); });
+    settings_.set_update_check_callback([this] { start_update_check(); });
     settings_.set_settings_changed_callback([this] {
         refresh_theme_windows();
         refresh_tray_tooltip();
@@ -459,9 +471,6 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
             schedule_text_translation(true);
         }
     });
-    updates_.set_quit_callback([this] { quit(); });
-    updates_.set_update_available_callback(
-        [this](const UpdateInfo& update) { handle_update_available(update); });
     if (!PostMessageW(window_, initialize_message, 0, 0)) {
         throw_last_error("queue application initialization");
     }
@@ -469,6 +478,10 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
 
 AppHost::~AppHost() {
     shutting_down_ = true;
+    if (settings_update_thread_.joinable()) {
+        settings_update_thread_.request_stop();
+        settings_update_thread_.join();
+    }
     BlockEditor::close_active();
     result_.set_closed_callback({});
     result_.close();
@@ -584,7 +597,6 @@ void AppHost::refresh_tray_tooltip() {
 
 void AppHost::refresh_theme_windows() {
     settings_.refresh_appearance();
-    updates_.refresh_appearance();
     if (quick_window_) quick_window_->refresh_appearance();
     if (result_.handle()) {
         result_.refresh_appearance(result_appearance());
@@ -641,7 +653,7 @@ void AppHost::show_tray_menu(POINT location) {
         item.enabled = enabled;
         items.push_back(std::move(item));
     };
-    add_item(command_text_translate, TrayMenuIcon::text, L"文本翻译", text);
+    add_item(command_text_translate, TrayMenuIcon::brand, L"文本翻译", text);
     add_item(command_capture, TrayMenuIcon::capture, L"截图翻译", capture);
     add_item(command_restore, TrayMenuIcon::restore, L"显示上次译文", toggle, can_restore);
     TrayMenuItem separator;
@@ -650,8 +662,7 @@ void AppHost::show_tray_menu(POINT location) {
     separator.dpi = dpi;
     separator.font = menu_font;
     items.push_back(std::move(separator));
-    add_item(command_settings, TrayMenuIcon::settings, L"设置");
-    add_item(command_restart, TrayMenuIcon::restart, L"重启");
+    add_item(command_settings, TrayMenuIcon::home, L"首页");
     add_item(command_exit, TrayMenuIcon::exit, L"退出");
     items.front().first = true;
     items.back().last = true;
@@ -776,10 +787,22 @@ void AppHost::start_capture() {
     SetTimer(window_, capture_timer, 30, nullptr);
 }
 
+void AppHost::start_capture_from_settings() {
+    if (overlay_.active() || shutting_down_) return;
+    // Hide the settings window before the overlay freezes the desktop so the
+    // panel itself does not end up in the frozen bitmap, then bring it back once
+    // the selection finishes or is cancelled.
+    settings_.hide_for_capture();
+    settings_hidden_for_capture_ = true;
+    start_capture();
+}
+
 void AppHost::begin_capture_now() {
+    const bool restore_settings = settings_hidden_for_capture_;
+    settings_hidden_for_capture_ = false;
     try {
         overlay_.start(theme::accent,
-            [this](const RECT& rect, PixelBuffer image) noexcept {
+            [this, restore_settings](const RECT& rect, PixelBuffer image) noexcept {
                 try {
                     on_selected(rect, std::move(image));
                 } catch (const std::exception& error) {
@@ -787,9 +810,13 @@ void AppHost::begin_capture_now() {
                 } catch (...) {
                     notify(MINITRANS_DISPLAY_NAME, L"无法创建译文窗口：未知错误");
                 }
+                if (restore_settings) settings_.show_after_capture();
             },
-            [] {});
+            [this, restore_settings] {
+                if (restore_settings) settings_.show_after_capture();
+            });
     } catch (const std::exception& error) {
+        if (restore_settings) settings_.show_after_capture();
         notify(MINITRANS_DISPLAY_NAME, L"无法截取屏幕：" + utf8_to_wide(error.what()));
     }
 }
@@ -804,7 +831,6 @@ void AppHost::on_selected(const RECT& rect, PixelBuffer image) {
 
 void AppHost::start_pipeline(std::shared_ptr<const PixelBuffer> image, const RECT& rect) {
     last_image_ = image;
-    last_rect_ = rect;
     result_.show_loading(rect, image, result_appearance());
     try {
         current_request_ = pipeline_->schedule(image, PipelineOptions::from_config(config_));
@@ -866,8 +892,17 @@ void AppHost::on_text_input_changed(std::wstring value) {
     schedule_text_translation(false);
 }
 
+void AppHost::on_text_source_changed(std::wstring value) {
+    if (!text_session_ || !text_session_->set_source(std::move(value))) return;
+    config_.set_string(L"text.source", text_session_->source());
+    config_.save();
+    schedule_text_translation(true);
+}
+
 void AppHost::on_text_target_changed(std::wstring value) {
     if (!text_session_ || !text_session_->set_target(std::move(value))) return;
+    config_.set_string(L"text.target", text_session_->target());
+    config_.save();
     schedule_text_translation(true);
 }
 
@@ -939,7 +974,7 @@ void AppHost::open_block_editor() {
     result_.set_editing(true);
     try {
         const bool opened = BlockEditor::show(instance_, result_.handle(), *last_result_,
-            config_.string(L"lang.zh_target", L"en"),
+            chinese_target_for_selection(config_.string(L"lang.target", L"zh-Hans")),
             [this](BlockEditor& editor, BlockEditor::Change change) {
                 request_block_translation(editor, change.index, std::move(change.block));
             },
@@ -1001,6 +1036,9 @@ bool AppHost::schedule_block_translations(std::vector<std::size_t> indices,
 
     std::uint64_t request_id{};
     try {
+        // Re-translation shares the visual lane, so an in-flight screenshot request
+        // is cancelled on purpose: its result would overwrite the blocks this
+        // request is about to replace.
         current_request_ = 0;
         request_id = pipeline_->schedule_translation(
             std::move(blocks), PipelineOptions::from_config(config_));
@@ -1146,11 +1184,67 @@ void AppHost::open_translation_settings() {
     }
 }
 
-void AppHost::open_updates() {
-    try {
-        updates_.show(window_);
-    } catch (const std::exception& error) {
-        notify(MINITRANS_DISPLAY_NAME, L"无法检查更新：" + utf8_to_wide(error.what()));
+void AppHost::start_update_check() {
+    // One inline update at a time: the settings page shows progress beside the
+    // button and the worker reports back through the message window.
+    if (settings_update_thread_.joinable() || shutting_down_) return;
+    const auto manifest = config_.string(L"updates.manifest_url");
+    const auto repository = config_.string(L"updates.repository_url");
+    const auto channel = config_.string(L"updates.channel", L"stable");
+    if (manifest.empty() || repository.empty()) {
+        settings_.set_update_status(L"更新失败！", true);
+        settings_.set_update_check_enabled(true);
+        return;
+    }
+    const HWND dispatcher = window_;
+    settings_update_thread_ = std::jthread(
+        [dispatcher, manifest, repository, channel](std::stop_token stop) {
+            using Outcome = SettingsUpdateOutcome;
+            Outcome outcome = Outcome::failed;
+            try {
+                WinrtApartment apartment(winrt::apartment_type::multi_threaded);
+                const auto update =
+                    check_for_update(manifest, repository, channel, stop);
+                if (!update) {
+                    outcome = Outcome::no_update;
+                } else {
+                    PostMessageW(dispatcher, settings_update_stage_message, 0, 0);
+                    const auto installer =
+                        download_update(*update, repository, stop);
+                    if (!launch_update_helper(installer, *update, repository,
+                                              GetCurrentProcessId())) {
+                        throw AppError("launch update helper");
+                    }
+                    outcome = Outcome::updated;
+                }
+            } catch (...) {
+                outcome = stop.stop_requested() ? Outcome::cancelled
+                                                : Outcome::failed;
+            }
+            PostMessageW(dispatcher, settings_update_completed_message,
+                         static_cast<WPARAM>(outcome), 0);
+        });
+}
+
+void AppHost::handle_settings_update_completed(WPARAM outcome) {
+    if (settings_update_thread_.joinable()) settings_update_thread_.join();
+    switch (static_cast<SettingsUpdateOutcome>(outcome)) {
+    case SettingsUpdateOutcome::no_update:
+        settings_.set_update_status(L"没有新版本！");
+        settings_.set_update_check_enabled(true);
+        break;
+    case SettingsUpdateOutcome::updated:
+        // The helper waits for this process to exit, then installs and the
+        // installer's [Run] entry starts the new build again.
+        settings_.set_update_status(L"更新中...");
+        quit();
+        return;
+    case SettingsUpdateOutcome::failed:
+    case SettingsUpdateOutcome::cancelled:
+    default:
+        settings_.set_update_status(L"更新失败！", true);
+        settings_.set_update_check_enabled(true);
+        break;
     }
 }
 
@@ -1199,7 +1293,7 @@ std::optional<UpdateInfo> AppHost::process_silent_update_check() {
 void AppHost::handle_update_available(const UpdateInfo& update) {
     notify(std::wstring(MINITRANS_DISPLAY_NAME) + L" · 有新版本",
            std::wstring(MINITRANS_DISPLAY_NAME) + L" " + update.version +
-           L" 已发布，可从检查更新窗口直接下载并安装。");
+               L" 已发布，打开设置窗口后点「检查更新」即可更新。");
 }
 
 void AppHost::restart() {
@@ -1260,9 +1354,13 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         try {
             add_tray_icon();
             apply_hotkeys(false);
+            const bool reported_recovery = config_.recovered();
+            if (reported_recovery) {
+                notify(MINITRANS_DISPLAY_NAME, config_.recovery_message());
+            }
             if (text_translation_on_start_) {
                 open_text_translation();
-            } else {
+            } else if (!reported_recovery) {
                 notify(MINITRANS_DISPLAY_NAME,
                        L"已启动，左键打开快速翻译，右键菜单可进入设置；按 " +
                        config_.string(L"hotkey", L"Ctrl+Alt+Q") + L" 截图翻译");
@@ -1339,8 +1437,6 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             if (last_image_ && !result_.visible()) result_.restore();
             return 0;
         case command_settings: open_settings(); return 0;
-        case command_updates: open_updates(); return 0;
-        case command_restart: restart(); return 0;
         case command_exit: quit(); return 0;
         default: break;
         }
@@ -1368,6 +1464,12 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         if (update_self_test_mode_) PostMessageW(window_, WM_CLOSE, 0, 0);
         return 0;
     }
+    case settings_update_stage_message:
+        settings_.set_update_status(L"更新中...");
+        return 0;
+    case settings_update_completed_message:
+        handle_settings_update_completed(wparam);
+        return 0;
     case WM_CLOSE:
         shutting_down_ = true;
         DestroyWindow(window_);
@@ -1405,7 +1507,7 @@ int AppHost::run(bool self_test, bool update_self_test,
         DestroyIcon(brand_icon);
         BlockEditor::self_test(instance_, window_);
         settings_.self_test(window_);
-        updates_.self_test(window_);
+        updater_self_test();
         if (quick_window_) quick_window_->self_test(window_);
         if (!PostMessageW(window_, WM_CLOSE, 0, 0)) {
             throw_last_error("queue self-test shutdown");
@@ -1416,7 +1518,6 @@ int AppHost::run(bool self_test, bool update_self_test,
     while ((result = GetMessageW(&message, nullptr, 0, 0)) > 0) {
         if (BlockEditor::preprocess_active_message(message) ||
             settings_.preprocess_message(message) ||
-            updates_.preprocess_message(message) ||
             (quick_window_ && quick_window_->preprocess_message(message))) {
             continue;
         }

@@ -169,15 +169,6 @@ std::vector<OcrLine> recognize_once(const PixelBuffer& image, std::wstring_view 
 
 }  // namespace
 
-std::vector<std::wstring> available_windows_ocr_languages() {
-    WinrtApartment apartment(winrt::apartment_type::multi_threaded);
-    std::vector<std::wstring> output;
-    for (const auto& language : OcrEngine::AvailableRecognizerLanguages()) {
-        output.emplace_back(language.LanguageTag().c_str());
-    }
-    return output;
-}
-
 std::vector<OcrLine> recognize_windows_ocr(
     const PixelBuffer& image,
     const std::vector<std::wstring>& languages,

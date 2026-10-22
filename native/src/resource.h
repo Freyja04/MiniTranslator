@@ -1,10 +1,8 @@
 #pragma once
 
 #define IDI_APP_ICON 101
-#define IDS_APP_TITLE 102
 
 #define MINITRANS_DISPLAY_NAME L"MiniTranslator"
-#define MINITRANS_INTERNAL_NAME L"MiniTranslator"
 
 #define MINITRANS_VERSION_MAJOR 1
 #define MINITRANS_VERSION_MINOR 2

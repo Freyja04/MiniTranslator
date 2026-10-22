@@ -1,4 +1,5 @@
 #include "app.hpp"
+#include "core_self_test.hpp"
 #include "result_renderer.hpp"
 #include "resource.h"
 #include "updater.hpp"
@@ -111,7 +112,9 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
         update_helper = minitrans::is_update_helper_request();
         if (update_helper) return minitrans::run_update_helper();
         if (self_test) {
+            minitrans::core_self_test();
             minitrans::util_self_test();
+            minitrans::config_self_test();
             minitrans::updater_self_test();
             minitrans::result_renderer_self_test();
         }

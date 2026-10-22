@@ -74,6 +74,9 @@ private:
     HANDLE value_{};
 };
 
+// "operation: system text" with the Win32 error text for `code`; the message
+// shape every Windows failure in this code base uses.
+[[nodiscard]] std::string describe_win32_error(std::string_view operation, DWORD code);
 [[noreturn]] void throw_last_error(std::string_view operation, DWORD code = GetLastError());
 std::wstring utf8_to_wide(std::string_view value);
 std::string wide_to_utf8(std::wstring_view value);
@@ -90,11 +93,8 @@ std::string base64_encode(std::span<const std::uint8_t> bytes);
 std::vector<std::uint8_t> base64_decode(std::string_view text);
 std::wstring url_encode(std::wstring_view value);
 std::wstring url_encode_utf8(std::string_view value);
-std::wstring html_unescape(std::wstring value);
 std::wstring new_uuid();
 bool copy_text_to_clipboard(HWND owner, std::wstring_view text) noexcept;
-bool constant_time_equal(std::span<const std::uint8_t> left,
-                         std::span<const std::uint8_t> right) noexcept;
 void util_self_test();
 
 }  // namespace minitrans

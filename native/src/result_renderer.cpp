@@ -788,11 +788,14 @@ PreparedResultRender prepare_result_render(
             bold,
         });
     }
-    output.translated = output.background;
-    if (!draw_translated_text(output.translated, output.layers,
-                              translations, output.font_family)) {
-        output.translated = output.background;
+    // Draw into a local buffer so the success path can move it into the result
+    // instead of copying the repaired background a second time.
+    PixelBuffer translated = output.background;
+    if (!draw_translated_text(translated, output.layers, translations, output.font_family)) {
+        // A partial draw must not reach the screen; restore the repaired pixels.
+        translated = output.background;
     }
+    output.translated = std::move(translated);
     DeleteDC(metrics_dc);
     return output;
 }
@@ -807,7 +810,6 @@ void result_renderer_self_test() {
     OcrLine line;
     line.text = L"Original";
     line.bounds = {20.0F, 18.0F, 100.0F, 26.0F};
-    line.confidence = 1.0F;
 
     BlockTranslation translation;
     translation.block.lines.push_back(std::move(line));

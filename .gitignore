@@ -1,20 +1,9 @@
 __pycache__/
 *.py[cod]
 .venv/
-.venv-build/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.pip-audit-cache/
-.tox/
-.nox/
-.coverage
-.coverage.*
-htmlcov/
 
 build/
 dist/
-*.spec
 
 # Editors and IDEs
 .idea/
@@ -36,8 +25,6 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# Signing certificates and locally generated diagnostics must never enter Git.
+# Signing certificates must never enter Git.
 *.pfx
 *.p12
-logs/
-errors.log*

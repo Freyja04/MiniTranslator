@@ -137,7 +137,6 @@ private:
     RECT list_rect_{};
     RECT card_rect_{};
     RECT block_title_rect_{};
-    RECT confidence_rect_{};
     RECT source_label_rect_{};
     RECT source_shell_rect_{};
     RECT target_label_rect_{};
@@ -152,11 +151,9 @@ private:
     CompletionCallback completion_callback_;
     std::wstring chinese_target_;
     std::wstring block_heading_;
-    std::wstring confidence_text_;
     std::wstring status_text_;
     std::wstring list_tooltip_text_;
     std::string window_error_;
-    COLORREF confidence_color_{};
     COLORREF status_color_{};
     COLORREF accent_color_{};
     int dpi_{96};

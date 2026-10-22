@@ -1,9 +1,12 @@
 #include "theme.hpp"
+#include "resource.h"
 
 #include <dwmapi.h>
 #include <uxtheme.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 namespace minitrans::theme {
 
 namespace {
@@ -53,7 +56,6 @@ void apply_dark_palette() noexcept {
     accent_foreground = RGB(14, 16, 19);
 
     tray_color_background = RGB(32, 32, 32);
-    tray_color_border = RGB(58, 58, 58);
     tray_color_separator = RGB(61, 61, 61);
     tray_color_hover = RGB(48, 48, 48);
     tray_color_text = RGB(243, 243, 243);
@@ -82,7 +84,6 @@ void apply_light_palette() noexcept {
     accent_foreground = RGB(255, 255, 255);
 
     tray_color_background = RGB(255, 255, 255);
-    tray_color_border = RGB(217, 222, 230);
     tray_color_separator = RGB(229, 232, 237);
     tray_color_hover = RGB(232, 235, 240);
     tray_color_text = RGB(30, 35, 42);
@@ -210,6 +211,59 @@ void apply_window_theme(HWND window, bool round_corners, bool custom_caption) no
 
 void apply_control_theme(HWND control) noexcept {
     if (control) SetWindowTheme(control, dark ? L"DarkMode_Explorer" : L"Explorer", nullptr);
+}
+
+void draw_brand_mark(HDC dc, const RECT& bounds, COLORREF color) noexcept {
+    const int width = static_cast<int>(bounds.right - bounds.left);
+    const int height = static_cast<int>(bounds.bottom - bounds.top);
+    if (!dc || width <= 0 || height <= 0) return;
+    // A 16 px version of the application mark: corner brackets plus a bold "A".
+    // Downscaling the bitmap icon to menu size turned it into a blur, so the
+    // mark is drawn as vectors in the same color as the neighbouring icons.
+    const auto map_x = [&](int logical) {
+        return bounds.left + MulDiv(logical, width, 16);
+    };
+    const auto map_y = [&](int logical) {
+        return bounds.top + MulDiv(logical, height, 16);
+    };
+    const int stroke = std::max(1, height / 8);
+    HPEN pen = CreatePen(PS_SOLID, stroke, color);
+    if (!pen) return;
+    const HGDIOBJ previous_pen = SelectObject(dc, pen);
+    const auto line = [&](int x0, int y0, int x1, int y1) {
+        MoveToEx(dc, map_x(x0), map_y(y0), nullptr);
+        LineTo(dc, map_x(x1), map_y(y1));
+    };
+    constexpr int inset = 1;
+    constexpr int far_edge = 14;
+    constexpr int arm = 3;
+    line(inset, inset, inset + arm, inset);
+    line(inset, inset, inset, inset + arm);
+    line(far_edge, inset, far_edge - arm, inset);
+    line(far_edge, inset, far_edge, inset + arm);
+    line(inset, far_edge, inset + arm, far_edge);
+    line(inset, far_edge, inset, far_edge - arm);
+    line(far_edge, far_edge, far_edge - arm, far_edge);
+    line(far_edge, far_edge, far_edge, far_edge - arm);
+    SelectObject(dc, previous_pen);
+    DeleteObject(pen);
+
+    const int font_height = std::max(7, MulDiv(height, 11, 16));
+    HFONT font = CreateFontW(-font_height, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                             L"Segoe UI");
+    if (!font) return;
+    const HGDIOBJ previous_font = SelectObject(dc, font);
+    const COLORREF previous_color = SetTextColor(dc, color);
+    const int previous_mode = SetBkMode(dc, TRANSPARENT);
+    RECT text_bounds{map_x(3), map_y(2), map_x(13), map_y(13)};
+    DrawTextW(dc, L"A", 1, &text_bounds,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    SetBkMode(dc, previous_mode);
+    SetTextColor(dc, previous_color);
+    SelectObject(dc, previous_font);
+    DeleteObject(font);
 }
 
 }  // namespace minitrans::theme

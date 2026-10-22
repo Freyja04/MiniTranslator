@@ -24,7 +24,6 @@ void SettingsWindow::create_controls() {
     create_hotkey_page();
     create_translation_page();
     create_ocr_page();
-    create_appearance_page();
     create_other_page();
     create_text_translation_page();
     load_values();
@@ -59,7 +58,6 @@ void SettingsWindow::create_hotkey_page() {
         SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
                      MAKELPARAM(px(12, dpi_), px(12, dpi_)));
     }
-    add_label(0, L"拖动鼠标    画出要翻译的区域，松手立刻识别并翻译\r\nEsc / 右键    取消这次框选");
 }
 
 void SettingsWindow::create_translation_page() {
@@ -120,13 +118,6 @@ void SettingsWindow::create_translation_page() {
     set_font(test_status_, small_font_);
     provider_hint_ = add_label(1, L"");
     set_font(provider_hint_, small_font_);
-    add_label(1, L"中文译成");
-    chinese_target_ = add_control(1, 0, L"COMBOBOX", L"",
-                                  CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
-                                  WS_VSCROLL | WS_TABSTOP);
-    for (const auto& [code, label] : zh_targets) {
-        SendMessageW(chinese_target_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.data()));
-    }
 }
 
 void SettingsWindow::create_ocr_page() {
@@ -135,12 +126,6 @@ void SettingsWindow::create_ocr_page() {
     // a one-item drop-down that implies a choice.
     ocr_engine_value_ = add_control(
         2, 0, L"STATIC", L"系统自带 OCR", SS_LEFT | SS_CENTERIMAGE, 0);
-    ocr_engine_note_ = add_label(2, L"截图只在本地识别，不会上传到任何服务器。");
-    SetWindowLongPtrW(ocr_engine_note_, GWL_STYLE,
-                      (GetWindowLongPtrW(ocr_engine_note_, GWL_STYLE) &
-                       ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
-                          SS_LEFT | SS_CENTERIMAGE);
-    set_font(ocr_engine_note_, small_font_);
     add_label(2, L"识别语言");
     ocr_languages_ = add_control(2, 0, L"COMBOBOX", L"",
                                  CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED |
@@ -157,31 +142,23 @@ void SettingsWindow::create_ocr_page() {
     std::stable_partition(installed.begin(), installed.end(), [](const std::wstring& tag) {
         return tag.starts_with(L"zh") || tag.starts_with(L"ja") || tag.starts_with(L"ko");
     });
-    ocr_language_options_.clear();
-    if (!installed.empty()) {
-        ocr_language_options_.push_back(installed);
+    ocr_language_options_ = settings_ocr::build_rows(installed);
+    for (const auto& row : ocr_language_options_) {
         SendMessageW(ocr_languages_, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(L"自动（推荐）"));
-        for (const auto& tag : installed) {
-            ocr_language_options_.push_back({tag});
-            const auto label = L"只用" + ocr_language_name(tag);
-            SendMessageW(ocr_languages_, CB_ADDSTRING, 0,
-                         reinterpret_cast<LPARAM>(label.c_str()));
-        }
-    } else {
-        ocr_language_options_.push_back({L"zh-Hans-CN", L"en-US"});
-        SendMessageW(ocr_languages_, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(L"未检测到 Windows OCR 语言包"));
+                     reinterpret_cast<LPARAM>(row.label.c_str()));
     }
-    std::wstring installed_names = L"系统已安装：";
-    if (installed.empty()) {
-        installed_names += L"无";
-    } else {
-        for (std::size_t index = 0; index < installed.size(); ++index) {
-            if (index) installed_names += L"、";
-            installed_names += ocr_language_name(installed[index]);
-        }
+    // What the recognized text is translated into. Text translation keeps its
+    // own choice inside the quick window and text page.
+    add_label(2, L"翻译语言");
+    translation_target_ = add_control(2, 0, L"COMBOBOX", L"",
+                                      CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED |
+                                      CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP);
+    for (const auto& [code, label] : language_choices) {
+        static_cast<void>(code);
+        SendMessageW(translation_target_, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(label.data()));
     }
+    const std::wstring installed_names = settings_ocr::installed_summary(installed);
     const HWND installed_label = add_label(2, installed_names.c_str());
     SetWindowLongPtrW(
         installed_label, GWL_STYLE,
@@ -189,14 +166,13 @@ void SettingsWindow::create_ocr_page() {
          ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
             SS_LEFT | SS_CENTERIMAGE);
     set_font(installed_label, small_font_);
-    // This label is the first row inside the language-install card, so it
-    // shares the card's text-color token with the other explanatory copy.
-    SetWindowTextW(installed_label, installed_names.c_str());
     ocr_upscale_ = add_control(2, 0, L"BUTTON", L"小图自动放大后识别",
                                BS_OWNERDRAW | WS_TABSTOP);
 }
 
-void SettingsWindow::create_appearance_page() {
+void SettingsWindow::create_other_page() {
+    // The theme switch moved here when the 显示 page went away; it opens the
+    // page, followed by the startup option and the maintenance buttons.
     add_label(3, L"主题");
     theme_mode_ = add_control(3, 0, L"COMBOBOX", L"",
                               CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED |
@@ -206,35 +182,40 @@ void SettingsWindow::create_appearance_page() {
         SendMessageW(theme_mode_, CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(mode.data()));
     }
-    auto_copy_ = add_control(3, 0, L"BUTTON", L"自动复制到剪贴板",
+    autostart_ = add_control(3, 0, L"BUTTON", L"开机自动启动",
                              BS_OWNERDRAW | WS_TABSTOP);
-    add_label(3, L"复制译文");
-}
-
-void SettingsWindow::create_other_page() {
-    autostart_ = add_control(4, 0, L"BUTTON", L"开机自动启动",
-                             BS_OWNERDRAW | WS_TABSTOP);
-    add_label(4, L"配置文件");
-    config_path_ = add_control(
-        4, 0, L"STATIC", L"",
-        SS_LEFT | SS_CENTERIMAGE | SS_ENDELLIPSIS);
-    open_config_ = add_control(4, 0, L"BUTTON", L"在资源管理器中打开",
-                               BS_OWNERDRAW | WS_TABSTOP, id_open_config);
-    restart_ = add_control(4, 0, L"BUTTON", L"重启程序",
+    restart_ = add_control(3, 0, L"BUTTON", L"重启程序",
                            BS_OWNERDRAW | WS_TABSTOP, id_restart);
-    check_updates_ = add_control(4, 0, L"BUTTON", L"检查更新",
+    check_updates_ = add_control(3, 0, L"BUTTON", L"检查更新",
                                  BS_OWNERDRAW | WS_TABSTOP, id_check_updates);
-    add_label(4, L"这里改的每一项都即时写盘。API 密钥用 Windows 的 DPAPI 加过密，只有当前这台电脑上的当前这个账户能解开。");
-    diagnostic_command_ = add_control(
-        4, 0, L"STATIC", L"MiniTranslator.exe --selftest",
-        SS_LEFT | SS_CENTERIMAGE | SS_ENDELLIPSIS);
-    copy_diagnostic_ = add_control(4, 0, L"BUTTON", L"复制",
-                                   BS_OWNERDRAW | WS_TABSTOP, id_copy_diagnostic);
+    // Inline progress/outcome for the update check, shown right of the button.
+    update_status_ = add_label(3, L"");
+    SetWindowLongPtrW(update_status_, GWL_STYLE,
+                      (GetWindowLongPtrW(update_status_, GWL_STYLE) &
+                       ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
+                          SS_LEFT | SS_CENTERIMAGE);
+    set_font(update_status_, small_font_);
 }
 
 void SettingsWindow::create_text_translation_page() {
+    // The page header mirrors the quick translation window: capture on the
+    // left edge of the card, languages on the right.
+    text_capture_ = add_control(4, 0, L"BUTTON", L"",
+                                BS_OWNERDRAW | WS_TABSTOP, id_text_capture);
+    text_source_ = add_control(
+        4, 0, L"COMBOBOX", L"",
+        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
+            WS_VSCROLL | WS_TABSTOP,
+        id_text_source);
+    populate_text_sources(text_source_);
+    SendMessageW(text_source_, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1),
+                 px(32, dpi_));
+    SendMessageW(text_source_, CB_SETITEMHEIGHT, 0, px(32, dpi_));
+    SendMessageW(text_source_, CB_SETMINVISIBLE, 8, 0);
+    text_swap_ = add_control(4, 0, L"BUTTON", L"",
+                             BS_OWNERDRAW | WS_TABSTOP, id_text_swap);
     text_target_ = add_control(
-        5, 0, L"COMBOBOX", L"",
+        4, 0, L"COMBOBOX", L"",
         CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
             WS_VSCROLL | WS_TABSTOP,
         id_text_target);
@@ -244,23 +225,21 @@ void SettingsWindow::create_text_translation_page() {
     SendMessageW(text_target_, CB_SETITEMHEIGHT, 0, px(32, dpi_));
     SendMessageW(text_target_, CB_SETMINVISIBLE, 8, 0);
 
-    text_translate_ = add_control(5, 0, L"BUTTON", L"立即翻译",
-                                  BS_OWNERDRAW | WS_TABSTOP,
-                                  id_text_translate);
-    text_clear_ = add_control(5, 0, L"BUTTON", L"清空",
+    text_clear_ = add_control(4, 0, L"BUTTON", L"",
                               BS_OWNERDRAW | WS_TABSTOP, id_text_clear);
-    text_copy_ = add_control(5, 0, L"BUTTON", L"复制译文",
+    text_copy_ = add_control(4, 0, L"BUTTON", L"",
                              BS_OWNERDRAW | WS_TABSTOP, id_text_copy);
     text_input_ = add_control(
-        5, 0, L"EDIT", L"",
+        4, 0, L"EDIT", L"",
         ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | ES_NOHIDESEL |
             WS_TABSTOP,
         id_text_input);
     text_output_ = add_control(
-        5, 0, L"EDIT", L"",
-        ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | ES_NOHIDESEL |
-            WS_TABSTOP,
+        4, 0, L"EDIT", L"",
+        ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | ES_NOHIDESEL,
         id_text_output);
+    auto_copy_ = add_control(4, 0, L"BUTTON", L"译文自动复制到剪贴板",
+                             BS_OWNERDRAW | WS_TABSTOP);
     SendMessageW(text_input_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
                  MAKELPARAM(px(12, dpi_), px(12, dpi_)));
     SendMessageW(text_output_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,

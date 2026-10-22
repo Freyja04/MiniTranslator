@@ -137,7 +137,36 @@ HttpClient::~HttpClient() {
     }
 }
 
+namespace {
+constexpr DWORD network_retry_delay_ms = 250;
+}  // namespace
+
+bool HttpError::retryable() const noexcept {
+    switch (network_error_) {
+    case ERROR_WINHTTP_TIMEOUT:
+    case ERROR_WINHTTP_NAME_NOT_RESOLVED:
+    case ERROR_WINHTTP_CANNOT_CONNECT:
+    case ERROR_WINHTTP_CONNECTION_ERROR:
+        return true;
+    default:
+        return false;
+    }
+}
+
 HttpResponse HttpClient::send(const HttpRequest& request, std::stop_token stop) const {
+    try {
+        return send_once(request, stop);
+    } catch (const HttpError& error) {
+        // One extra attempt, and only for failures where no response arrived:
+        // a retry cannot duplicate work the endpoint already performed.
+        if (!error.retryable() || stop.stop_requested()) throw;
+        Sleep(network_retry_delay_ms);
+        if (stop.stop_requested()) throw;
+        return send_once(request, stop);
+    }
+}
+
+HttpResponse HttpClient::send_once(const HttpRequest& request, std::stop_token stop) const {
     if (!session_ || request.url.empty()) {
         throw HttpError("HTTP request URL is empty");
     }
@@ -150,7 +179,8 @@ HttpResponse HttpClient::send(const HttpRequest& request, std::stop_token stop) 
     }
     InternetHandle connection(WinHttpConnect(session_, parsed.host.c_str(), parsed.port, 0));
     if (!connection) {
-        throw_last_error("WinHttpConnect failed");
+        const DWORD error = GetLastError();
+        throw HttpError(describe_win32_error("WinHttpConnect failed", error), 0, error);
     }
     const DWORD flags = parsed.secure ? WINHTTP_FLAG_SECURE : 0;
     InternetHandle handle(WinHttpOpenRequest(
@@ -202,12 +232,14 @@ HttpResponse HttpClient::send(const HttpRequest& request, std::stop_token stop) 
             header_block.empty() ? 0 : static_cast<DWORD>(header_block.size()),
             const_cast<void*>(body), static_cast<DWORD>(request.body.size()),
             static_cast<DWORD>(request.body.size()), 0)) {
+        const DWORD error = GetLastError();
         if (stop.stop_requested()) throw HttpError("request cancelled");
-        throw_last_error("send HTTP request");
+        throw HttpError(describe_win32_error("send HTTP request", error), 0, error);
     }
     if (!WinHttpReceiveResponse(handle.get(), nullptr)) {
+        const DWORD error = GetLastError();
         if (stop.stop_requested()) throw HttpError("request cancelled");
-        throw_last_error("receive HTTP response");
+        throw HttpError(describe_win32_error("receive HTTP response", error), 0, error);
     }
 
     HttpResponse response;
@@ -392,19 +424,6 @@ std::wstring validate_api_base_url(std::wstring_view value,
         url.pop_back();
     }
     return url;
-}
-
-std::wstring validate_same_origin_https(std::wstring_view value,
-                                        std::wstring_view base_url,
-                                        std::wstring_view label) {
-    const auto candidate = parse_url(value);
-    const auto base = parse_url(base_url);
-    if (!candidate.secure || !base.secure || candidate.has_userinfo ||
-        candidate.host.empty() || lower_ascii(candidate.host) != lower_ascii(base.host) ||
-        candidate.port != base.port || candidate.path.find(L'#') != std::wstring::npos) {
-        throw HttpError(wide_to_utf8(label) + " must use the configured HTTPS origin");
-    }
-    return std::wstring(value);
 }
 
 std::wstring append_query(

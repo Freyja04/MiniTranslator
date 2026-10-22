@@ -4,7 +4,6 @@
 #include <wincrypt.h>
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cstring>
 #include <cwctype>
@@ -14,7 +13,7 @@
 
 namespace minitrans {
 
-[[noreturn]] void throw_last_error(std::string_view operation, DWORD code) {
+std::string describe_win32_error(std::string_view operation, DWORD code) {
     LPWSTR raw = nullptr;
     const DWORD size = FormatMessageW(
         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
@@ -24,7 +23,11 @@ namespace minitrans {
     if (raw) {
         LocalFree(raw);
     }
-    throw AppError(std::string(operation) + ": " + wide_to_utf8(trim(std::move(detail))));
+    return std::string(operation) + ": " + wide_to_utf8(trim(std::move(detail)));
+}
+
+[[noreturn]] void throw_last_error(std::string_view operation, DWORD code) {
+    throw AppError(describe_win32_error(operation, code));
 }
 
 std::wstring utf8_to_wide(std::string_view value) {
@@ -226,21 +229,6 @@ std::wstring url_encode(std::wstring_view value) {
     return url_encode_utf8(wide_to_utf8(value));
 }
 
-std::wstring html_unescape(std::wstring value) {
-    const std::array<std::pair<std::wstring_view, std::wstring_view>, 5> named{{
-        {L"&amp;", L"&"}, {L"&lt;", L"<"}, {L"&gt;", L">"},
-        {L"&quot;", L"\""}, {L"&#39;", L"'"},
-    }};
-    for (const auto& [encoded, decoded] : named) {
-        std::size_t at = 0;
-        while ((at = value.find(encoded, at)) != std::wstring::npos) {
-            value.replace(at, encoded.size(), decoded);
-            at += decoded.size();
-        }
-    }
-    return value;
-}
-
 std::wstring new_uuid() {
     GUID value{};
     if (FAILED(CoCreateGuid(&value))) {
@@ -276,18 +264,6 @@ bool copy_text_to_clipboard(HWND owner, std::wstring_view text) noexcept {
     if (!copied) GlobalFree(memory);
     CloseClipboard();
     return copied;
-}
-
-bool constant_time_equal(std::span<const std::uint8_t> left,
-                         std::span<const std::uint8_t> right) noexcept {
-    if (left.size() != right.size()) {
-        return false;
-    }
-    std::uint8_t difference = 0;
-    for (std::size_t index = 0; index < left.size(); ++index) {
-        difference |= left[index] ^ right[index];
-    }
-    return difference == 0;
 }
 
 void util_self_test() {

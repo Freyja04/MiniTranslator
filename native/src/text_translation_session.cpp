@@ -1,6 +1,7 @@
 #include "text_translation_session.hpp"
 
 #include "language.hpp"
+#include "language_catalog.hpp"
 #include "util.hpp"
 
 #include <algorithm>
@@ -10,19 +11,14 @@ namespace minitrans {
 
 namespace {
 
-constexpr std::array<std::wstring_view, 9> targets{
-    L"zh-Hans", L"zh-Hant", L"en", L"ja", L"ko",
-    L"fr", L"de", L"es", L"ru",
-};
-
 bool supported_target(std::wstring_view value) noexcept {
-    return value.empty() || std::find(targets.begin(), targets.end(), value) != targets.end();
+    return value.empty() || find_language(value) != nullptr;
 }
 
 }  // namespace
 
-const std::array<std::wstring_view, 9>& text_translation_targets() noexcept {
-    return targets;
+const std::array<std::wstring_view, language_catalog.size()>& text_translation_targets() noexcept {
+    return known_language_codes;
 }
 
 TextTranslationSession::TextTranslationSession(ConfigStore& config,
@@ -51,6 +47,10 @@ bool TextTranslationSession::can_submit() const noexcept {
     return has_visible_text() && character_count() <= max_characters;
 }
 
+std::wstring TextTranslationSession::effective_source() const {
+    return source_;
+}
+
 std::wstring TextTranslationSession::effective_target() const {
     if (!target_.empty()) return target_;
     return target_for(input_, config_.string(L"lang.zh_target", L"en"));
@@ -59,7 +59,7 @@ std::wstring TextTranslationSession::effective_target() const {
 std::wstring TextTranslationSession::configuration_signature() const {
     const auto endpoint = resolve_translation_endpoint(config_);
     return endpoint.provider + L"\n" + endpoint.options_json + L"\n" +
-           config_.string(L"lang.zh_target", L"en");
+           config_.string(L"lang.zh_target", L"en") + L"\n" + source_;
 }
 
 void TextTranslationSession::notify_changed() {
@@ -90,6 +90,21 @@ bool TextTranslationSession::set_input(std::wstring value) {
     return true;
 }
 
+bool TextTranslationSession::set_source(std::wstring value) {
+    if (!supported_target(value)) return false;
+    if (value == source_) return false;
+    source_ = std::move(value);
+    if (!has_visible_text()) {
+        invalidate(TextTranslationState::idle);
+    } else if (character_count() > max_characters) {
+        invalidate(TextTranslationState::too_long);
+    } else {
+        invalidate(TextTranslationState::waiting);
+    }
+    notify_changed();
+    return true;
+}
+
 bool TextTranslationSession::set_target(std::wstring value) {
     if (!supported_target(value)) return false;
     if (value == target_) return false;
@@ -103,6 +118,18 @@ bool TextTranslationSession::set_target(std::wstring value) {
     }
     notify_changed();
     return true;
+}
+
+void TextTranslationSession::clear_output() {
+    if (output_.empty() && error_.empty() &&
+        state_ != TextTranslationState::translating &&
+        state_ != TextTranslationState::ready &&
+        state_ != TextTranslationState::error) {
+        return;
+    }
+    invalidate(has_visible_text() ? TextTranslationState::waiting
+                                  : TextTranslationState::idle);
+    notify_changed();
 }
 
 void TextTranslationSession::clear() {
@@ -119,6 +146,7 @@ bool TextTranslationSession::submit() {
     line.text = input_;
     line.bounds = RectF{0.0F, 0.0F, 1.0F, 1.0F};
     block.lines.push_back(std::move(line));
+    block.forced_source_language = source_;
     block.forced_target_language = target_;
 
     try {
@@ -182,11 +210,11 @@ void TextTranslationSession::self_test() {
     set_input(std::wstring(max_characters, L'a'));
     if (character_count() != max_characters || !can_submit() ||
         state_ != TextTranslationState::waiting) {
-        throw AppError("text session self-test rejected the 5000 character boundary");
+        throw AppError("text session self-test rejected the 500 character boundary");
     }
     set_input(std::wstring(max_characters + 1, L'a'));
     if (can_submit() || state_ != TextTranslationState::too_long) {
-        throw AppError("text session self-test accepted more than 5000 characters");
+        throw AppError("text session self-test accepted more than 500 characters");
     }
     std::wstring surrogate_input(max_characters - 1, L'a');
     surrogate_input.push_back(static_cast<wchar_t>(0xD83D));

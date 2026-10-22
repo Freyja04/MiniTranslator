@@ -33,7 +33,7 @@ struct PipelineOptions {
     bool ocr_upscale{true};
     std::wstring translator_provider;
     std::wstring translator_options_json;
-    std::wstring chinese_target{L"en"};
+    std::wstring target{L"zh-Hans"};
 
     static PipelineOptions from_config(const ConfigStore& config);
 };
@@ -101,6 +101,9 @@ private:
                                     std::stop_token stop);
     void finish(PipelineCompletion completion);
     void worker_failed() noexcept;
+    // Shared admission path: cancels the lane's active/pending work, stamps the
+    // request and queues it. Both public schedule entry points funnel through here.
+    std::uint64_t enqueue(std::shared_ptr<Request> request, PipelineLane lane);
 
     HWND dispatcher_{};
     mutable std::mutex mutex_;

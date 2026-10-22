@@ -1,6 +1,8 @@
 #include "settings_window.hpp"
 #include "settings_window_internal.hpp"
 
+#include "settings_provider.hpp"
+
 namespace minitrans {
 
 using namespace settings_internal;
@@ -12,48 +14,37 @@ void SettingsWindow::load_values() {
     SetWindowTextW(toggle_hotkey_, config_.string(L"hotkey_toggle", L"Ctrl+Alt+W").c_str());
     SetWindowTextW(text_hotkey_, config_.string(
         L"hotkey_text_translate", L"Ctrl+Alt+Space").c_str());
-    const auto configured_provider = config_.string(L"translator.provider", L"microsoft_free");
+    const auto configured_provider =
+        config_.string(L"translator.provider", settings_provider::default_id());
     const bool large_model = configured_provider == L"ai";
-    int provider_position = 0;
-    int provider_selection = 0;
-    for (const auto& provider : providers) {
-        if (provider.kind == ProviderInfo::Kind::ai) continue;
-        if (provider.id == configured_provider) provider_selection = provider_position;
-        ++provider_position;
-    }
+    const std::size_t traditional = settings_provider::index_of(configured_provider);
     loaded_provider_ = large_model ? std::wstring(L"ai") : configured_provider;
     select_combo(translator_class_, large_model ? 1 : 0);
-    select_combo(provider_, large_model ? 0 : provider_selection);
+    select_combo(provider_,
+                 large_model || traditional == settings_provider::not_listed
+                     ? 0 : static_cast<int>(traditional));
     populate_profile_names();
     select_profile(config_.string(L"translator.ai_selected"));
     refresh_provider_fields(true);
-    const auto zh = config_.string(L"lang.zh_target", L"en");
-    int zh_index = 0;
-    for (std::size_t index = 0; index < zh_targets.size(); ++index) {
-        if (zh_targets[index].first == zh) zh_index = static_cast<int>(index);
+    const auto target = config_.string(L"lang.target", L"zh-Hans");
+    int target_index = 0;
+    for (std::size_t index = 0; index < language_choices.size(); ++index) {
+        if (language_choices[index].first == target) {
+            target_index = static_cast<int>(index);
+        }
     }
-    select_combo(chinese_target_, zh_index);
+    select_combo(translation_target_, target_index);
 
     const auto saved_languages = config_.strings(L"ocr.languages");
-    int language_index = 0;
-    bool language_found = false;
-    for (std::size_t index = 0; index < ocr_language_options_.size(); ++index) {
-        if (ocr_language_options_[index] == saved_languages) {
-            language_index = static_cast<int>(index);
-            language_found = true;
-            break;
-        }
-    }
-    if (!language_found && !saved_languages.empty()) {
-        std::wstring label = L"当前设置（";
-        for (const auto& language : saved_languages) {
-            if (label.size() > 5) label += L"、";
-            label += ocr_language_name(language);
-        }
-        label += L"）";
-        ocr_language_options_.push_back(saved_languages);
+    const std::size_t saved_row =
+        settings_ocr::find_row(ocr_language_options_, saved_languages);
+    int language_index = saved_row == settings_ocr::not_found ? 0 : static_cast<int>(saved_row);
+    if (saved_row == settings_ocr::not_found && !saved_languages.empty()) {
+        // The saved set is no longer offered (a language pack was removed):
+        // append it so the page still shows what will be used.
+        ocr_language_options_.push_back(settings_ocr::saved_row(saved_languages));
         SendMessageW(ocr_languages_, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(label.c_str()));
+                     reinterpret_cast<LPARAM>(ocr_language_options_.back().label.c_str()));
         language_index = static_cast<int>(ocr_language_options_.size() - 1);
     }
     select_combo(ocr_languages_, language_index);
@@ -64,7 +55,6 @@ void SettingsWindow::load_values() {
     select_combo(theme_mode_, theme_index);
     set_checkbox(auto_copy_, config_.boolean(L"appearance.auto_copy", true));
     set_checkbox(autostart_, autostart_enabled());
-    SetWindowTextW(config_path_, config_.path().c_str());
     loading_ = false;
 }
 
@@ -140,43 +130,26 @@ void SettingsWindow::populate_profile_names() {
     }
     if (selection >= 0) {
         select_combo(profile_select_, selection);
-    } else if (!list.empty()) {
-        loaded_profile_ = list.front().name;
-        select_combo(profile_select_, 0);
     } else {
-        loaded_profile_.clear();
-        SetWindowTextW(profile_select_, L"");
+        loaded_profile_ = settings_profiles::resolve_selection(list, loaded_profile_);
+        if (loaded_profile_.empty()) {
+            SetWindowTextW(profile_select_, L"");
+        } else {
+            select_combo(profile_select_, 0);
+        }
     }
     EnableWindow(profile_remove_, !loaded_profile_.empty());
 }
 
 void SettingsWindow::select_profile(std::wstring_view name) {
     const auto list = read_profiles();
-    bool found = false;
-    for (const auto& profile : list) {
-        if (profile.name == name) {
-            found = true;
-            break;
-        }
-    }
-    loaded_profile_ = found ? std::wstring(name)
-                            : (list.empty() ? std::wstring() : list.front().name);
+    loaded_profile_ = settings_profiles::resolve_selection(list, name);
     populate_profile_names();
 }
 
 void SettingsWindow::add_profile() {
     auto list = read_profiles();
-    int suffix = static_cast<int>(list.size()) + 1;
-    std::wstring name = L"接口 " + std::to_wstring(suffix);
-    const auto taken = [&](std::wstring_view candidate) {
-        return std::any_of(list.begin(), list.end(), [&](const AiProfile& profile) {
-            return profile.name == candidate;
-        });
-    };
-    while (taken(name)) {
-        ++suffix;
-        name = L"接口 " + std::to_wstring(suffix);
-    }
+    const std::wstring name = settings_profiles::next_default_name(list);
     AiProfile profile;
     profile.name = name;
     profile.protocol = L"openai_chat";
@@ -186,21 +159,20 @@ void SettingsWindow::add_profile() {
     populate_profile_names();
     select_combo(profile_select_, static_cast<int>(list.size() - 1));
     refresh_provider_fields(true);
-    save_values(false);
+    save_values();
 }
 
 void SettingsWindow::remove_profile() {
     auto list = read_profiles();
     if (list.empty()) return;
-    const int index = std::clamp(profile_index(), 0, static_cast<int>(list.size()) - 1);
-    list.erase(list.begin() + index);
-    loaded_profile_ = list.empty() ? std::wstring()
-                                   : list[static_cast<std::size_t>(
-                                         std::min(index, static_cast<int>(list.size()) - 1))].name;
+    const std::size_t index =
+        settings_profiles::clamp_index(profile_index(), list.size());
+    list.erase(list.begin() + static_cast<std::ptrdiff_t>(index));
+    loaded_profile_ = settings_profiles::name_after_removal(list, index);
     write_profiles(list);
     populate_profile_names();
     refresh_provider_fields(false);
-    save_values(false);
+    save_values();
 }
 
 void SettingsWindow::save_profile_fields() {
@@ -210,27 +182,13 @@ void SettingsWindow::save_profile_fields() {
     const int index = profile_index();
     if (index < 0) return;
     auto& profile = list[static_cast<std::size_t>(index)];
-    auto renamed = trim(text_of(profile_select_));
+    const auto requested = trim(text_of(profile_select_));
     bool rename_happened = false;
-    if (!renamed.empty() && renamed != profile.name) {
+    if (!requested.empty() && requested != profile.name) {
         // The name is the identity translator.ai_selected points at, so a rename
         // must not collide with another endpoint in the same list.
-        const auto taken = [&](std::wstring_view candidate) {
-            for (std::size_t other = 0; other < list.size(); ++other) {
-                if (other != static_cast<std::size_t>(index) &&
-                    list[other].name == candidate) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        if (taken(renamed)) {
-            const auto base = renamed;
-            int suffix = 2;
-            while (taken(renamed)) {
-                renamed = base + L" " + std::to_wstring(suffix++);
-            }
-        }
+        const auto renamed = settings_profiles::unique_rename(
+            list, static_cast<std::size_t>(index), requested);
         profile.name = renamed;
         rename_happened = true;
         SetWindowTextW(profile_select_, profile.name.c_str());
@@ -279,41 +237,29 @@ void SettingsWindow::refresh_provider_fields(bool load) {
     if (large_model) {
         loaded_provider_ = L"ai";
     } else {
-        // Same skip rule as the rest of the page: the combo only lists the
-        // traditional entries, so its index counts those rows alone.
-        const int chosen = selected_index(provider_);
-        int seen = 0;
-        loaded_provider_ = providers.front().id;
-        for (const auto& provider : providers) {
-            if (provider.kind == ProviderInfo::Kind::ai) continue;
-            if (seen == chosen) {
-                loaded_provider_ = provider.id;
-                break;
-            }
-            ++seen;
-        }
+        // The combo only lists the traditional entries, so its index counts
+        // those rows alone.
+        const int chosen = std::max(0, selected_index(provider_));
+        loaded_provider_ = std::wstring(
+            settings_provider::id_at(static_cast<std::size_t>(chosen)));
     }
-    const auto traditional = std::find_if(
-        providers.begin(), providers.end(),
-        [&](const ProviderInfo& value) { return value.id == loaded_provider_; });
-    const bool has_key = large_model ||
-        (traditional != providers.end() && traditional->kind != ProviderInfo::Kind::free);
+    const auto fields = settings_provider::fields_for(loaded_provider_);
     for (const auto [control, visible] : {
-             std::pair{provider_label_, !large_model},
-             std::pair{provider_, !large_model},
-             std::pair{profile_label_, large_model},
-             std::pair{profile_select_, large_model},
-             std::pair{profile_add_, large_model},
-             std::pair{profile_remove_, large_model},
-             std::pair{protocol_label_, large_model},
-             std::pair{ai_protocol_, large_model},
-             std::pair{provider_key_label_, has_key},
-             std::pair{provider_key_, has_key},
-             std::pair{provider_endpoint_label_, large_model},
-             std::pair{provider_endpoint_, large_model},
-             std::pair{provider_model_label_, large_model},
-             std::pair{provider_model_, large_model},
-             std::pair{model_refresh_, large_model},
+             std::pair{provider_label_, fields.provider_combo},
+             std::pair{provider_, fields.provider_combo},
+             std::pair{profile_label_, fields.profile_picker},
+             std::pair{profile_select_, fields.profile_picker},
+             std::pair{profile_add_, fields.profile_picker},
+             std::pair{profile_remove_, fields.profile_picker},
+             std::pair{protocol_label_, fields.protocol},
+             std::pair{ai_protocol_, fields.protocol},
+             std::pair{provider_key_label_, fields.key},
+             std::pair{provider_key_, fields.key},
+             std::pair{provider_endpoint_label_, fields.endpoint},
+             std::pair{provider_endpoint_, fields.endpoint},
+             std::pair{provider_model_label_, fields.model},
+             std::pair{provider_model_, fields.model},
+             std::pair{model_refresh_, fields.model_refresh},
              std::pair{test_button_, true},
              std::pair{test_status_, true}}) {
         ShowWindow(control, visible ? SW_SHOW : SW_HIDE);
@@ -369,7 +315,7 @@ void SettingsWindow::refresh_provider_fields(bool load) {
     SetWindowTextW(provider_hint_,
                    large_model
                        ? L"可以添加多个大模型接口，各自填 Base URL、API Key 和模型；名称用于区分。"
-                       : L"这些是免密钥或只需密钥的传统接口，由各服务商的网页/移动端接口提供，可能被限流或随服务改版失效。");
+                       : L"部分传统翻译接口和大模型翻译接口需自备。");
     EnableWindow(profile_remove_, large_model && !loaded_profile_.empty());
     EnableWindow(model_refresh_, large_model && !model_refreshing_);
     layout_controls();
@@ -380,7 +326,7 @@ void SettingsWindow::refresh_provider_fields(bool load) {
     }
 }
 
-bool SettingsWindow::save_values(bool) {
+bool SettingsWindow::save_values() {
     if (loading_) return true;
     const std::wstring before = config_.root().Stringify().c_str();
     const auto old_capture = config_.string(L"hotkey", L"Ctrl+Alt+Q");
@@ -417,27 +363,20 @@ bool SettingsWindow::save_values(bool) {
         } else {
             // The provider combo lists only the traditional entries, so its
             // selection is a position among the non-AI rows of the catalog.
-            const int chosen = selected_index(provider_);
-            int seen = 0;
-            std::wstring_view selected_provider = providers.front().id;
-            for (const auto& provider : providers) {
-                if (provider.kind == ProviderInfo::Kind::ai) continue;
-                if (seen == chosen) {
-                    selected_provider = provider.id;
-                    break;
-                }
-                ++seen;
-            }
-            config_.set_string(L"translator.provider", selected_provider);
+            const int chosen = std::max(0, selected_index(provider_));
+            config_.set_string(L"translator.provider",
+                               settings_provider::id_at(static_cast<std::size_t>(chosen)));
         }
-        config_.set_string(L"lang.zh_target",
-                           zh_targets[std::clamp(selected_index(chinese_target_), 0,
-                                                 static_cast<int>(zh_targets.size() - 1))].first);
-        const int language_index = std::clamp(
-            selected_index(ocr_languages_), 0,
-            std::max(0, static_cast<int>(ocr_language_options_.size()) - 1));
-        config_.set_strings(L"ocr.languages",
-                            ocr_language_options_[static_cast<std::size_t>(language_index)]);
+        config_.set_string(L"lang.target",
+                           language_choices[std::clamp(
+                               selected_index(translation_target_), 0,
+                               static_cast<int>(language_choices.size() - 1))].first);
+        if (!ocr_language_options_.empty()) {
+            const std::size_t language_index = settings_ocr::clamp_selection(
+                selected_index(ocr_languages_), ocr_language_options_.size());
+            config_.set_strings(L"ocr.languages",
+                                ocr_language_options_[language_index].languages);
+        }
         config_.set_boolean(L"ocr.upscale", checkbox_checked(ocr_upscale_));
         const int theme_selection = std::clamp(selected_index(theme_mode_), 0, 2);
         const auto theme_mode =
@@ -644,7 +583,7 @@ void SettingsWindow::finish_model_refresh(ModelListResult result) {
     if (!kept) message += L"，已选 " + text_of(provider_model_);
     SetWindowTextW(test_status_, message.c_str());
     InvalidateRect(test_status_, nullptr, TRUE);
-    save_values(false);
+    save_values();
 }
 
 void SettingsWindow::cancel_model_refresh(bool clear_status) noexcept {
@@ -683,6 +622,18 @@ void SettingsWindow::set_status(std::wstring_view message, bool error) {
     SetWindowTextW(status_, std::wstring(message).c_str());
     ShowWindow(status_, message.empty() ? SW_HIDE : SW_SHOWNA);
     if (!message.empty()) InvalidateRect(status_, nullptr, TRUE);
+}
+
+void SettingsWindow::set_update_status(std::wstring_view text, bool error) {
+    update_status_error_ = error;
+    if (!update_status_ || !IsWindow(update_status_)) return;
+    SetWindowTextW(update_status_, std::wstring(text).c_str());
+    InvalidateRect(update_status_, nullptr, TRUE);
+}
+
+void SettingsWindow::set_update_check_enabled(bool enabled) {
+    if (!check_updates_ || !IsWindow(check_updates_)) return;
+    EnableWindow(check_updates_, enabled ? TRUE : FALSE);
 }
 
 

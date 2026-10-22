@@ -1,0 +1,32 @@
+{
+  "comment": [
+    "Shared SemVer fixtures. release/check_version_cases.py validates these",
+    "against the release tooling (generate_manifest.VERSION_RE) and checks that",
+    "native/src/updater.cpp carries the same literals in updater_self_test, so",
+    "the Python release pipeline and the in-app updater cannot drift apart."
+  ],
+  "valid": [
+    {"version": "0.0.0", "major": 0, "minor": 0, "patch": 0, "prerelease": ""},
+    {"version": "1.2.3", "major": 1, "minor": 2, "patch": 3, "prerelease": ""},
+    {"version": "10.20.30", "major": 10, "minor": 20, "patch": 30, "prerelease": ""},
+    {"version": "1.2.4-rc.1", "major": 1, "minor": 2, "patch": 4, "prerelease": "rc.1"},
+    {"version": "1.2.4-rc.1+build.7", "major": 1, "minor": 2, "patch": 4, "prerelease": "rc.1"},
+    {"version": "2.0.0+build.7", "major": 2, "minor": 0, "patch": 0, "prerelease": ""},
+    {"version": "1.0.0-alpha", "major": 1, "minor": 0, "patch": 0, "prerelease": "alpha"},
+    {"version": "1.0.0-alpha.beta", "major": 1, "minor": 0, "patch": 0, "prerelease": "alpha.beta"},
+    {"version": "1.0.0-0.3.7", "major": 1, "minor": 0, "patch": 0, "prerelease": "0.3.7"},
+    {"version": "1.2.3-Beta-2", "major": 1, "minor": 2, "patch": 3, "prerelease": "Beta-2"}
+  ],
+  "invalid": [
+    "",
+    "1.2",
+    "1.2.3.4",
+    "v1.2.3",
+    "01.2.3",
+    "1.02.3",
+    "1.2.3-",
+    "1.2.3+",
+    "1.2.3-01",
+    "1.2.3+build..7"
+  ]
+}

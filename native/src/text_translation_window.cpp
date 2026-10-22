@@ -15,17 +15,15 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdlib>
-#include <stdexcept>
 
 namespace minitrans {
 
 namespace {
 
-constexpr wchar_t full_window_class[] = L"MiniTranslator.Native.TextTranslateWindow.v1";
 constexpr wchar_t quick_window_class[] = L"MiniTranslator.Native.QuickTranslateWindow.v1";
 constexpr UINT_PTR input_subclass_id = 11;
 constexpr UINT_PTR target_combo_subclass_id = 12;
+constexpr UINT_PTR source_combo_subclass_id = 13;
 
 using theme::color_background;
 using theme::color_border;
@@ -34,22 +32,22 @@ using theme::color_error;
 using theme::color_faint;
 using theme::color_hover;
 using theme::color_input;
+using theme::color_line_high;
 using theme::color_surface;
 using theme::color_text;
-using theme::font_size_body;
 using theme::font_size_small;
 using theme::font_size_translation;
 constexpr int quick_window_logical_width = 480;
-constexpr int quick_window_logical_height = 300;
+constexpr int quick_window_logical_height = 320;
 
 constexpr int id_target = 4101;
 constexpr int id_input = 4102;
 constexpr int id_output = 4103;
 constexpr int id_clear = 4104;
 constexpr int id_copy = 4105;
-constexpr int id_settings = 4106;
-constexpr int id_close = 4107;
 constexpr int id_quick_capture = 4109;
+constexpr int id_source = 4110;
+constexpr int id_swap = 4111;
 
 struct ProcessResourceSnapshot {
     DWORD gdi_objects{};
@@ -235,7 +233,7 @@ bool icon_font_family_available(HDC dc, const wchar_t* face) {
     return found;
 }
 
-HFONT create_icon_font(int dpi) {
+HFONT create_icon_font(int dpi, int logical_pixels) {
     // Segoe Fluent Icons only ships with newer Windows builds. Fall back to
     // Segoe MDL2 Assets so the icon buttons also render on Windows 10.
     constexpr std::array<const wchar_t*, 3> faces{
@@ -245,7 +243,7 @@ HFONT create_icon_font(int dpi) {
     for (const auto* face : faces) {
         if (!dc || icon_font_family_available(dc, face)) {
             if (dc) ReleaseDC(nullptr, dc);
-            return create_font(dpi, 15, FW_NORMAL, face);
+            return create_font(dpi, logical_pixels, FW_NORMAL, face);
         }
     }
     if (dc) ReleaseDC(nullptr, dc);
@@ -277,9 +275,11 @@ void add_tooltip(HWND owner, HWND control, const wchar_t* text) {
     }
 }
 
-void populate_targets(HWND combo) {
+void populate_targets(HWND combo, bool include_auto) {
     SendMessageW(combo, CB_RESETCONTENT, 0, 0);
-    SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"自动选择"));
+    if (include_auto) {
+        SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"自动选择"));
+    }
     for (const auto target : text_translation_targets()) {
         const auto label = target_display_name(target);
         SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
@@ -287,18 +287,22 @@ void populate_targets(HWND combo) {
     SendMessageW(combo, CB_SETCURSEL, 0, 0);
 }
 
-int target_index(std::wstring_view target) {
-    if (target.empty()) return 0;
+int target_index(std::wstring_view target, bool include_auto) {
+    const int offset = include_auto ? 1 : 0;
+    if (target.empty()) return include_auto ? 0 : -1;
     const auto& targets = text_translation_targets();
     const auto found = std::find(targets.begin(), targets.end(), target);
-    return found == targets.end() ? 0 : static_cast<int>(std::distance(targets.begin(), found)) + 1;
+    return found == targets.end()
+               ? (include_auto ? 0 : -1)
+               : static_cast<int>(std::distance(targets.begin(), found)) + offset;
 }
 
-std::wstring target_at(HWND combo) {
+std::wstring target_at(HWND combo, bool include_auto) {
     const LRESULT selected = SendMessageW(combo, CB_GETCURSEL, 0, 0);
-    if (selected <= 0) return {};
+    const int offset = include_auto ? 1 : 0;
+    if (selected < offset) return {};
     const auto& targets = text_translation_targets();
-    const auto index = static_cast<std::size_t>(selected - 1);
+    const auto index = static_cast<std::size_t>(selected - offset);
     return index < targets.size() ? std::wstring(targets[index]) : std::wstring{};
 }
 
@@ -315,7 +319,7 @@ std::wstring session_status(const TextTranslationSession& session) {
     case TextTranslationState::error:
         return session.error().empty() ? L"文字翻译失败" : session.error();
     case TextTranslationState::too_long:
-        return L"最多支持 5000 个字符，请删减后重试";
+        return L"最多支持 500 个字符，请删减后重试";
     }
     return {};
 }
@@ -328,6 +332,16 @@ void fill_rect(HDC dc, const RECT& rect, COLORREF color) {
     HBRUSH brush = CreateSolidBrush(color);
     FillRect(dc, &rect, brush);
     DeleteObject(brush);
+}
+
+COLORREF mix_color(COLORREF base, COLORREF tint, int tint_percent) noexcept {
+    const int amount = std::clamp(tint_percent, 0, 100);
+    const auto channel = [amount](BYTE base_value, BYTE tint_value) {
+        return static_cast<BYTE>((base_value * (100 - amount) + tint_value * amount) / 100);
+    };
+    return RGB(channel(GetRValue(base), GetRValue(tint)),
+               channel(GetGValue(base), GetGValue(tint)),
+               channel(GetBValue(base), GetBValue(tint)));
 }
 
 void draw_rounded_control(HDC dc, RECT bounds, COLORREF fill, COLORREF border,
@@ -353,6 +367,17 @@ void draw_label(HDC dc, std::wstring_view text, RECT bounds, HFONT font,
     if (previous) SelectObject(dc, previous);
 }
 
+int measure_label_width(HWND window, HFONT font, std::wstring_view text) {
+    HDC dc = GetDC(window);
+    if (!dc) return 0;
+    const HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
+    SIZE extent{};
+    GetTextExtentPoint32W(dc, text.data(), static_cast<int>(text.size()), &extent);
+    if (previous) SelectObject(dc, previous);
+    ReleaseDC(window, dc);
+    return extent.cx;
+}
+
 std::wstring target_selector_text(const TextTranslationSession& session,
                                   bool compact = false) {
     if (!session.target().empty()) return target_display_name(session.target());
@@ -367,6 +392,11 @@ std::wstring target_selector_text(const TextTranslationSession& session,
     return L"自动 · " + target;
 }
 
+std::wstring source_selector_text(const TextTranslationSession& session) {
+    return session.source().empty() ? std::wstring(L"自动识别")
+                                    : target_display_name(session.source());
+}
+
 void draw_target_selector(HWND combo, HDC dc, HFONT font, int dpi,
                           COLORREF accent, std::wstring_view value) {
     if (!combo || !dc) return;
@@ -374,18 +404,10 @@ void draw_target_selector(HWND combo, HDC dc, HFONT font, int dpi,
     GetClientRect(combo, &bounds);
     fill_rect(dc, bounds, color_background);
     const bool focused = GetFocus() == combo;
-    draw_rounded_control(dc, bounds, color_input, color_border,
-                         scaled(7, dpi));
-    if (focused) {
-        HPEN focus_pen = CreatePen(PS_SOLID, std::max(1, scaled(2, dpi)), accent);
-        const HGDIOBJ previous_focus_pen = SelectObject(dc, focus_pen);
-        MoveToEx(dc, bounds.left + scaled(9, dpi),
-                 bounds.bottom - scaled(2, dpi), nullptr);
-        LineTo(dc, bounds.right - scaled(9, dpi),
-               bounds.bottom - scaled(2, dpi));
-        SelectObject(dc, previous_focus_pen);
-        DeleteObject(focus_pen);
-    }
+    // Match the settings window: the focused selector gets an accent outline
+    // instead of a separate underline.
+    draw_rounded_control(dc, bounds, color_input,
+                         focused ? accent : color_border, scaled(7, dpi));
     RECT text_bounds = bounds;
     text_bounds.left += scaled(11, dpi);
     text_bounds.right -= scaled(32, dpi);
@@ -403,15 +425,43 @@ void draw_target_selector(HWND combo, HDC dc, HFONT font, int dpi,
     DeleteObject(pen);
 }
 
-void style_target_popup(HWND combo, int dpi, bool compact = false,
-                        bool update_selection_height = true) {
+void style_target_popup(HWND combo, int dpi, bool update_selection_height = true) {
     if (!combo) return;
     if (update_selection_height) {
-        SendMessageW(combo, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1),
-                     scaled(compact ? 26 : 34, dpi));
+        SendMessageW(combo, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), scaled(30, dpi));
     }
-    SendMessageW(combo, CB_SETITEMHEIGHT, 0, scaled(32, dpi));
-    SendMessageW(combo, CB_SETMINVISIBLE, 8, 0);
+    SendMessageW(combo, CB_SETITEMHEIGHT, 0, scaled(30, dpi));
+    // Keep short language lists fully visible so the dropdown matches the
+    // settings window instead of showing a classic scrollbar.
+    SendMessageW(combo, CB_SETMINVISIBLE, 12, 0);
+
+    // The closed selector is narrow, so widen the dropdown to the longest
+    // language name instead of truncating every entry.
+    RECT combo_rect{};
+    GetWindowRect(combo, &combo_rect);
+    int dropped_width = std::max(1, static_cast<int>(combo_rect.right - combo_rect.left));
+    HDC dc = GetDC(combo);
+    const HFONT font = reinterpret_cast<HFONT>(SendMessageW(combo, WM_GETFONT, 0, 0));
+    const HGDIOBJ old_font = (dc && font) ? SelectObject(dc, font) : nullptr;
+    const int count = static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0));
+    for (int index = 0; dc && index < count; ++index) {
+        const int length = static_cast<int>(SendMessageW(combo, CB_GETLBTEXTLEN, index, 0));
+        if (length <= 0) continue;
+        std::wstring value(static_cast<std::size_t>(length) + 1, L'\0');
+        SendMessageW(combo, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(value.data()));
+        SIZE measured{};
+        if (GetTextExtentPoint32W(dc, value.data(), length, &measured)) {
+            dropped_width =
+                std::max(dropped_width, static_cast<int>(measured.cx) + scaled(44, dpi));
+        }
+    }
+    if (dc) {
+        if (old_font) SelectObject(dc, old_font);
+        ReleaseDC(combo, dc);
+    }
+    SendMessageW(combo, CB_SETDROPPEDWIDTH,
+                 std::min(dropped_width, scaled(320, dpi)), 0);
+
     COMBOBOXINFO info{sizeof(info)};
     if (!GetComboBoxInfo(combo, &info) || !info.hwndList) return;
     theme::apply_window_theme(info.hwndList);
@@ -420,6 +470,32 @@ void style_target_popup(HWND combo, int dpi, bool compact = false,
                       ex_style & ~static_cast<LONG_PTR>(WS_EX_CLIENTEDGE));
     SetWindowPos(info.hwndList, HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+    // The list keeps the height it received on its first show, and that height
+    // is roughly eight rows regardless of CB_SETMINVISIBLE. Size it right
+    // before the drop-down appears so the language list never needs the
+    // classic scrollbar.
+    RECT list{};
+    if (count <= 0 || !GetWindowRect(info.hwndList, &list)) return;
+    const int item_height =
+        static_cast<int>(SendMessageW(combo, CB_GETITEMHEIGHT, 0, 0));
+    if (item_height <= 0) return;
+    const int rows = std::clamp(count, 1, 12);
+    const int height = rows * item_height + 2;
+    // A drop-down that Windows already flipped above the combo has to grow
+    // upwards as well, otherwise the extra rows would cover the combo.
+    int top = list.bottom <= combo_rect.top ? static_cast<int>(list.bottom) - height
+                                            : static_cast<int>(list.top);
+    MONITORINFO monitor{sizeof(monitor)};
+    if (GetMonitorInfoW(MonitorFromWindow(info.hwndList, MONITOR_DEFAULTTONEAREST),
+                        &monitor)) {
+        const int min_top = static_cast<int>(monitor.rcWork.top);
+        const int max_top = static_cast<int>(monitor.rcWork.bottom) - height;
+        top = std::max(min_top, std::min(top, std::max(min_top, max_top)));
+    }
+    SetWindowPos(info.hwndList, HWND_TOPMOST, list.left, top,
+                 static_cast<int>(list.right - list.left), height,
+                 SWP_NOACTIVATE);
 }
 
 bool point_in_window(HWND control, POINT screen_point) noexcept {
@@ -429,131 +505,72 @@ bool point_in_window(HWND control, POINT screen_point) noexcept {
 }
 
 LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
-                        HFONT icon_font = nullptr,
-                        bool compact_icon_buttons = false) {
+                        HFONT icon_font, HFONT action_icon_font) {
     if (item.CtlType == ODT_BUTTON) {
         const bool selected = (item.itemState & ODS_SELECTED) != 0;
         const bool disabled = (item.itemState & ODS_DISABLED) != 0;
         const bool focused = (item.itemState & ODS_FOCUS) != 0;
         const bool hot = (item.itemState & ODS_HOTLIGHT) != 0;
         const int identifier = GetDlgCtrlID(item.hwndItem);
-        const bool clear_icon_button =
-            compact_icon_buttons && identifier == id_clear;
-        const bool font_icon_button = icon_font &&
-            (compact_icon_buttons
-                 ? identifier == id_quick_capture || identifier == id_copy ||
-                       identifier == id_close
-                 : identifier == id_copy || identifier == id_settings ||
-                       identifier == id_close);
-        const bool icon_button =
-            clear_icon_button || font_icon_button;
-        if (icon_button) {
-            SetDCBrushColor(item.hDC, color_background);
-            FillRect(item.hDC, &item.rcItem,
-                     reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-            // Keep the idle buttons visible as tiles: using the window
-            // background for the fill and border hides them completely when
-            // the icon font falls back to a face without the glyph.
+        const bool flat = identifier == id_copy || identifier == id_clear ||
+                          identifier == id_swap;
+        // Clear/copy are borderless icons that sit on the card surface, so they
+        // repaint the surface colour; the page colour would leave a visible box
+        // behind the glyph.
+        const bool on_card = identifier == id_copy || identifier == id_clear;
+        SetDCBrushColor(item.hDC, on_card ? color_surface : color_background);
+        FillRect(item.hDC, &item.rcItem,
+                 reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+        if (!flat) {
             const COLORREF fill = selected ? color_hover
                                   : hot ? theme::color_line_high : color_surface;
             draw_rounded_control(item.hDC, item.rcItem, fill,
-                                 focused ? accent : color_border, 7);
-            const COLORREF icon_color = disabled ? color_faint
+                                 focused || hot ? accent : color_border, 7);
+        }
+        const COLORREF content_color = disabled ? color_faint
                                         : hot || focused ? color_text : color_dim;
-            if (identifier == id_clear) {
-                // A hand-drawn trash can keeps the clear action recognizable
-                // even if the installed icon font lacks a matching glyph.
-                const int width = item.rcItem.right - item.rcItem.left;
-                const int height = item.rcItem.bottom - item.rcItem.top;
-                const int icon_width = std::clamp(height * 2 / 5, 12, 20);
-                const int icon_height = std::clamp(height * 7 / 15, 14, 22);
-                const int left = item.rcItem.left + (width - icon_width) / 2;
-                const int top = item.rcItem.top + (height - icon_height) / 2;
-                const int right = left + icon_width;
-                const int bottom = top + icon_height;
-                const int center = (left + right) / 2;
-                const int lid_y = top + icon_height / 4;
-                const int body_left = left + icon_width / 6;
-                const int body_right = right - icon_width / 6;
-                const int body_bottom = bottom - icon_height / 12;
-                HPEN pen = CreatePen(PS_SOLID, std::max(1, height / 18), icon_color);
-                const HGDIOBJ previous_pen = SelectObject(item.hDC, pen);
-                const HGDIOBJ previous_brush =
-                    SelectObject(item.hDC, GetStockObject(NULL_BRUSH));
-                MoveToEx(item.hDC, center - icon_width / 6, lid_y - 2, nullptr);
-                LineTo(item.hDC, center - icon_width / 6, lid_y);
-                MoveToEx(item.hDC, center + icon_width / 6, lid_y - 2, nullptr);
-                LineTo(item.hDC, center + icon_width / 6, lid_y);
-                MoveToEx(item.hDC, left + icon_width / 8, lid_y, nullptr);
-                LineTo(item.hDC, right - icon_width / 8, lid_y);
-                MoveToEx(item.hDC, body_left, lid_y + 1, nullptr);
-                LineTo(item.hDC, body_left + icon_width / 12, body_bottom);
-                LineTo(item.hDC, body_right - icon_width / 12, body_bottom);
-                LineTo(item.hDC, body_right, lid_y + 1);
-                MoveToEx(item.hDC, center - icon_width / 6, lid_y + icon_height / 4,
-                         nullptr);
-                LineTo(item.hDC, center - icon_width / 6, bottom - icon_height / 4);
-                MoveToEx(item.hDC, center + icon_width / 6, lid_y + icon_height / 4,
-                         nullptr);
-                LineTo(item.hDC, center + icon_width / 6, bottom - icon_height / 4);
-                SelectObject(item.hDC, previous_brush);
-                SelectObject(item.hDC, previous_pen);
-                DeleteObject(pen);
-            } else {
-                wchar_t glyph = 0;
-                switch (identifier) {
-                case id_quick_capture: glyph = ui_icons::capture_translation; break;
-                case id_copy: glyph = 0xE8C8; break;
-                case id_settings: glyph = 0xE713; break;
-                default: glyph = 0xE711; break;
-                }
-                draw_label(item.hDC, std::wstring_view(&glyph, 1), item.rcItem,
-                           icon_font, icon_color,
-                           DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            }
+        if (identifier == id_copy || identifier == id_clear) {
+            const wchar_t glyph =
+                identifier == id_copy ? ui_icons::copy : ui_icons::delete_glyph;
+            draw_label(item.hDC, std::wstring_view(&glyph, 1), item.rcItem,
+                       action_icon_font ? action_icon_font : icon_font,
+                       disabled ? color_faint : content_color,
+                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             return TRUE;
         }
-        const COLORREF fill = selected ? color_hover : color_surface;
-        draw_rounded_control(item.hDC, item.rcItem, fill,
-                             focused ? accent : color_border, 8);
-        wchar_t text[96]{};
-        GetWindowTextW(item.hwndItem, text, static_cast<int>(std::size(text)));
-        SetBkMode(item.hDC, TRANSPARENT);
-        SetTextColor(item.hDC, disabled ? color_faint : color_text);
-        const HGDIOBJ previous = font ? SelectObject(item.hDC, font) : nullptr;
-        if (identifier == id_copy) {
-            const int width = item.rcItem.right - item.rcItem.left;
-            const int height = item.rcItem.bottom - item.rcItem.top;
-            const int icon_width = std::clamp(height / 2, 12, 17);
-            const int icon_height = std::clamp(height * 3 / 5, 14, 20);
-            const int left = item.rcItem.left + (width - icon_width) / 2;
-            const int top = item.rcItem.top + (height - icon_height) / 2;
-            HPEN icon_pen = CreatePen(
-                PS_SOLID, std::max(1, height / 24),
-                disabled ? color_faint : color_text);
-            const HGDIOBJ old_pen = SelectObject(item.hDC, icon_pen);
-            const HGDIOBJ old_brush = SelectObject(item.hDC, GetStockObject(NULL_BRUSH));
-            RoundRect(item.hDC, left + 4, top, left + icon_width, top + icon_height - 4,
-                      3, 3);
-            RoundRect(item.hDC, left, top + 4, left + icon_width - 4, top + icon_height,
-                      3, 3);
-            SelectObject(item.hDC, old_brush);
-            SelectObject(item.hDC, old_pen);
-            DeleteObject(icon_pen);
+        wchar_t glyph = 0;
+        if (identifier == id_quick_capture) {
+            glyph = ui_icons::capture_translation;
+        } else if (identifier == id_swap) {
+            glyph = 0xE8AB;
         } else {
-            RECT label = item.rcItem;
-            DrawTextW(item.hDC, text, -1, &label,
-                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            return TRUE;
         }
-        if (previous) SelectObject(item.hDC, previous);
+        draw_label(item.hDC, std::wstring_view(&glyph, 1), item.rcItem, icon_font,
+                   content_color, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return TRUE;
     }
     if (item.CtlType == ODT_COMBOBOX) {
         RECT bounds = item.rcItem;
-        fill_rect(item.hDC, bounds,
-                  (item.itemState & ODS_SELECTED) ? color_hover : color_surface);
+        const bool list_item = item.itemID != static_cast<UINT>(-1);
+        const int dpi = static_cast<int>(GetDpiForWindow(item.hwndItem));
+        fill_rect(item.hDC, bounds, color_input);
+        const bool selected = list_item && (item.itemState & ODS_SELECTED) != 0;
+        if (selected) {
+            RECT highlight = bounds;
+            InflateRect(&highlight, -scaled(4, dpi), -scaled(2, dpi));
+            draw_rounded_control(item.hDC, highlight,
+                                 mix_color(color_input, accent, 16),
+                                 mix_color(color_line_high, accent, 34),
+                                 scaled(5, dpi));
+            RECT marker{highlight.left + scaled(3, dpi),
+                        highlight.top + scaled(6, dpi),
+                        highlight.left + scaled(5, dpi),
+                        highlight.bottom - scaled(6, dpi)};
+            fill_rect(item.hDC, marker, accent);
+        }
         std::wstring text;
-        if (item.itemID != static_cast<UINT>(-1)) {
+        if (list_item) {
             const LRESULT length = SendMessageW(item.hwndItem, CB_GETLBTEXTLEN, item.itemID, 0);
             if (length >= 0) {
                 text.resize(static_cast<std::size_t>(length) + 1);
@@ -562,8 +579,8 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
                 text.resize(static_cast<std::size_t>(length));
             }
         }
-        bounds.left += 10;
-        bounds.right -= 8;
+        bounds.left += scaled(13, dpi);
+        bounds.right -= scaled(9, dpi);
         SetBkMode(item.hDC, TRANSPARENT);
         SetTextColor(item.hDC,
                      (item.itemState & ODS_DISABLED) ? color_faint : color_text);
@@ -574,19 +591,6 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
         return TRUE;
     }
     return FALSE;
-}
-
-void position_centered(HWND window, HWND owner, int logical_width, int logical_height) {
-    HWND reference = owner && IsWindowVisible(owner) ? owner : GetForegroundWindow();
-    HMONITOR monitor = MonitorFromWindow(reference, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO info{sizeof(info)};
-    GetMonitorInfoW(monitor, &info);
-    const int dpi = static_cast<int>(GetDpiForWindow(window));
-    const int width = scaled(logical_width, dpi);
-    const int height = scaled(logical_height, dpi);
-    const int x = info.rcWork.left + ((info.rcWork.right - info.rcWork.left) - width) / 2;
-    const int y = info.rcWork.top + ((info.rcWork.bottom - info.rcWork.top) - height) / 2;
-    SetWindowPos(window, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void position_near_anchor(HWND window, POINT anchor) {
@@ -635,459 +639,9 @@ POINT default_quick_anchor() noexcept {
 
 }  // namespace
 
-TextTranslateWindow::TextTranslateWindow(HINSTANCE instance, ConfigStore& config,
-                                         TextTranslationSession& session)
-    : instance_(instance), config_(config), session_(session) {}
-
-TextTranslateWindow::~TextTranslateWindow() {
-    if (window_) DestroyWindow(window_);
-    destroy_theme_resources();
-}
-
-bool TextTranslateWindow::visible() const noexcept {
-    return window_ && IsWindowVisible(window_);
-}
-
-void TextTranslateWindow::create_window(HWND owner) {
-    if (window_) return;
-    register_window_class(instance_, full_window_class, &TextTranslateWindow::window_proc);
-    window_ = CreateWindowExW(
-        WS_EX_APPWINDOW, full_window_class, MINITRANS_DISPLAY_NAME,
-        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-        CW_USEDEFAULT, CW_USEDEFAULT, 920, 600, nullptr, nullptr, instance_, this);
-    if (!window_) throw_last_error("create text translation window");
-    dpi_ = static_cast<int>(GetDpiForWindow(window_));
-    apply_dark_frame(window_, false);
-    create_theme_resources();
-    create_controls();
-    position_initial(owner);
-    refresh();
-}
-
-void TextTranslateWindow::create_theme_resources() {
-    destroy_theme_resources();
-    accent_ = theme::accent;
-    font_ = create_font(dpi_, font_size_translation, FW_NORMAL,
-                        theme::font_family);
-    title_font_ = create_font(dpi_, font_size_body + 2, FW_SEMIBOLD,
-                              theme::font_family);
-    small_font_ = create_font(dpi_, font_size_small, FW_NORMAL,
-                              theme::font_family);
-    background_ = CreateSolidBrush(color_background);
-    surface_ = CreateSolidBrush(color_surface);
-    input_background_ = CreateSolidBrush(color_input);
-}
-
-void TextTranslateWindow::destroy_theme_resources() noexcept {
-    if (font_) DeleteObject(font_);
-    if (title_font_) DeleteObject(title_font_);
-    if (small_font_) DeleteObject(small_font_);
-    if (background_) DeleteObject(background_);
-    if (surface_) DeleteObject(surface_);
-    if (input_background_) DeleteObject(input_background_);
-    font_ = title_font_ = small_font_ = nullptr;
-    background_ = surface_ = input_background_ = nullptr;
-}
-
-void TextTranslateWindow::create_controls() {
-    source_label_ = CreateWindowExW(0, L"STATIC", L"目标语言", WS_CHILD | WS_VISIBLE,
-                                    0, 0, 0, 0, window_, nullptr, instance_, nullptr);
-    target_combo_ = CreateWindowExW(0, L"COMBOBOX", L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
-        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
-        0, 0, 0, 0, window_, control_id(id_target), instance_, nullptr);
-    input_ = CreateWindowExW(0, L"EDIT", L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
-        ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
-        0, 0, 0, 0, window_, control_id(id_input), instance_, nullptr);
-    output_ = CreateWindowExW(0, L"EDIT", L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
-        ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
-        0, 0, 0, 0, window_, control_id(id_output), instance_, nullptr);
-    counter_ = CreateWindowExW(0, L"STATIC", L"0 / 5000", WS_CHILD | WS_VISIBLE,
-                               0, 0, 0, 0, window_, nullptr, instance_, nullptr);
-    status_ = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFTNOWORDWRAP,
-                              0, 0, 0, 0, window_, nullptr, instance_, nullptr);
-    clear_button_ = CreateWindowExW(0, L"BUTTON", L"清空",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-        0, 0, 0, 0, window_, control_id(id_clear), instance_, nullptr);
-    copy_button_ = CreateWindowExW(0, L"BUTTON", L"复制",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-        0, 0, 0, 0, window_, control_id(id_copy), instance_, nullptr);
-    settings_button_ = CreateWindowExW(0, L"BUTTON", L"翻译设置",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-        0, 0, 0, 0, window_, control_id(id_settings), instance_, nullptr);
-
-    for (HWND control : {source_label_, target_combo_, input_, output_, counter_, status_,
-                         clear_button_, copy_button_, settings_button_}) {
-        theme::apply_control_theme(control);
-        set_control_font(control, font_);
-    }
-    set_control_font(source_label_, title_font_);
-    set_control_font(counter_, small_font_);
-    set_control_font(status_, small_font_);
-    SendMessageW(input_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                 MAKELPARAM(scaled(12, dpi_), scaled(12, dpi_)));
-    SendMessageW(output_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                 MAKELPARAM(scaled(12, dpi_), scaled(12, dpi_)));
-    SendMessageW(input_, EM_SETCUEBANNER, TRUE,
-                 reinterpret_cast<LPARAM>(L"输入或粘贴需要翻译的文字"));
-    SendMessageW(output_, EM_SETCUEBANNER, TRUE,
-                 reinterpret_cast<LPARAM>(L"译文会显示在这里"));
-    SendMessageW(target_combo_, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), scaled(32, dpi_));
-    SendMessageW(target_combo_, CB_SETITEMHEIGHT, 0, scaled(30, dpi_));
-    populate_targets(target_combo_);
-    SetWindowSubclass(target_combo_, &TextTranslateWindow::target_combo_proc,
-                      target_combo_subclass_id,
-                      reinterpret_cast<DWORD_PTR>(this));
-    style_target_popup(target_combo_, dpi_);
-    SetWindowSubclass(input_, &TextTranslateWindow::input_proc, input_subclass_id,
-                      reinterpret_cast<DWORD_PTR>(this));
-    add_tooltip(window_, copy_button_, L"复制译文");
-    layout_controls();
-}
-
-void TextTranslateWindow::position_initial(HWND owner) {
-    position_centered(window_, owner, 920, 600);
-}
-
-void TextTranslateWindow::layout_controls() {
-    if (!window_) return;
-    RECT client{};
-    GetClientRect(window_, &client);
-    const int width = client.right;
-    const int height = client.bottom;
-    const int margin = scaled(24, dpi_);
-    const int header_height = scaled(34, dpi_);
-    const int button_height = scaled(32, dpi_);
-    const int gap = scaled(16, dpi_);
-    const int footer_height = scaled(30, dpi_);
-    const int combo_width = scaled(150, dpi_);
-    const int clear_width = scaled(62, dpi_);
-    const int copy_width = scaled(62, dpi_);
-    const int settings_width = scaled(92, dpi_);
-
-    MoveWindow(source_label_, margin, margin, scaled(96, dpi_), header_height, TRUE);
-    MoveWindow(target_combo_, margin + scaled(104, dpi_), margin,
-               combo_width, scaled(318, dpi_), TRUE);
-    int right = width - margin;
-    MoveWindow(settings_button_, right - settings_width, margin, settings_width,
-               button_height, TRUE);
-    right -= settings_width + scaled(8, dpi_);
-    MoveWindow(copy_button_, right - copy_width, margin, copy_width, button_height, TRUE);
-    right -= copy_width + scaled(8, dpi_);
-    MoveWindow(clear_button_, right - clear_width, margin, clear_width, button_height, TRUE);
-
-    const int body_top = margin + header_height + scaled(18, dpi_);
-    const int body_bottom = height - margin - footer_height;
-    const int body_height = std::max(scaled(180, dpi_), body_bottom - body_top);
-    const int column_width = std::max(scaled(260, dpi_), (width - margin * 2 - gap) / 2);
-    MoveWindow(input_, margin, body_top, column_width, body_height, TRUE);
-    MoveWindow(output_, margin + column_width + gap, body_top,
-               std::max(1, width - margin * 2 - gap - column_width), body_height, TRUE);
-    MoveWindow(counter_, margin, height - margin - scaled(22, dpi_), scaled(110, dpi_),
-               scaled(22, dpi_), TRUE);
-    MoveWindow(status_, margin + scaled(120, dpi_), height - margin - scaled(22, dpi_),
-               std::max(1, width - margin * 2 - scaled(120, dpi_)), scaled(22, dpi_), TRUE);
-}
-
-void TextTranslateWindow::sync_input() {
-    if (window_text(input_) == session_.input()) return;
-    syncing_ = true;
-    SetWindowTextW(input_, session_.input().c_str());
-    syncing_ = false;
-}
-
-void TextTranslateWindow::sync_target() {
-    const int expected = target_index(session_.target());
-    if (SendMessageW(target_combo_, CB_GETCURSEL, 0, 0) == expected) return;
-    syncing_ = true;
-    SendMessageW(target_combo_, CB_SETCURSEL, expected, 0);
-    syncing_ = false;
-}
-
-void TextTranslateWindow::refresh() {
-    if (!window_) return;
-    sync_input();
-    sync_target();
-    if (window_text(output_) != session_.output()) {
-        SetWindowTextW(output_, session_.output().c_str());
-    }
-    const auto counter = std::to_wstring(session_.character_count()) + L" / 5000";
-    SetWindowTextW(counter_, counter.c_str());
-    const auto status = session_status(session_);
-    SetWindowTextW(status_, status.c_str());
-    status_error_ = session_.state() == TextTranslationState::error ||
-                    session_.state() == TextTranslationState::too_long;
-    EnableWindow(clear_button_, !session_.input().empty());
-    EnableWindow(copy_button_, !session_.output().empty());
-    InvalidateRect(target_combo_, nullptr, FALSE);
-    InvalidateRect(window_, nullptr, FALSE);
-    InvalidateRect(status_, nullptr, TRUE);
-}
-
-void TextTranslateWindow::refresh_appearance() {
-    if (!window_) return;
-    create_theme_resources();
-    for (HWND control : {source_label_, target_combo_, input_, output_, clear_button_,
-                         copy_button_, settings_button_}) {
-        set_control_font(control, control == source_label_ ? title_font_ : font_);
-    }
-    set_control_font(counter_, small_font_);
-    set_control_font(status_, small_font_);
-    apply_dark_frame(window_, false);
-    InvalidateRect(window_, nullptr, TRUE);
-}
-
-void TextTranslateWindow::show(HWND owner) {
-    create_window(owner);
-    refresh();
-    ShowWindow(window_, SW_SHOW);
-    SetForegroundWindow(window_);
-    SetFocus(input_);
-}
-
-void TextTranslateWindow::hide() {
-    if (window_) ShowWindow(window_, SW_HIDE);
-    if (callbacks_.composition_changed) callbacks_.composition_changed(false);
-}
-
-void TextTranslateWindow::on_input_changed() {
-    if (!syncing_ && callbacks_.input_changed) callbacks_.input_changed(window_text(input_));
-}
-
-void TextTranslateWindow::on_target_changed() {
-    if (!syncing_ && callbacks_.target_changed) callbacks_.target_changed(target_at(target_combo_));
-}
-
-LRESULT TextTranslateWindow::draw_item(const DRAWITEMSTRUCT& item) {
-    return draw_owner_item(item, font_, accent_);
-}
-
-void TextTranslateWindow::draw_target_combo(HDC dc) {
-    draw_target_selector(target_combo_, dc, font_, dpi_, accent_,
-                         target_selector_text(session_));
-}
-
-void TextTranslateWindow::paint() {
-    PAINTSTRUCT paint{};
-    HDC dc = BeginPaint(window_, &paint);
-    FillRect(dc, &paint.rcPaint, background_);
-    EndPaint(window_, &paint);
-}
-
-bool TextTranslateWindow::preprocess_message(MSG& message) {
-    if (!visible() || !message_for(window_, message)) return false;
-    if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN &&
-        (GetKeyState(VK_CONTROL) & 0x8000)) {
-        if (callbacks_.translate_now) callbacks_.translate_now();
-        return true;
-    }
-    return IsDialogMessageW(window_, &message) != FALSE;
-}
-
-void TextTranslateWindow::self_test(HWND owner) {
-    create_window(owner);
-    if (!input_ || !output_ || !target_combo_ || !copy_button_ ||
-        SendMessageW(target_combo_, CB_GETCOUNT, 0, 0) != 10) {
-        throw AppError("text translation window self-test controls are incomplete");
-    }
-    const LONG_PTR style = GetWindowLongPtrW(window_, GWL_STYLE);
-    if ((style & WS_THICKFRAME) == 0) {
-        throw AppError("text translation window self-test is not resizable");
-    }
-    MINMAXINFO minimum{};
-    SendMessageW(window_, WM_GETMINMAXINFO, 0, reinterpret_cast<LPARAM>(&minimum));
-    if (minimum.ptMinTrackSize.x != scaled(720, dpi_) ||
-        minimum.ptMinTrackSize.y != scaled(480, dpi_) ||
-        dpi_ != static_cast<int>(GetDpiForWindow(window_))) {
-        throw AppError("text translation window self-test size or DPI mismatch");
-    }
-    bool composition_started = false;
-    bool composition_ended = false;
-    auto composition_callback = callbacks_.composition_changed;
-    callbacks_.composition_changed = [&](bool composing) {
-        composition_started = composition_started || composing;
-        composition_ended = composition_ended || !composing;
-    };
-    SendMessageW(input_, WM_IME_STARTCOMPOSITION, 0, 0);
-    SendMessageW(input_, WM_IME_ENDCOMPOSITION, 0, 0);
-    callbacks_.composition_changed = std::move(composition_callback);
-    if (!composition_started || !composition_ended) {
-        throw AppError("text translation window self-test IME handling mismatch");
-    }
-    show(owner);
-    hide();
-    for (int index = 0; index < 4; ++index) {
-        show(owner);
-        UpdateWindow(window_);
-        UpdateWindow(target_combo_);
-        hide();
-    }
-    settle_self_test_ui();
-    std::array<ProcessResourceSnapshot, 9> resource_samples{};
-    resource_samples[0] = process_resources();
-    for (std::size_t batch = 1; batch < resource_samples.size(); ++batch) {
-        for (int index = 0; index < 24; ++index) {
-            show(owner);
-            UpdateWindow(window_);
-            UpdateWindow(target_combo_);
-            hide();
-        }
-        resource_samples[batch] = process_resources();
-    }
-    if (!resource_series_stable(resource_samples)) {
-        throw AppError("text translation window self-test leaked process resources" +
-                       resource_change(resource_samples.front(),
-                                       resource_samples.back()));
-    }
-    hide();
-}
-
-LRESULT CALLBACK TextTranslateWindow::input_proc(HWND control, UINT message,
-                                                 WPARAM wparam, LPARAM lparam,
-                                                 UINT_PTR subclass_id, DWORD_PTR reference) {
-    auto* self = reinterpret_cast<TextTranslateWindow*>(reference);
-    if (self && message == WM_IME_STARTCOMPOSITION && self->callbacks_.composition_changed) {
-        self->callbacks_.composition_changed(true);
-    } else if (self && message == WM_IME_ENDCOMPOSITION && self->callbacks_.composition_changed) {
-        self->callbacks_.composition_changed(false);
-    }
-    if (self && (message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
-        InvalidateRect(self->window_, nullptr, FALSE);
-    }
-    if (message == WM_NCDESTROY) RemoveWindowSubclass(control, &TextTranslateWindow::input_proc,
-                                                       subclass_id);
-    return DefSubclassProc(control, message, wparam, lparam);
-}
-
-LRESULT CALLBACK TextTranslateWindow::target_combo_proc(
-        HWND control, UINT message, WPARAM wparam, LPARAM lparam,
-        UINT_PTR subclass_id, DWORD_PTR reference) {
-    auto* self = reinterpret_cast<TextTranslateWindow*>(reference);
-    switch (message) {
-    case WM_PAINT: {
-        PAINTSTRUCT paint{};
-        HDC dc = BeginPaint(control, &paint);
-        if (self) self->draw_target_combo(dc);
-        EndPaint(control, &paint);
-        return 0;
-    }
-    case WM_PRINTCLIENT:
-        if (self) self->draw_target_combo(reinterpret_cast<HDC>(wparam));
-        return 0;
-    case WM_ERASEBKGND:
-        return 1;
-    case WM_SETFOCUS:
-    case WM_KILLFOCUS: {
-        const LRESULT result = DefSubclassProc(control, message, wparam, lparam);
-        InvalidateRect(control, nullptr, FALSE);
-        return result;
-    }
-    case WM_NCDESTROY:
-        RemoveWindowSubclass(control, &TextTranslateWindow::target_combo_proc,
-                             subclass_id);
-        break;
-    default:
-        break;
-    }
-    return DefSubclassProc(control, message, wparam, lparam);
-}
-
-LRESULT CALLBACK TextTranslateWindow::window_proc(HWND window, UINT message,
-                                                  WPARAM wparam, LPARAM lparam) {
-    auto* self = reinterpret_cast<TextTranslateWindow*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-    if (message == WM_NCCREATE) {
-        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-        self = static_cast<TextTranslateWindow*>(create->lpCreateParams);
-        self->window_ = window;
-        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-    }
-    if (!self) return DefWindowProcW(window, message, wparam, lparam);
-    return self->handle_message(message, wparam, lparam);
-}
-
-LRESULT TextTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
-    switch (message) {
-    case WM_COMMAND:
-        switch (LOWORD(wparam)) {
-        case id_input:
-            if (HIWORD(wparam) == EN_CHANGE) on_input_changed();
-            return 0;
-        case id_target:
-            if (HIWORD(wparam) == CBN_DROPDOWN) {
-                theme::apply_control_theme(target_combo_);
-                style_target_popup(target_combo_, dpi_, false, false);
-            }
-            if (HIWORD(wparam) == CBN_SELCHANGE) on_target_changed();
-            return 0;
-        case id_clear:
-            if (HIWORD(wparam) == BN_CLICKED && callbacks_.clear) callbacks_.clear();
-            SetFocus(input_);
-            return 0;
-        case id_copy:
-            if (HIWORD(wparam) == BN_CLICKED && callbacks_.copy) callbacks_.copy();
-            return 0;
-        case id_settings:
-            if (HIWORD(wparam) == BN_CLICKED && callbacks_.open_settings) callbacks_.open_settings();
-            return 0;
-        default: break;
-        }
-        break;
-    case WM_SIZE: layout_controls(); return 0;
-    case WM_GETMINMAXINFO: {
-        auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
-        info->ptMinTrackSize = POINT{scaled(720, dpi_), scaled(480, dpi_)};
-        return 0;
-    }
-    case WM_DPICHANGED:
-        dpi_ = HIWORD(wparam);
-        if (const auto* suggested = reinterpret_cast<const RECT*>(lparam)) {
-            SetWindowPos(window_, nullptr, suggested->left, suggested->top,
-                         suggested->right - suggested->left,
-                         suggested->bottom - suggested->top,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
-        }
-        refresh_appearance();
-        layout_controls();
-        return 0;
-    case theme::changed_message:
-        refresh_appearance();
-        return 0;
-    case WM_DRAWITEM:
-        if (lparam) return draw_item(*reinterpret_cast<const DRAWITEMSTRUCT*>(lparam));
-        break;
-    case WM_CTLCOLOREDIT: {
-        HDC dc = reinterpret_cast<HDC>(wparam);
-        SetTextColor(dc, color_text);
-        SetBkColor(dc, color_input);
-        return reinterpret_cast<LRESULT>(input_background_);
-    }
-    case WM_CTLCOLORSTATIC: {
-        HDC dc = reinterpret_cast<HDC>(wparam);
-        HWND control = reinterpret_cast<HWND>(lparam);
-        SetTextColor(dc, control == status_ && status_error_ ? color_error :
-                         control == counter_ || control == status_ ? color_dim : color_text);
-        SetBkColor(dc, control == output_ ? color_input : color_background);
-        return reinterpret_cast<LRESULT>(control == output_ ? input_background_ : background_);
-    }
-    case WM_ERASEBKGND: return 1;
-    case WM_PAINT: paint(); return 0;
-    case WM_CLOSE: hide(); return 0;
-    case WM_NCDESTROY:
-        SetWindowLongPtrW(window_, GWLP_USERDATA, 0);
-        window_ = nullptr;
-        source_label_ = target_combo_ = input_ = output_ = counter_ = status_ = nullptr;
-        clear_button_ = copy_button_ = settings_button_ = nullptr;
-        return 0;
-    default: break;
-    }
-    return DefWindowProcW(window_, message, wparam, lparam);
-}
-
-QuickTranslateWindow::QuickTranslateWindow(HINSTANCE instance, ConfigStore& config,
+QuickTranslateWindow::QuickTranslateWindow(HINSTANCE instance,
                                            TextTranslationSession& session)
-    : instance_(instance), config_(config), session_(session) {}
+    : instance_(instance), session_(session) {}
 
 QuickTranslateWindow::~QuickTranslateWindow() {
     if (window_) DestroyWindow(window_);
@@ -1119,11 +673,10 @@ void QuickTranslateWindow::create_theme_resources() {
     accent_ = theme::accent;
     font_ = create_font(dpi_, font_size_translation, FW_NORMAL,
                         theme::font_family);
-    title_font_ = create_font(dpi_, font_size_body + 2, FW_SEMIBOLD,
-                              theme::font_family);
     small_font_ = create_font(dpi_, font_size_small, FW_NORMAL,
                               theme::font_family);
-    icon_font_ = create_icon_font(dpi_);
+    icon_font_ = create_icon_font(dpi_, 15);
+    action_icon_font_ = create_icon_font(dpi_, 12);
     background_ = CreateSolidBrush(color_background);
     surface_ = CreateSolidBrush(color_surface);
     input_background_ = CreateSolidBrush(color_surface);
@@ -1131,17 +684,41 @@ void QuickTranslateWindow::create_theme_resources() {
 
 void QuickTranslateWindow::destroy_theme_resources() noexcept {
     if (font_) DeleteObject(font_);
-    if (title_font_) DeleteObject(title_font_);
     if (small_font_) DeleteObject(small_font_);
     if (icon_font_) DeleteObject(icon_font_);
+    if (action_icon_font_) DeleteObject(action_icon_font_);
     if (background_) DeleteObject(background_);
     if (surface_) DeleteObject(surface_);
     if (input_background_) DeleteObject(input_background_);
-    font_ = title_font_ = small_font_ = icon_font_ = nullptr;
+    font_ = small_font_ = icon_font_ = action_icon_font_ = nullptr;
     background_ = surface_ = input_background_ = nullptr;
 }
 
+namespace {
+constexpr UINT_PTR output_editor_subclass_id = 1;
+
+// The translation output is a display-only editor: focus attempts are sent to
+// the source editor so the output never shows a caret or a selection frame.
+LRESULT CALLBACK keep_editor_unfocused(HWND control, UINT message, WPARAM wparam,
+                                       LPARAM lparam, UINT_PTR, DWORD_PTR reference) {
+    if (message == WM_SETFOCUS || message == WM_LBUTTONDOWN ||
+        message == WM_LBUTTONDBLCLK) {
+        const auto target = reinterpret_cast<HWND>(reference);
+        if (target && IsWindow(target)) SetFocus(target);
+        return 0;
+    }
+    return DefSubclassProc(control, message, wparam, lparam);
+}
+}  // namespace
+
 void QuickTranslateWindow::create_controls() {
+    source_combo_ = CreateWindowExW(0, L"COMBOBOX", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
+        CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
+        0, 0, 0, 0, window_, control_id(id_source), instance_, nullptr);
+    swap_button_ = CreateWindowExW(0, L"BUTTON", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+        0, 0, 0, 0, window_, control_id(id_swap), instance_, nullptr);
     target_combo_ = CreateWindowExW(0, L"COMBOBOX", L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL |
         CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS,
@@ -1151,7 +728,7 @@ void QuickTranslateWindow::create_controls() {
         ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
         0, 0, 0, 0, window_, control_id(id_input), instance_, nullptr);
     output_ = CreateWindowExW(0, L"EDIT", L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+        WS_CHILD | WS_VISIBLE |
         ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
         0, 0, 0, 0, window_, control_id(id_output), instance_, nullptr);
     capture_button_ = CreateWindowExW(0, L"BUTTON", L"截图翻译",
@@ -1163,11 +740,8 @@ void QuickTranslateWindow::create_controls() {
     clear_button_ = CreateWindowExW(0, L"BUTTON", L"清空",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
         0, 0, 0, 0, window_, control_id(id_clear), instance_, nullptr);
-    close_button_ = CreateWindowExW(0, L"BUTTON", L"关闭",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
-        0, 0, 0, 0, window_, control_id(id_close), instance_, nullptr);
-    for (HWND control : {target_combo_, input_, output_, capture_button_,
-                         copy_button_, clear_button_, close_button_}) {
+    for (HWND control : {source_combo_, swap_button_, target_combo_, input_, output_,
+                         capture_button_, copy_button_, clear_button_}) {
         theme::apply_control_theme(control);
         set_control_font(control, font_);
     }
@@ -1175,22 +749,30 @@ void QuickTranslateWindow::create_controls() {
                  MAKELPARAM(scaled(12, dpi_), scaled(12, dpi_)));
     SendMessageW(output_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
                  MAKELPARAM(scaled(12, dpi_), scaled(12, dpi_)));
+    SendMessageW(input_, EM_SETCUEBANNER, TRUE,
+                 reinterpret_cast<LPARAM>(L"输入或粘贴要翻译的文字"));
     SendMessageW(output_, EM_SETCUEBANNER, TRUE,
                  reinterpret_cast<LPARAM>(L"译文"));
-    populate_targets(target_combo_);
+    SetWindowSubclass(output_, &keep_editor_unfocused, output_editor_subclass_id,
+                      reinterpret_cast<DWORD_PTR>(input_));
+    populate_targets(source_combo_, false);
+    populate_targets(target_combo_, true);
+    SetWindowSubclass(source_combo_, &QuickTranslateWindow::target_combo_proc,
+                      source_combo_subclass_id,
+                      reinterpret_cast<DWORD_PTR>(this));
     SetWindowSubclass(target_combo_, &QuickTranslateWindow::target_combo_proc,
                       target_combo_subclass_id,
                       reinterpret_cast<DWORD_PTR>(this));
-    style_target_popup(target_combo_, dpi_, true);
+    style_target_popup(source_combo_, dpi_);
+    style_target_popup(target_combo_, dpi_);
     SetWindowSubclass(input_, &QuickTranslateWindow::input_proc, input_subclass_id,
                       reinterpret_cast<DWORD_PTR>(this));
     add_tooltip(window_, copy_button_, L"复制译文");
     add_tooltip(window_, clear_button_, L"清空原文");
+    add_tooltip(window_, swap_button_, L"对调原文与译文语种");
     add_tooltip(window_, capture_button_, L"截图翻译");
-    add_tooltip(window_, close_button_, L"关闭快速翻译");
     layout_controls();
 }
-
 void QuickTranslateWindow::layout_controls() {
     if (!window_) return;
     RECT client{};
@@ -1198,38 +780,113 @@ void QuickTranslateWindow::layout_controls() {
     const int width = client.right;
     const int height = client.bottom;
     const int margin = scaled(16, dpi_);
+    const int gap = scaled(8, dpi_);
     const int header_top = scaled(10, dpi_);
     const int control_height = scaled(30, dpi_);
     const int icon_width = scaled(30, dpi_);
-    const int combo_width = scaled(108, dpi_);
-    MoveWindow(capture_button_, margin, header_top, icon_width, control_height, TRUE);
+    const int combo_width = scaled(96, dpi_);
+    // A drop-down combo uses its window height for the open list as well, so
+    // size it from the item count: enough rows to avoid a scrollbar, but not
+    // taller than the twelve-row cap shared with the settings window.
+    const auto combo_height_for = [&](HWND combo) {
+        const int count = std::clamp(
+            static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0)), 1, 12);
+        return control_height + count * scaled(30, dpi_);
+    };
 
-    int right = width - margin;
-    MoveWindow(close_button_, right - icon_width, header_top,
-               icon_width, control_height, TRUE);
-    right -= icon_width + scaled(6, dpi_);
-    MoveWindow(clear_button_, right - icon_width, header_top,
-               icon_width, control_height, TRUE);
-    right -= icon_width + scaled(6, dpi_);
-    MoveWindow(copy_button_, right - icon_width, header_top,
-               icon_width, control_height, TRUE);
-    right -= icon_width + scaled(8, dpi_);
-    MoveWindow(target_combo_, right - combo_width, scaled(9, dpi_),
-               combo_width, scaled(318, dpi_), TRUE);
+    const int right_edge = width - margin;
+    MoveWindow(target_combo_, right_edge - combo_width, header_top,
+               combo_width, combo_height_for(target_combo_), TRUE);
+    MoveWindow(swap_button_, right_edge - combo_width - gap - icon_width,
+               header_top, icon_width, control_height, TRUE);
+    MoveWindow(source_combo_,
+               right_edge - combo_width * 2 - gap * 2 - icon_width,
+               header_top, combo_width, combo_height_for(source_combo_), TRUE);
+    MoveWindow(capture_button_, margin, header_top, icon_width,
+               control_height, TRUE);
 
-    const int body_top = scaled(50, dpi_);
-    const int body_bottom = height - scaled(38, dpi_);
-    const int divider_y = body_top + scaled(88, dpi_);
-    const int panel_inset = scaled(13, dpi_);
+    const int body_top = header_top + control_height + scaled(14, dpi_);
+    const int body_bottom = height - scaled(34, dpi_);
+    const int inset = scaled(13, dpi_);
     const int label_height = scaled(29, dpi_);
-    MoveWindow(input_, margin + panel_inset, body_top + label_height,
-               width - margin * 2 - panel_inset * 2,
-               std::max(scaled(42, dpi_),
-                        divider_y - body_top - label_height - scaled(8, dpi_)), TRUE);
-    MoveWindow(output_, margin + panel_inset, divider_y + label_height,
-               width - margin * 2 - panel_inset * 2,
-               std::max(scaled(56, dpi_),
-                        body_bottom - divider_y - label_height - scaled(8, dpi_)), TRUE);
+    const int action_width = scaled(26, dpi_);
+    const int action_height = scaled(22, dpi_);
+    const int divider_y = body_top + (body_bottom - body_top) / 2;
+    const int content_right = width - margin - inset;
+    const int edit_left = margin + inset;
+    const int edit_width = std::max(1, content_right - edit_left);
+
+    MoveWindow(input_, edit_left, body_top + label_height, edit_width,
+               std::max(1, divider_y - body_top - label_height), TRUE);
+    MoveWindow(output_, edit_left, divider_y + label_height, edit_width,
+               std::max(1, body_bottom - divider_y - label_height - 1), TRUE);
+
+    // The clear and copy buttons follow their 原文/译文 captions instead of the
+    // card's right edge, so the left offset tracks the measured caption advance.
+    const int caption_advance =
+        std::max(measure_label_width(window_, small_font_, L"原文"),
+                 measure_label_width(window_, small_font_, L"译文"));
+    const int action_left = edit_left + caption_advance + scaled(6, dpi_);
+    const int action_offset = (label_height - action_height) / 2;
+    MoveWindow(clear_button_, action_left, body_top + action_offset,
+               action_width, action_height, TRUE);
+    MoveWindow(copy_button_, action_left, divider_y + action_offset,
+               action_width, action_height, TRUE);
+}
+
+void QuickTranslateWindow::paint() {
+    PAINTSTRUCT paint{};
+    HDC dc = BeginPaint(window_, &paint);
+    RECT client{};
+    GetClientRect(window_, &client);
+    FillRect(dc, &client, background_);
+
+    const int margin = scaled(16, dpi_);
+    const int inset = scaled(13, dpi_);
+    const int label_height = scaled(29, dpi_);
+    const int header_top = scaled(10, dpi_);
+    const int control_height = scaled(30, dpi_);
+
+    const int body_top = header_top + control_height + scaled(14, dpi_);
+    const int body_bottom = client.bottom - scaled(34, dpi_);
+    RECT body{margin, body_top, client.right - margin, body_bottom};
+    draw_rounded_control(dc, body, color_surface, color_border, scaled(10, dpi_));
+
+    const int divider_y = body_top + (body_bottom - body_top) / 2;
+    HPEN divider = CreatePen(PS_SOLID, 1, color_border);
+    const HGDIOBJ previous_pen = SelectObject(dc, divider);
+    MoveToEx(dc, body.left + inset, divider_y, nullptr);
+    LineTo(dc, body.right - inset, divider_y);
+    SelectObject(dc, previous_pen);
+    DeleteObject(divider);
+
+    const int content_left = body.left + inset;
+    draw_label(dc, L"原文",
+               RECT{content_left, body.top, content_left + scaled(60, dpi_),
+                    body.top + label_height},
+               small_font_, color_dim,
+               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    draw_label(dc, L"译文",
+               RECT{content_left, divider_y, content_left + scaled(60, dpi_),
+                    divider_y + label_height},
+               small_font_, color_dim,
+               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    const std::wstring footer = session_.state() == TextTranslationState::too_long
+                                    ? std::wstring(L"已超出 500 字上限")
+                                    : session_status(session_);
+    draw_label(dc, footer,
+               RECT{margin + scaled(2, dpi_), body.bottom + scaled(6, dpi_),
+                    client.right - margin - scaled(200, dpi_),
+                    client.bottom - scaled(8, dpi_)},
+               small_font_, status_error_ ? color_error : color_dim,
+               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    draw_label(dc, L"Ctrl+Enter 翻译 · Esc 关闭",
+               RECT{margin, body.bottom + scaled(6, dpi_), client.right - margin,
+                    client.bottom - scaled(8, dpi_)},
+               small_font_, color_faint,
+               DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    EndPaint(window_, &paint);
 }
 
 void QuickTranslateWindow::sync_input() {
@@ -1239,8 +896,16 @@ void QuickTranslateWindow::sync_input() {
     syncing_ = false;
 }
 
+void QuickTranslateWindow::sync_source() {
+    const int expected = target_index(session_.source(), false);
+    if (SendMessageW(source_combo_, CB_GETCURSEL, 0, 0) == expected) return;
+    syncing_ = true;
+    SendMessageW(source_combo_, CB_SETCURSEL, std::max(0, expected), 0);
+    syncing_ = false;
+}
+
 void QuickTranslateWindow::sync_target() {
-    const int expected = target_index(session_.target());
+    const int expected = target_index(session_.target(), true);
     if (SendMessageW(target_combo_, CB_GETCURSEL, 0, 0) == expected) return;
     syncing_ = true;
     SendMessageW(target_combo_, CB_SETCURSEL, expected, 0);
@@ -1250,15 +915,17 @@ void QuickTranslateWindow::sync_target() {
 void QuickTranslateWindow::refresh() {
     if (!window_) return;
     sync_input();
+    sync_source();
     sync_target();
     if (window_text(output_) != session_.output()) {
         SetWindowTextW(output_, session_.output().c_str());
     }
     status_error_ = session_.state() == TextTranslationState::error ||
                     session_.state() == TextTranslationState::too_long;
-    EnableWindow(clear_button_, !session_.input().empty());
     EnableWindow(copy_button_, !session_.output().empty());
+    EnableWindow(clear_button_, !session_.input().empty());
     InvalidateRect(input_, nullptr, FALSE);
+    InvalidateRect(source_combo_, nullptr, FALSE);
     InvalidateRect(target_combo_, nullptr, FALSE);
     InvalidateRect(window_, nullptr, FALSE);
 }
@@ -1266,13 +933,18 @@ void QuickTranslateWindow::refresh() {
 void QuickTranslateWindow::refresh_appearance() {
     if (!window_) return;
     create_theme_resources();
-    for (HWND control : {target_combo_, input_, output_, capture_button_,
-                         copy_button_, clear_button_, close_button_}) {
+    // The action buttons follow the width of the "原文"/"译文" captions, so a
+    // new UI font can move them; re-run the layout after rebuilding the fonts.
+    layout_controls();
+    for (HWND control : {source_combo_, swap_button_, target_combo_, input_, output_,
+                         capture_button_, copy_button_, clear_button_}) {
         set_control_font(control, font_);
     }
     apply_dark_frame(window_, true);
-    style_target_popup(target_combo_, dpi_, true);
+    style_target_popup(source_combo_, dpi_);
+    style_target_popup(target_combo_, dpi_);
     InvalidateRect(window_, nullptr, TRUE);
+    InvalidateRect(source_combo_, nullptr, TRUE);
     InvalidateRect(target_combo_, nullptr, TRUE);
 }
 
@@ -1301,30 +973,55 @@ void QuickTranslateWindow::hide() {
 }
 
 void QuickTranslateWindow::on_input_changed() {
-    if (!syncing_ && callbacks_.input_changed) callbacks_.input_changed(window_text(input_));
+    if (!syncing_ && callbacks_.input_changed) {
+        callbacks_.input_changed(window_text(input_));
+    }
+}
+
+void QuickTranslateWindow::on_source_changed() {
+    if (syncing_) return;
+    const std::wstring source = target_at(source_combo_, false);
+    if (callbacks_.source_changed) callbacks_.source_changed(source);
 }
 
 void QuickTranslateWindow::on_target_changed() {
-    if (!syncing_ && callbacks_.target_changed) callbacks_.target_changed(target_at(target_combo_));
+    if (syncing_) return;
+    const std::wstring target = target_at(target_combo_, true);
+    if (callbacks_.target_changed) callbacks_.target_changed(target);
+}
+
+void QuickTranslateWindow::swap_languages() {
+    const std::wstring source = target_at(source_combo_, false);
+    const std::wstring target = target_at(target_combo_, true);
+    if (source.empty() || target.empty() || source == target) return;
+    session_.set_source(target);
+    session_.set_target(source);
+    syncing_ = true;
+    SendMessageW(source_combo_, CB_SETCURSEL, target_index(target, false), 0);
+    SendMessageW(target_combo_, CB_SETCURSEL, target_index(source, true), 0);
+    syncing_ = false;
+    if (callbacks_.source_changed) callbacks_.source_changed(session_.source());
+    if (callbacks_.target_changed) callbacks_.target_changed(session_.target());
+    InvalidateRect(source_combo_, nullptr, FALSE);
+    InvalidateRect(target_combo_, nullptr, FALSE);
+    SetFocus(input_);
 }
 
 LRESULT QuickTranslateWindow::draw_item(const DRAWITEMSTRUCT& item) {
-    if (item.CtlType == ODT_COMBOBOX && item.hwndItem == target_combo_ &&
-        (item.itemState & ODS_COMBOBOXEDIT) != 0) {
-        // Windows clears the closed selection field before this callback on
-        // some focus transitions. Repaint that inner field with exactly the
-        // same surface as the custom selector so text never disappears and no
-        // square native selection layer becomes visible.
+    if (item.CtlType == ODT_COMBOBOX && (item.itemState & ODS_COMBOBOXEDIT) != 0) {
+        const bool source = GetDlgCtrlID(item.hwndItem) == id_source;
         fill_rect(item.hDC, item.rcItem, color_input);
         RECT text_bounds = item.rcItem;
         text_bounds.left += scaled(8, dpi_);
         text_bounds.right -= scaled(4, dpi_);
-        draw_label(item.hDC, target_selector_text(session_, true), text_bounds,
-                   small_font_, color_text,
+        draw_label(item.hDC,
+                   source ? source_selector_text(session_)
+                          : target_selector_text(session_, true),
+                   text_bounds, small_font_, color_text,
                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         return TRUE;
     }
-    return draw_owner_item(item, font_, accent_, icon_font_, true);
+    return draw_owner_item(item, font_, accent_, icon_font_, action_icon_font_);
 }
 
 void QuickTranslateWindow::draw_target_combo(HDC dc) {
@@ -1332,51 +1029,9 @@ void QuickTranslateWindow::draw_target_combo(HDC dc) {
                          target_selector_text(session_, true));
 }
 
-void QuickTranslateWindow::paint() {
-    PAINTSTRUCT paint{};
-    HDC dc = BeginPaint(window_, &paint);
-    FillRect(dc, &paint.rcPaint, background_);
-    RECT client{};
-    GetClientRect(window_, &client);
-
-    const int margin = scaled(16, dpi_);
-
-    RECT body{margin, scaled(50, dpi_), client.right - margin,
-              client.bottom - scaled(38, dpi_)};
-    const int divider_y = body.top + scaled(88, dpi_);
-    draw_rounded_control(dc, body, color_surface, color_border, scaled(8, dpi_));
-    HPEN divider = CreatePen(PS_SOLID, 1, color_border);
-    const HGDIOBJ previous_pen = SelectObject(dc, divider);
-    MoveToEx(dc, body.left + scaled(13, dpi_), divider_y, nullptr);
-    LineTo(dc, body.right - scaled(13, dpi_), divider_y);
-    SelectObject(dc, previous_pen);
-    DeleteObject(divider);
-
-    const bool input_focused = GetFocus() == input_;
-    const bool output_focused = GetFocus() == output_;
-    draw_label(dc, L"原文",
-               RECT{body.left + scaled(13, dpi_), body.top,
-                    body.left + scaled(80, dpi_), body.top + scaled(29, dpi_)},
-               small_font_, input_focused ? accent_ : color_dim,
-               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    const auto counter = std::to_wstring(session_.character_count()) + L" / 5000";
-    draw_label(dc, counter,
-               RECT{body.right - scaled(112, dpi_), body.top,
-                    body.right - scaled(13, dpi_), body.top + scaled(29, dpi_)},
-               small_font_, session_.state() == TextTranslationState::too_long
-                                ? color_error : color_faint,
-               DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-    draw_label(dc, L"译文",
-               RECT{body.left + scaled(13, dpi_), divider_y,
-                    body.left + scaled(80, dpi_), divider_y + scaled(29, dpi_)},
-               small_font_, output_focused ? accent_ : color_dim,
-               DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    draw_label(dc, session_status(session_),
-               RECT{margin + scaled(2, dpi_), body.bottom + scaled(6, dpi_),
-                    client.right - margin, client.bottom - scaled(8, dpi_)},
-               small_font_, status_error_ ? color_error : color_dim,
-               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    EndPaint(window_, &paint);
+void QuickTranslateWindow::draw_source_combo(HDC dc) {
+    draw_target_selector(source_combo_, dc, small_font_, dpi_, accent_,
+                         source_selector_text(session_));
 }
 
 bool QuickTranslateWindow::preprocess_message(MSG& message) {
@@ -1395,8 +1050,9 @@ bool QuickTranslateWindow::preprocess_message(MSG& message) {
 
 void QuickTranslateWindow::self_test(HWND owner) {
     create_window(owner);
-    if (!input_ || !output_ || !target_combo_ || !copy_button_ ||
-        !clear_button_ || !capture_button_ || !close_button_ ||
+    if (!input_ || !output_ || !target_combo_ || !source_combo_ || !swap_button_ ||
+        !copy_button_ || !clear_button_ || !capture_button_ ||
+        SendMessageW(source_combo_, CB_GETCOUNT, 0, 0) != 9 ||
         SendMessageW(target_combo_, CB_GETCOUNT, 0, 0) != 10) {
         throw AppError("quick translation window self-test controls are incomplete");
     }
@@ -1457,21 +1113,48 @@ void QuickTranslateWindow::self_test(HWND owner) {
     if (!composition_started || !composition_ended) {
         throw AppError("quick translation window self-test IME handling mismatch");
     }
-    SetWindowTextW(input_, L"clear self-test");
-    SendMessageW(input_, WM_COMMAND, MAKEWPARAM(id_input, EN_CHANGE),
-                 reinterpret_cast<LPARAM>(input_));
     bool clear_called = false;
     auto clear_callback = callbacks_.clear;
-    callbacks_.clear = [&] {
-        clear_called = true;
-        SetWindowTextW(input_, L"");
-    };
+    callbacks_.clear = [&] { clear_called = true; };
     SendMessageW(window_, WM_COMMAND, MAKEWPARAM(id_clear, BN_CLICKED),
                  reinterpret_cast<LPARAM>(clear_button_));
     callbacks_.clear = std::move(clear_callback);
-    if (!clear_called || !window_text(input_).empty() ||
-        GetFocus() != input_) {
+    if (!clear_called || GetFocus() != input_) {
         throw AppError("quick translation window self-test clear button mismatch");
+    }
+
+    bool copy_source_called = false;
+    auto copy_source_callback = callbacks_.copy;
+    callbacks_.copy = [&] { copy_source_called = true; };
+    SendMessageW(window_, WM_COMMAND, MAKEWPARAM(id_copy, BN_CLICKED),
+                 reinterpret_cast<LPARAM>(copy_button_));
+    callbacks_.copy = std::move(copy_source_callback);
+    if (!copy_source_called) {
+        throw AppError("quick translation window self-test copy button mismatch");
+    }
+    session_.set_source(L"fr");
+    session_.set_target(L"ja");
+    const std::wstring source_before_swap = session_.source();
+    const std::wstring target_before_swap = session_.target();
+    bool swap_called = false;
+    std::wstring swapped_source;
+    auto source_callback = callbacks_.source_changed;
+    auto target_callback = callbacks_.target_changed;
+    callbacks_.source_changed = [&](std::wstring value) {
+        swap_called = true;
+        swapped_source = value;
+        session_.set_source(std::move(value));
+    };
+    callbacks_.target_changed = [&](std::wstring value) {
+        session_.set_target(std::move(value));
+    };
+    SendMessageW(window_, WM_COMMAND, MAKEWPARAM(id_swap, BN_CLICKED),
+                 reinterpret_cast<LPARAM>(swap_button_));
+    callbacks_.source_changed = std::move(source_callback);
+    callbacks_.target_changed = std::move(target_callback);
+    if (!swap_called || swapped_source != target_before_swap ||
+        session_.target() != source_before_swap || source_before_swap == target_before_swap) {
+        throw AppError("quick translation window self-test swap mismatch");
     }
     bool capture_called = false;
     auto capture_callback = callbacks_.capture;
@@ -1482,18 +1165,30 @@ void QuickTranslateWindow::self_test(HWND owner) {
     if (!capture_called || visible()) {
         throw AppError("quick translation window self-test capture button mismatch");
     }
-    RECT capture_button_rect{};
     RECT copy_button_rect{};
     RECT clear_button_rect{};
-    if (!GetWindowRect(capture_button_, &capture_button_rect) ||
-        !GetWindowRect(copy_button_, &copy_button_rect) ||
+    RECT quick_input_rect{};
+    RECT quick_output_rect{};
+    if (!GetWindowRect(copy_button_, &copy_button_rect) ||
         !GetWindowRect(clear_button_, &clear_button_rect) ||
-        capture_button_rect.right - capture_button_rect.left !=
-            copy_button_rect.right - copy_button_rect.left ||
-        capture_button_rect.bottom - capture_button_rect.top !=
-            copy_button_rect.bottom - copy_button_rect.top ||
-        clear_button_rect.bottom != copy_button_rect.bottom ||
-        capture_button_rect.bottom != copy_button_rect.bottom) {
+        !GetWindowRect(input_, &quick_input_rect) ||
+        !GetWindowRect(output_, &quick_output_rect)) {
+        throw AppError("quick translation window self-test action buttons missing");
+    }
+    const int action_width = clear_button_rect.right - clear_button_rect.left;
+    const int action_height = clear_button_rect.bottom - clear_button_rect.top;
+    const int label_row_height = scaled(29, dpi_);
+    if (clear_button_rect.left != copy_button_rect.left ||
+        copy_button_rect.right - copy_button_rect.left != action_width ||
+        copy_button_rect.bottom - copy_button_rect.top != action_height ||
+        copy_button_rect.top <= clear_button_rect.bottom ||
+        clear_button_rect.bottom > quick_input_rect.top ||
+        clear_button_rect.top < quick_input_rect.top - label_row_height ||
+        copy_button_rect.top < quick_input_rect.bottom ||
+        copy_button_rect.bottom > quick_output_rect.top ||
+        clear_button_rect.left < quick_input_rect.left ||
+        clear_button_rect.left >= quick_input_rect.left + scaled(80, dpi_) ||
+        copy_button_rect.right > quick_input_rect.right) {
         throw AppError("quick translation window self-test action buttons differ");
     }
     show(owner);
@@ -1527,10 +1222,9 @@ void QuickTranslateWindow::self_test(HWND owner) {
         target_after_dropdown.bottom <= target_after_dropdown.top) {
         throw AppError("quick translation window self-test target selector resized");
     }
-    SendMessageW(window_, WM_COMMAND, MAKEWPARAM(id_close, BN_CLICKED),
-                 reinterpret_cast<LPARAM>(close_button_));
+    SendMessageW(window_, WM_CLOSE, 0, 0);
     if (visible()) {
-        throw AppError("quick translation window self-test close button did not hide");
+        throw AppError("quick translation window self-test close path did not hide");
     }
     show(owner);
     POINT drag_point{scaled(180, dpi_), scaled(34, dpi_)};
@@ -1604,12 +1298,24 @@ LRESULT CALLBACK QuickTranslateWindow::target_combo_proc(
     case WM_PAINT: {
         PAINTSTRUCT paint{};
         HDC dc = BeginPaint(control, &paint);
-        if (self) self->draw_target_combo(dc);
+        if (self) {
+            if (subclass_id == source_combo_subclass_id) {
+                self->draw_source_combo(dc);
+            } else {
+                self->draw_target_combo(dc);
+            }
+        }
         EndPaint(control, &paint);
         return 0;
     }
     case WM_PRINTCLIENT:
-        if (self) self->draw_target_combo(reinterpret_cast<HDC>(wparam));
+        if (self) {
+            if (subclass_id == source_combo_subclass_id) {
+                self->draw_source_combo(reinterpret_cast<HDC>(wparam));
+            } else {
+                self->draw_target_combo(reinterpret_cast<HDC>(wparam));
+            }
+        }
         return 0;
     case WM_ERASEBKGND:
         return 1;
@@ -1661,15 +1367,27 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
                 InvalidateRect(window_, nullptr, FALSE);
             }
             return 0;
+        case id_source:
+            if (HIWORD(wparam) == CBN_DROPDOWN) {
+                theme::apply_control_theme(source_combo_);
+                style_target_popup(source_combo_, dpi_, false);
+            }
+            if (HIWORD(wparam) == CBN_SELCHANGE) on_source_changed();
+            return 0;
         case id_target:
             if (HIWORD(wparam) == CBN_DROPDOWN) {
                 theme::apply_control_theme(target_combo_);
-                style_target_popup(target_combo_, dpi_, true, false);
+                style_target_popup(target_combo_, dpi_, false);
             }
             if (HIWORD(wparam) == CBN_SELCHANGE) on_target_changed();
             return 0;
+        case id_swap:
+            if (HIWORD(wparam) == BN_CLICKED) swap_languages();
+            return 0;
         case id_copy:
-            if (HIWORD(wparam) == BN_CLICKED && callbacks_.copy) callbacks_.copy();
+            if (HIWORD(wparam) == BN_CLICKED && callbacks_.copy) {
+                callbacks_.copy();
+            }
             return 0;
         case id_clear:
             if (HIWORD(wparam) == BN_CLICKED) {
@@ -1682,9 +1400,6 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
                 hide();
                 if (callbacks_.capture) callbacks_.capture();
             }
-            return 0;
-        case id_close:
-            if (HIWORD(wparam) == BN_CLICKED) hide();
             return 0;
         default: break;
         }
@@ -1709,10 +1424,12 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
         if (hit != HTCLIENT) return hit;
         const POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
         if (point_in_window(input_, point) || point_in_window(output_, point) ||
-            point_in_window(target_combo_, point) || point_in_window(copy_button_, point) ||
+            point_in_window(source_combo_, point) ||
+            point_in_window(swap_button_, point) ||
+            point_in_window(target_combo_, point) ||
+            point_in_window(copy_button_, point) ||
             point_in_window(clear_button_, point) ||
-            point_in_window(capture_button_, point) ||
-            point_in_window(close_button_, point)) {
+            point_in_window(capture_button_, point)) {
             return HTCLIENT;
         }
         return HTCAPTION;
@@ -1737,10 +1454,15 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
     case WM_CLOSE: hide(); return 0;
     case WM_NCDESTROY:
         SetWindowLongPtrW(window_, GWLP_USERDATA, 0);
+        if (output_) {
+            RemoveWindowSubclass(output_, &keep_editor_unfocused,
+                                 output_editor_subclass_id);
+        }
         window_ = nullptr;
+        source_combo_ = swap_button_ = nullptr;
         target_combo_ = input_ = output_ = nullptr;
         capture_button_ = nullptr;
-        copy_button_ = clear_button_ = close_button_ = nullptr;
+        copy_button_ = clear_button_ = nullptr;
         return 0;
     default: break;
     }

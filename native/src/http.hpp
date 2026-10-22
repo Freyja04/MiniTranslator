@@ -20,12 +20,16 @@ inline constexpr std::size_t max_json_response = 4 * 1024 * 1024;
 
 class HttpError : public AppError {
 public:
-    HttpError(std::string message, DWORD status = 0)
-        : AppError(std::move(message)), status_(status) {}
+    HttpError(std::string message, DWORD status = 0, DWORD network_error = 0)
+        : AppError(std::move(message)), status_(status), network_error_(network_error) {}
     [[nodiscard]] DWORD status() const noexcept { return status_; }
+    // True when nothing reached the endpoint, so one more attempt may succeed:
+    // dropped connections, DNS hiccups and timeouts are usually transient.
+    [[nodiscard]] bool retryable() const noexcept;
 
 private:
     DWORD status_{};
+    DWORD network_error_{};
 };
 
 struct HttpRequest {
@@ -62,6 +66,8 @@ public:
     HttpResponse send(const HttpRequest& request, std::stop_token stop = {}) const;
 
 private:
+    HttpResponse send_once(const HttpRequest& request, std::stop_token stop) const;
+
     HINTERNET session_{};
 };
 
@@ -71,9 +77,6 @@ std::wstring validate_api_base_url(std::wstring_view value,
                                    std::wstring_view label,
                                    bool key_present = true,
                                    bool allow_keyless_loopback_http = false);
-std::wstring validate_same_origin_https(std::wstring_view value,
-                                        std::wstring_view base_url,
-                                        std::wstring_view label);
 std::wstring append_query(
     std::wstring_view url,
     const std::vector<std::pair<std::wstring, std::wstring>>& parameters);

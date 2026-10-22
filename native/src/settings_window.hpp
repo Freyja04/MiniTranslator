@@ -1,6 +1,8 @@
 #pragma once
 
 #include "config.hpp"
+#include "settings_ocr.hpp"
+#include "settings_profiles.hpp"
 #include "text_translation_session.hpp"
 
 #include <windows.h>
@@ -42,9 +44,20 @@ public:
     void set_settings_changed_callback(std::function<void()> callback) {
         settings_changed_callback_ = std::move(callback);
     }
-    void set_updates_callback(std::function<void()> callback) {
-        updates_callback_ = std::move(callback);
+    void set_update_check_callback(std::function<void()> callback) {
+        update_check_callback_ = std::move(callback);
     }
+    void set_capture_callback(std::function<void()> callback) {
+        capture_callback_ = std::move(callback);
+    }
+    // Inline update status shown next to the 检查更新 button; the update flow
+    // itself lives in AppHost so no dialog window is needed.
+    void set_update_status(std::wstring_view text, bool error = false);
+    void set_update_check_enabled(bool enabled);
+    // Region capture replaces the whole screen with a frozen image, so the
+    // settings window steps aside while the user draws the selection.
+    void hide_for_capture();
+    void show_after_capture();
 
 private:
     struct ModelListResult {
@@ -56,15 +69,9 @@ private:
         bool cancelled{};
     };
 
-    // One user-defined large-model endpoint. The name is the identity that
-    // translator.ai_selected points at, so it has to stay unique.
-    struct AiProfile {
-        std::wstring name;
-        std::wstring protocol;
-        std::wstring base_url;
-        std::wstring key;
-        std::wstring model;
-    };
+    // One user-defined large-model endpoint; the naming/selection rules that
+    // keep the combo consistent live in settings_profiles.cpp.
+    using AiProfile = settings_profiles::Profile;
 
     static constexpr UINT test_completed_message = WM_APP + 61;
     static constexpr UINT models_completed_message = WM_APP + 62;
@@ -90,7 +97,6 @@ private:
     void create_hotkey_page();
     void create_translation_page();
     void create_ocr_page();
-    void create_appearance_page();
     void create_other_page();
     void create_text_translation_page();
     void create_theme_resources();
@@ -107,7 +113,7 @@ private:
                      const wchar_t* text, DWORD style, int identifier = 0);
     HWND add_label(int page, const wchar_t* text);
     void load_values();
-    bool save_values(bool show_error = false);
+    bool save_values();
     void save_provider_fields();
     void refresh_provider_fields(bool load);
     void save_profile_fields();
@@ -133,9 +139,8 @@ private:
     ConfigStore& config_;
     TextTranslationSession* text_session_{};
     TextTranslationCallbacks text_callbacks_;
-    HWND owner_{};
     HWND window_{};
-    std::array<HWND, 6> navigation_{};
+    std::array<HWND, 5> navigation_{};
     HWND status_{};
     HWND capture_hotkey_{};
     HWND toggle_hotkey_{};
@@ -159,36 +164,36 @@ private:
     HWND test_button_{};
     HWND test_status_{};
     HWND provider_hint_{};
-    HWND chinese_target_{};
     HWND ocr_engine_value_{};
-    HWND ocr_engine_note_{};
     HWND ocr_languages_{};
+    HWND translation_target_{};
     HWND ocr_upscale_{};
     HWND theme_mode_{};
     HWND auto_copy_{};
     HWND autostart_{};
-    HWND config_path_{};
-    HWND open_config_{};
     HWND restart_{};
     HWND check_updates_{};
-    HWND diagnostic_command_{};
-    HWND copy_diagnostic_{};
+    HWND update_status_{};
+    HWND text_capture_{};
+    HWND text_source_{};
+    HWND text_swap_{};
     HWND text_target_{};
     HWND text_input_{};
     HWND text_output_{};
-    HWND text_translate_{};
     HWND text_clear_{};
     HWND text_copy_{};
     HFONT font_{};
-    HFONT title_font_{};
     HFONT small_font_{};
     HFONT icon_font_{};
+    // The 原文/译文 clear and copy glyphs sit beside their captions and match
+    // the caption size instead of the larger navigation icon size.
+    HFONT action_icon_font_{};
     HBRUSH background_{};
     HBRUSH sidebar_background_{};
     HBRUSH card_background_{};
     HBRUSH input_background_{};
-    std::array<std::vector<HWND>, 6> page_controls_;
-    std::vector<std::vector<std::wstring>> ocr_language_options_;
+    std::array<std::vector<HWND>, 5> page_controls_;
+    std::vector<settings_ocr::Row> ocr_language_options_;
     std::string window_error_;
     std::wstring loaded_provider_;
     std::wstring loaded_profile_;
@@ -202,13 +207,15 @@ private:
     bool test_pending_{};
     bool model_refreshing_{};
     bool syncing_text_{};
+    bool update_status_error_{};
     std::jthread test_thread_;
     std::jthread model_thread_;
     std::uint64_t model_generation_{};
     std::function<bool()> hotkeys_changed_callback_;
     std::function<void()> restart_callback_;
     std::function<void()> settings_changed_callback_;
-    std::function<void()> updates_callback_;
+    std::function<void()> update_check_callback_;
+    std::function<void()> capture_callback_;
 };
 
 }  // namespace minitrans

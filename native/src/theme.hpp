@@ -59,7 +59,6 @@ inline COLORREF color_error = color_bad;
 inline COLORREF color_warning = color_warn;
 
 inline COLORREF tray_color_background = RGB(32, 32, 32);
-inline COLORREF tray_color_border = RGB(58, 58, 58);
 inline COLORREF tray_color_separator = RGB(61, 61, 61);
 inline COLORREF tray_color_hover = RGB(48, 48, 48);
 inline COLORREF tray_color_text = RGB(243, 243, 243);
@@ -78,5 +77,9 @@ void refresh_system_ui_font();
 void apply_window_theme(HWND window, bool round_corners = true,
                         bool custom_caption = false) noexcept;
 void apply_control_theme(HWND control) noexcept;
+
+// Draws the application icon as a single-color mark so it can sit next to the
+// monochrome glyphs in the settings sidebar and the tray menu.
+void draw_brand_mark(HDC dc, const RECT& bounds, COLORREF color) noexcept;
 
 }  // namespace minitrans::theme

@@ -13,7 +13,6 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-std::vector<std::wstring> available_windows_ocr_languages();
 std::vector<OcrLine> recognize_windows_ocr(
     const PixelBuffer& image,
     const std::vector<std::wstring>& languages,

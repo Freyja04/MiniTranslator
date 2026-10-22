@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config.hpp"
+#include "language_catalog.hpp"
 #include "pipeline.hpp"
 
 #include <array>
@@ -23,24 +24,29 @@ enum class TextTranslationState {
 
 struct TextTranslationCallbacks {
     std::function<void(std::wstring)> input_changed;
+    std::function<void(std::wstring)> source_changed;
     std::function<void(std::wstring)> target_changed;
     std::function<void(bool)> composition_changed;
     std::function<void()> translate_now;
     std::function<void()> clear;
     std::function<void()> copy;
+    std::function<void()> copy_source;
+    std::function<void()> clear_output;
     std::function<void()> capture;
     std::function<void()> open_settings;
 };
 
 class TextTranslationSession {
 public:
-    static constexpr std::size_t max_characters = 5000;
+    static constexpr std::size_t max_characters = 500;
 
     TextTranslationSession(ConfigStore& config, PipelineController& pipeline);
 
     bool set_input(std::wstring value);
+    bool set_source(std::wstring value);
     bool set_target(std::wstring value);
     void clear();
+    void clear_output();
     bool submit();
     bool configuration_changed();
     bool handle_completion(PipelineCompletion completion);
@@ -54,9 +60,11 @@ public:
     [[nodiscard]] const std::wstring& input() const noexcept { return input_; }
     [[nodiscard]] const std::wstring& output() const noexcept { return output_; }
     [[nodiscard]] const std::wstring& error() const noexcept { return error_; }
+    [[nodiscard]] const std::wstring& source() const noexcept { return source_; }
     [[nodiscard]] const std::wstring& target() const noexcept { return target_; }
     [[nodiscard]] TextTranslationState state() const noexcept { return state_; }
     [[nodiscard]] std::size_t character_count() const noexcept;
+    [[nodiscard]] std::wstring effective_source() const;
     [[nodiscard]] std::wstring effective_target() const;
     [[nodiscard]] bool can_submit() const noexcept;
     [[nodiscard]] std::uint64_t request_id() const noexcept { return request_id_; }
@@ -72,6 +80,7 @@ private:
     std::wstring input_;
     std::wstring output_;
     std::wstring error_;
+    std::wstring source_;
     std::wstring target_;
     std::wstring effective_target_;
     std::wstring submitted_configuration_;
@@ -80,6 +89,6 @@ private:
     std::function<void()> changed_callback_;
 };
 
-const std::array<std::wstring_view, 9>& text_translation_targets() noexcept;
+const std::array<std::wstring_view, language_catalog.size()>& text_translation_targets() noexcept;
 
 }  // namespace minitrans

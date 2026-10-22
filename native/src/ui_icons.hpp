@@ -7,5 +7,7 @@ namespace minitrans::ui_icons {
 // (IDI_APP_ICON), which belongs to the application identity only.
 inline constexpr wchar_t text_translation = static_cast<wchar_t>(0xE8D2);
 inline constexpr wchar_t capture_translation = static_cast<wchar_t>(0xE7A8);
+inline constexpr wchar_t copy = static_cast<wchar_t>(0xE8C8);
+inline constexpr wchar_t delete_glyph = static_cast<wchar_t>(0xE74D);
 
 }  // namespace minitrans::ui_icons

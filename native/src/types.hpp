@@ -62,14 +62,12 @@ struct PixelBuffer {
 struct OcrWord {
     std::wstring text;
     RectF bounds;
-    float confidence{-1.0F};
 };
 
 struct OcrLine {
     std::wstring text;
     RectF bounds;
     std::vector<OcrWord> words;
-    float confidence{-1.0F};
     // Temporary grouping hint. OCR providers leave this unset; LayoutEngine
     // fills it before moving lines into paragraph blocks.
     float layout_column_right{-1.0F};
@@ -82,6 +80,9 @@ struct TextBlock {
     // Empty means automatic routing. A non-empty value is a user-selected
     // target language retained across retry operations.
     std::wstring forced_target_language;
+    // Empty leaves the source language to the provider's own detection; a
+    // non-empty value pins it to a language the user picked.
+    std::wstring forced_source_language;
 
     [[nodiscard]] RectF bounds() const;
     [[nodiscard]] float line_height() const;

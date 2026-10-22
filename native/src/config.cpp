@@ -8,9 +8,7 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cwctype>
-#include <limits>
 #include <string_view>
 
 #ifndef MINITRANS_UPDATE_MANIFEST_URL
@@ -53,45 +51,55 @@ void deep_merge(JsonObject destination, const JsonObject& override) {
     }
 }
 
-void transform_key(JsonObject options, bool encrypting) {
+enum class KeyOutcome { not_secret, transformed, unreadable };
+
+KeyOutcome transform_key(JsonObject options, bool encrypting) {
     if (!options || !options.HasKey(L"key")) {
-        return;
+        return KeyOutcome::not_secret;
     }
     const auto value = options.Lookup(L"key");
     if (!value || value.ValueType() != JsonValueType::String) {
-        return;
+        return KeyOutcome::not_secret;
     }
     const auto current = wide_to_utf8(value.GetString().c_str());
     const auto transformed = encrypting ? dpapi::encrypt(current) : dpapi::decrypt(current);
+    // A protected value that cannot be unlocked (another user profile, another
+    // machine) must be reported instead of silently becoming an empty key.
+    const bool unreadable = !encrypting && !current.empty() && transformed.empty();
     options.SetNamedValue(L"key", JsonValue::CreateStringValue(utf8_to_wide(transformed)));
+    return unreadable ? KeyOutcome::unreadable : KeyOutcome::transformed;
 }
 
-void transform_secrets(JsonObject root, bool encrypting) {
+bool transform_secrets(JsonObject root, bool encrypting) {
+    bool unreadable = false;
     if (!root.HasKey(L"translator")) {
-        return;
+        return false;
     }
     const auto translator = root.GetNamedObject(L"translator", nullptr);
     if (!translator) {
-        return;
+        return false;
     }
     for (const auto& entry : translator) {
         const auto value = entry.Value();
         if (value && value.ValueType() == JsonValueType::Object) {
-            transform_key(value.GetObject(), encrypting);
+            unreadable = transform_key(value.GetObject(), encrypting) == KeyOutcome::unreadable ||
+                         unreadable;
         }
     }
     // Every user-defined large-model endpoint stores its own key, so the array
     // has to be walked element by element.
     const auto profiles = translator.GetNamedArray(L"ai_profiles", nullptr);
     if (!profiles) {
-        return;
+        return unreadable;
     }
     for (std::uint32_t index = 0; index < profiles.Size(); ++index) {
         const auto item = profiles.GetAt(index);
         if (item && item.ValueType() == JsonValueType::Object) {
-            transform_key(item.GetObject(), encrypting);
+            unreadable = transform_key(item.GetObject(), encrypting) == KeyOutcome::unreadable ||
+                         unreadable;
         }
     }
+    return unreadable;
 }
 
 bool contains_plaintext_key(const JsonObject& options) {
@@ -147,6 +155,56 @@ std::vector<std::wstring_view> split_path(std::wstring_view path) {
     return parts;
 }
 
+std::wstring zero_padded(unsigned value, int width) {
+    std::wstring text = std::to_wstring(value);
+    while (static_cast<int>(text.size()) < width) {
+        text.insert(text.begin(), L'0');
+    }
+    return text;
+}
+
+std::wstring recovery_suffix() {
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    return L".broken-" + zero_padded(now.wYear, 4) + zero_padded(now.wMonth, 2) +
+           zero_padded(now.wDay, 2) + L"-" + zero_padded(now.wHour, 2) +
+           zero_padded(now.wMinute, 2) + zero_padded(now.wSecond, 2);
+}
+
+std::filesystem::path backup_target(const std::filesystem::path& path) {
+    auto candidate = path;
+    candidate += recovery_suffix();
+    std::error_code error;
+    for (int attempt = 2; attempt <= 9; ++attempt) {
+        if (!std::filesystem::exists(candidate, error) || error) {
+            return candidate;
+        }
+        candidate = path;
+        candidate += recovery_suffix() + L"-" + std::to_wstring(attempt);
+    }
+    return candidate;
+}
+
+// Keeps the bytes of a configuration that could not be used. Renaming is
+// preferred because it also stops the next save from overwriting the original.
+std::filesystem::path preserve_config(const std::filesystem::path& path, bool move) {
+    std::error_code error;
+    if (!std::filesystem::exists(path, error) || error) {
+        return {};
+    }
+    const auto target = backup_target(path);
+    if (move) {
+        std::filesystem::rename(path, target, error);
+        if (!error) {
+            return target;
+        }
+        error.clear();
+    }
+    std::filesystem::copy_file(path, target,
+                               std::filesystem::copy_options::overwrite_existing, error);
+    return error ? std::filesystem::path{} : target;
+}
+
 }  // namespace
 
 ConfigStore::ConfigStore()
@@ -165,7 +223,6 @@ JsonObject ConfigStore::defaults() {
       "hotkey_toggle":"Ctrl+Alt+W",
       "hotkey_text_translate":"Ctrl+Alt+Space",
       "ocr":{
-        "engine":"windows",
         "languages":["zh-Hans-CN","en-US"],
         "upscale":true
       },
@@ -177,7 +234,7 @@ JsonObject ConfigStore::defaults() {
         "ai_profiles":[],
         "ai_selected":""
       },
-      "lang":{"zh_target":"en"},
+      "lang":{"zh_target":"en","target":"zh-Hans"},
       "appearance":{
         "auto_copy":true,
         "theme":"system"
@@ -194,6 +251,8 @@ JsonObject ConfigStore::defaults() {
 
 void ConfigStore::load() {
     root_ = defaults();
+    recovery_backup_.clear();
+    recovery_note_.clear();
     bool rewrite_migrated_values = false;
     try {
         if (std::filesystem::exists(path_)) {
@@ -202,11 +261,23 @@ void ConfigStore::load() {
             deep_merge(root_, disk);
         }
     } catch (...) {
+        // Reading or parsing failed: keep the bytes and fall back to defaults.
+        recovery_backup_ = preserve_config(path_, true);
+        recovery_note_ = L"配置文件无法读取，已恢复默认设置";
         root_ = defaults();
     }
     // Update provenance is a build-time trust boundary, never user configuration.
     root_.SetNamedValue(L"updates", defaults().GetNamedObject(L"updates"));
-    transform_secrets(root_, false);
+    if (transform_secrets(root_, false)) {
+        // The file is still valid JSON, but some keys belong to another user or
+        // machine. Copy it aside before a later save replaces the ciphertext.
+        if (recovery_backup_.empty()) {
+            recovery_backup_ = preserve_config(path_, false);
+        }
+        if (recovery_note_.empty()) {
+            recovery_note_ = L"配置中的接口密钥无法解密，请重新填写";
+        }
+    }
 
     // A config written by an older build may name an engine that no longer
     // exists. Keep such files usable by falling back to the default engine.
@@ -254,6 +325,14 @@ void ConfigStore::load() {
             rewrite_migrated_values = true;
         }
     }
+    // Windows OCR is the only recognizer, so the former engine selector is gone.
+    if (const auto ocr = root_.GetNamedObject(L"ocr", nullptr)) {
+        const winrt::hstring engine(L"engine");
+        if (ocr.HasKey(engine)) {
+            ocr.Remove(engine);
+            rewrite_migrated_values = true;
+        }
+    }
     if (rewrite_migrated_values) {
         try {
             save();
@@ -268,6 +347,14 @@ void ConfigStore::save() const {
     auto on_disk = deep_copy(root_);
     transform_secrets(on_disk, true);
     write_utf8_file_atomic(path_, wide_to_utf8(on_disk.Stringify().c_str()));
+}
+
+std::wstring ConfigStore::recovery_message() const {
+    std::wstring message = recovery_note_;
+    if (!recovery_backup_.empty()) {
+        message += L"；原文件已备份为 " + recovery_backup_.filename().wstring();
+    }
+    return message;
 }
 
 IJsonValue ConfigStore::lookup(std::wstring_view path) const {
@@ -306,22 +393,6 @@ bool ConfigStore::boolean(std::wstring_view path, bool fallback) const {
     } catch (...) {
         return fallback;
     }
-}
-
-int ConfigStore::integer(std::wstring_view path, int fallback) const {
-    try {
-        const auto value = lookup(path);
-        if (value && value.ValueType() == JsonValueType::Number) {
-            const double number = value.GetNumber();
-            if (std::isfinite(number) &&
-                number >= static_cast<double>(std::numeric_limits<int>::min()) &&
-                number <= static_cast<double>(std::numeric_limits<int>::max())) {
-                return static_cast<int>(std::lround(number));
-            }
-        }
-    } catch (...) {
-    }
-    return fallback;
 }
 
 std::vector<std::wstring> ConfigStore::strings(std::wstring_view path) const {
@@ -390,11 +461,6 @@ void ConfigStore::set_boolean(std::wstring_view path, bool value) {
     parent_for(path, leaf).SetNamedValue(leaf, JsonValue::CreateBooleanValue(value));
 }
 
-void ConfigStore::set_integer(std::wstring_view path, int value) {
-    std::wstring leaf;
-    parent_for(path, leaf).SetNamedValue(leaf, JsonValue::CreateNumberValue(value));
-}
-
 void ConfigStore::set_strings(std::wstring_view path,
                               const std::vector<std::wstring>& values) {
     JsonArray array;
@@ -408,6 +474,72 @@ void ConfigStore::set_strings(std::wstring_view path,
 void ConfigStore::set_json(std::wstring_view path, const IJsonValue& value) {
     std::wstring leaf;
     parent_for(path, leaf).SetNamedValue(leaf, value);
+}
+
+void config_self_test() {
+    std::error_code error;
+    auto directory = std::filesystem::temp_directory_path(error);
+    if (error) {
+        directory = std::filesystem::current_path(error);
+        if (error) {
+            throw AppError("config self-test cannot find a working directory");
+        }
+    }
+    directory /= L"MiniTranslator-config-self-test";
+    std::filesystem::remove_all(directory, error);
+    std::filesystem::create_directories(directory, error);
+    if (error) {
+        throw AppError("config self-test cannot create its working directory");
+    }
+
+    // A corrupt file is moved aside and reported, never silently replaced.
+    const auto corrupt = directory / L"config.json";
+    const char* const corrupt_text = R"({"hotkey":"Ctrl+Alt+Q",)";
+    write_utf8_file_atomic(corrupt, corrupt_text);
+    {
+        ConfigStore recovered(corrupt);
+        if (!recovered.recovered() || recovered.recovery_backup().empty() ||
+            !std::filesystem::exists(recovered.recovery_backup()) ||
+            std::filesystem::exists(corrupt)) {
+            throw AppError("config self-test did not preserve an unreadable configuration");
+        }
+        if (read_utf8_file(recovered.recovery_backup()) != corrupt_text) {
+            throw AppError("config self-test backup lost the original bytes");
+        }
+        if (recovered.string(L"hotkey") != L"Ctrl+Alt+Q") {
+            throw AppError("config self-test did not fall back to defaults");
+        }
+    }
+
+    // A healthy file is used as written and must not report a recovery.
+    const auto healthy = directory / L"healthy.json";
+    write_utf8_file_atomic(healthy, R"({"appearance":{"theme":"dark"}})");
+    {
+        ConfigStore loaded(healthy);
+        if (loaded.recovered() || loaded.string(L"appearance.theme") != L"dark") {
+            throw AppError("config self-test mishandled a healthy configuration");
+        }
+    }
+
+    // Secrets survive a save/load cycle without ever reaching the disk in clear.
+    const auto secrets_path = directory / L"secrets.json";
+    {
+        ConfigStore secrets(secrets_path);
+        secrets.set_string(L"translator.deepl.key", L"deepl-self-test-key");
+        secrets.save();
+    }
+    if (read_utf8_file(secrets_path).find("deepl-self-test-key") != std::string::npos) {
+        throw AppError("config self-test wrote an unprotected secret");
+    }
+    {
+        ConfigStore reloaded(secrets_path);
+        if (reloaded.recovered() ||
+            reloaded.string(L"translator.deepl.key") != L"deepl-self-test-key") {
+            throw AppError("config self-test failed the DPAPI round trip");
+        }
+    }
+
+    std::filesystem::remove_all(directory, error);
 }
 
 }  // namespace minitrans

@@ -20,12 +20,20 @@ if ($file.Length -le 0 -or $file.Length -gt 512MB) {
     throw "Native executable has an invalid size: $($file.Length) bytes"
 }
 
-$bytes = [System.IO.File]::ReadAllBytes($executable)
-if ($bytes.Length -lt 256 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+# Only the PE headers are inspected here, so read a bounded prefix instead of the
+# whole executable (the version string comes from FileVersionInfo below).
+$bytes = New-Object byte[] 65536
+$stream = [System.IO.File]::OpenRead($executable)
+try {
+    $read = $stream.Read($bytes, 0, $bytes.Length)
+} finally {
+    $stream.Dispose()
+}
+if ($read -lt 256 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
     throw 'Native executable is not a valid PE file (missing MZ header)'
 }
 $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-if ($peOffset -lt 0x40 -or $peOffset + 96 -gt $bytes.Length) {
+if ($peOffset -lt 0x40 -or $peOffset + 96 -gt $read) {
     throw 'Native executable has an invalid PE header offset'
 }
 if ([BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550) {

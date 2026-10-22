@@ -1,6 +1,7 @@
 #include "block_editor.hpp"
 
 #include "language.hpp"
+#include "language_catalog.hpp"
 #include "resource.h"
 #include "theme.hpp"
 #include "ui_draw.hpp"
@@ -14,7 +15,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cwctype>
 #include <string_view>
 
@@ -44,12 +44,6 @@ using theme::color_text_dim;
 using theme::color_text_faint;
 using theme::color_translation;
 using theme::color_warning;
-
-constexpr std::array<std::pair<std::wstring_view, std::wstring_view>, 9> targets{{
-    {L"zh-Hans", L"简体中文"}, {L"en", L"英语"}, {L"ja", L"日语"},
-    {L"ko", L"韩语"}, {L"fr", L"法语"}, {L"de", L"德语"},
-    {L"es", L"西班牙语"}, {L"ru", L"俄语"}, {L"zh-Hant", L"繁体中文"},
-}};
 
 BlockEditor* active_editor{};
 
@@ -113,23 +107,6 @@ void fill_round_rect(HDC dc, const RECT& rect, int radius,
 }
 
 using ui_draw::draw_text;
-
-std::optional<double> block_confidence(const TextBlock& block) {
-    double weighted = 0.0;
-    std::size_t total = 0;
-    for (const auto& line : block.lines) {
-        if (line.confidence < 0.0F) continue;
-        const auto weight = static_cast<std::size_t>(std::count_if(
-            line.text.begin(), line.text.end(), [](wchar_t ch) {
-                return std::iswspace(ch) == 0;
-            }));
-        const auto effective_weight = std::max<std::size_t>(1, weight);
-        weighted += static_cast<double>(line.confidence) * effective_weight;
-        total += effective_weight;
-    }
-    if (total == 0) return std::nullopt;
-    return weighted / static_cast<double>(total);
-}
 
 RECT inset_rect(RECT rect, int amount) noexcept {
     InflateRect(&rect, -amount, -amount);
@@ -450,7 +427,7 @@ void BlockEditor::create_controls() {
     const auto automatic = L"自动（中文→" + target_display_name(chinese_target_) +
                            L"，其他→简体中文）";
     SendMessageW(target_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(automatic.c_str()));
-    for (const auto& [code, label] : targets) {
+    for (const auto& [code, label] : language_choices) {
         static_cast<void>(code);
         SendMessageW(target_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.data()));
     }
@@ -487,8 +464,6 @@ void BlockEditor::layout_controls() {
     int y = card_rect_.top + scale(12);
     block_title_rect_ = {inner_x, y, inner_right, y + scale(20)};
     y = block_title_rect_.bottom + scale(8);
-    confidence_rect_ = {inner_x, y, inner_right, y + scale(16)};
-    y = confidence_rect_.bottom + scale(8);
     source_label_rect_ = {inner_x, y, inner_right, y + scale(16)};
     y = source_label_rect_.bottom + scale(8);
 
@@ -705,8 +680,8 @@ void BlockEditor::load_current(int index) {
     SetWindowTextW(source_, draft.source.c_str());
     SetWindowTextW(translation_, draft.translation.c_str());
     int target_index = 0;
-    for (std::size_t i = 0; i < targets.size(); ++i) {
-        if (targets[i].first == draft.target_mode) {
+    for (std::size_t i = 0; i < language_choices.size(); ++i) {
+        if (language_choices[i].first == draft.target_mode) {
             target_index = static_cast<int>(i + 1);
             break;
         }
@@ -730,7 +705,7 @@ void BlockEditor::target_changed() {
     if (loading_ || current_ < 0 || current_ >= static_cast<int>(drafts_.size())) return;
     const int selected = static_cast<int>(SendMessageW(target_, CB_GETCURSEL, 0, 0));
     auto& draft = drafts_[static_cast<std::size_t>(current_)];
-    draft.target_mode = selected <= 0 ? L"" : std::wstring(targets[static_cast<std::size_t>(selected - 1)].first);
+    draft.target_mode = selected <= 0 ? L"" : std::wstring(language_choices[static_cast<std::size_t>(selected - 1)].first);
     draft.error.clear();
     draft.success = false;
     refresh_current_state();
@@ -746,21 +721,6 @@ void BlockEditor::refresh_current_state() {
     const auto& draft = drafts_[static_cast<std::size_t>(current_)];
     block_heading_ = L"文本块 " + std::to_wstring(current_ + 1) + L" / " +
                      std::to_wstring(drafts_.size());
-
-    const auto confidence = block_confidence(draft.block);
-    if (!confidence) {
-        confidence_text_ = L"当前 OCR 引擎不提供置信度";
-        confidence_color_ = color_text_dim;
-    } else {
-        const int percent = static_cast<int>(std::lround(*confidence * 100.0));
-        confidence_text_ = L"识别置信度 " + std::to_wstring(percent) + L"%";
-        if (*confidence < 0.75) {
-            confidence_text_ += L" · 建议重点校对";
-            confidence_color_ = color_warning;
-        } else {
-            confidence_color_ = color_text_dim;
-        }
-    }
 
     EnableWindow(source_, draft.busy ? FALSE : TRUE);
     EnableWindow(target_, draft.busy ? FALSE : TRUE);
@@ -975,8 +935,6 @@ void BlockEditor::paint() {
     fill_round_rect(dc, list_rect_, scale(6), color_card, color_line);
     fill_round_rect(dc, card_rect_, scale(8), color_card, color_line);
     draw_text(dc, block_heading_, block_title_rect_, block_title_font_, color_text,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    draw_text(dc, confidence_text_, confidence_rect_, small_font_, confidence_color_,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     draw_text(dc, L"识别原文", source_label_rect_, small_font_, color_text_dim,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE);

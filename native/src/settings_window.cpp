@@ -43,9 +43,9 @@ SettingsWindow::~SettingsWindow() {
     discard_connection_test_results();
     if (window_ && IsWindow(window_)) DestroyWindow(window_);
     if (font_) DeleteObject(font_);
-    if (title_font_) DeleteObject(title_font_);
     if (small_font_) DeleteObject(small_font_);
     if (icon_font_) DeleteObject(icon_font_);
+    if (action_icon_font_) DeleteObject(action_icon_font_);
     if (background_) DeleteObject(background_);
     if (sidebar_background_) DeleteObject(sidebar_background_);
     if (card_background_) DeleteObject(card_background_);
@@ -55,7 +55,7 @@ SettingsWindow::~SettingsWindow() {
 bool SettingsWindow::preprocess_message(MSG& message) {
     const HWND dialog = window_;
     if (!dialog || !IsWindow(dialog) || !IsWindowVisible(dialog)) return false;
-    if (current_page_ == 5 && message.message == WM_KEYDOWN &&
+    if (current_page_ == 4 && message.message == WM_KEYDOWN &&
         message.wParam == VK_RETURN && (GetKeyState(VK_CONTROL) & 0x8000)) {
         if (text_callbacks_.translate_now) text_callbacks_.translate_now();
         return true;
@@ -69,7 +69,6 @@ void SettingsWindow::show(HWND owner) {
         SetForegroundWindow(window_);
         return;
     }
-    owner_ = owner;
     finished_ = false;
     test_pending_ = false;
     model_refreshing_ = false;
@@ -103,14 +102,27 @@ void SettingsWindow::detach_text_translation() noexcept {
 void SettingsWindow::show_text_translation(HWND owner) {
     show(owner);
     if (!window_) return;
-    show_page(5);
+    show_page(4);
     refresh_text_translation();
     if (text_input_) SetFocus(text_input_);
 }
 
+void SettingsWindow::hide_for_capture() {
+    // The region overlay needs a clean screen: hide this window before the
+    // capture starts and restore it once the overlay closes.
+    if (window_ && IsWindowVisible(window_)) ShowWindow(window_, SW_HIDE);
+}
+
+void SettingsWindow::show_after_capture() {
+    if (window_ && IsWindow(window_) && !IsWindowVisible(window_)) {
+        ShowWindow(window_, SW_SHOWNA);
+        SetForegroundWindow(window_);
+    }
+}
+
 void SettingsWindow::refresh_text_translation() {
     if (!window_ || !text_session_ || !text_input_ || !text_output_ ||
-        !text_target_) {
+        !text_source_ || !text_target_) {
         return;
     }
     syncing_text_ = true;
@@ -120,17 +132,19 @@ void SettingsWindow::refresh_text_translation() {
     if (text_of(text_output_) != text_session_->output()) {
         SetWindowTextW(text_output_, text_session_->output().c_str());
     }
+    const int expected_source = text_source_index(text_session_->source());
+    if (expected_source >= 0 && selected_index(text_source_) != expected_source) {
+        select_combo(text_source_, expected_source);
+    }
     const int expected_target = text_target_index(text_session_->target());
     if (selected_index(text_target_) != expected_target) {
         select_combo(text_target_, expected_target);
     }
     syncing_text_ = false;
     EnableWindow(text_copy_, !text_session_->output().empty());
-    EnableWindow(text_clear_, !text_session_->input().empty() ||
-                              !text_session_->output().empty());
-    EnableWindow(text_translate_, text_session_->can_submit());
+    EnableWindow(text_clear_, !text_session_->input().empty());
     InvalidateRect(text_target_, nullptr, FALSE);
-    if (current_page_ == 5) InvalidateRect(window_, nullptr, FALSE);
+    if (current_page_ == 4) InvalidateRect(window_, nullptr, FALSE);
 }
 
 void SettingsWindow::create_window(HWND owner) {
@@ -221,7 +235,8 @@ HWND SettingsWindow::add_label(int page, const wchar_t* text) {
 }
 
 void SettingsWindow::create_theme_resources() {
-    for (auto** font : {&font_, &title_font_, &small_font_, &icon_font_}) {
+    for (auto** font : {&font_, &small_font_, &icon_font_,
+                        &action_icon_font_}) {
         if (*font) DeleteObject(*font);
         *font = nullptr;
     }
@@ -237,9 +252,9 @@ void SettingsWindow::create_theme_resources() {
                            CLEARTYPE_QUALITY, DEFAULT_PITCH, theme::font_family.c_str());
     };
     font_ = make_font(theme::font_size_body, FW_NORMAL);
-    title_font_ = make_font(theme::font_size_title, FW_SEMIBOLD);
     small_font_ = make_font(theme::font_size_small, FW_NORMAL);
     icon_font_ = create_icon_font(dpi_);
+    action_icon_font_ = create_icon_font(dpi_, 12);
     background_ = CreateSolidBrush(color_page);
     sidebar_background_ = CreateSolidBrush(color_sidebar);
     card_background_ = CreateSolidBrush(color_card);
@@ -257,7 +272,6 @@ void SettingsWindow::refresh_appearance() {
             apply_control_theme(control);
         }
     }
-    set_font(ocr_engine_note_, small_font_);
     set_font(test_status_, small_font_);
     set_font(provider_hint_, small_font_);
     theme::apply_window_theme(window_, true, true);
@@ -317,6 +331,16 @@ LRESULT CALLBACK SettingsWindow::edit_proc(HWND control, UINT message,
                                             WPARAM wparam, LPARAM lparam,
                                             UINT_PTR subclass_id, DWORD_PTR reference) {
     auto* self = reinterpret_cast<SettingsWindow*>(reference);
+    // The translation output is display-only. Focus attempts are forwarded to
+    // the source editor so the output never grows a caret or selection frame.
+    if (self && control == self->text_output_ &&
+        (message == WM_SETFOCUS || message == WM_LBUTTONDOWN ||
+         message == WM_LBUTTONDBLCLK)) {
+        if (self->text_input_ && IsWindow(self->text_input_)) {
+            SetFocus(self->text_input_);
+        }
+        return 0;
+    }
     const auto update_region = [&] {
         if (!self) return;
         RECT rect{};
@@ -504,7 +528,7 @@ LRESULT CALLBACK SettingsWindow::hotkey_proc(HWND control, UINT message,
         }
         append(name);
         SetWindowTextW(control, value.c_str());
-        self->save_values(false);
+        self->save_values();
         SetFocus(self->navigation_[navigation_index_for_page(self->current_page_)]);
         return 0;
     }
@@ -544,8 +568,14 @@ void SettingsWindow::draw_combo(HWND control, HDC dc) {
     text_rect.left += px(9, dpi_);
     text_rect.right -= px(32, dpi_);
     OffsetRect(&text_rect, 0, px(logical_field_text_offset_y, dpi_));
-    const std::wstring value = control == text_target_ && text_session_
-        ? text_target_selector(*text_session_) : text_of(control);
+    std::wstring value = text_of(control);
+    if (text_session_) {
+        if (control == text_target_) {
+            value = text_target_selector(*text_session_);
+        } else if (control == text_source_) {
+            value = target_display_name(text_session_->source());
+        }
+    }
     draw_text(dc, value, text_rect, font_,
               enabled ? color_text : color_text_faint,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -588,7 +618,7 @@ void SettingsWindow::show_page(int index) {
         }
     }
     if (current_page_ == 1) refresh_provider_fields(false);
-    if (current_page_ == 5) refresh_text_translation();
+    if (current_page_ == 4) refresh_text_translation();
     layout_controls();
     clear_combo_edit_selection(provider_model_);
     const auto navigation_index = navigation_index_for_page(current_page_);
@@ -675,7 +705,6 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         // The hint labels use a smaller font than the rest of the page, so the
         // rebuild above has to put that font back instead of leaving them
         // stretched to the page font.
-        set_font(ocr_engine_note_, small_font_);
         set_font(test_status_, small_font_);
         set_font(provider_hint_, small_font_);
         layout_controls();
@@ -694,7 +723,7 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         const HWND source = reinterpret_cast<HWND>(lparam);
         if (id >= id_nav_first && id <= id_nav_last && notification == BN_CLICKED) {
             ScopedRedrawPause redraw_pause(window_);
-            save_values(false);
+            save_values();
             show_page(navigation_page_order[static_cast<std::size_t>(id - id_nav_first)]);
             return 0;
         }
@@ -730,15 +759,37 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             }
             return 0;
         }
+        if (id == id_text_source && notification == CBN_SELCHANGE) {
+            if (!syncing_text_ && text_callbacks_.source_changed) {
+                text_callbacks_.source_changed(text_source_at(text_source_));
+            }
+            InvalidateRect(text_source_, nullptr, FALSE);
+            return 0;
+        }
+        if (id == id_text_swap && notification == BN_CLICKED) {
+            if (text_session_) {
+                const std::wstring swap_source = text_session_->source();
+                std::wstring swap_target = text_session_->target();
+                if (swap_target.empty() && !text_session_->input().empty()) {
+                    swap_target = text_session_->effective_target();
+                }
+                if (!swap_source.empty() && !swap_target.empty() &&
+                    swap_source != swap_target) {
+                    if (text_callbacks_.source_changed) {
+                        text_callbacks_.source_changed(swap_target);
+                    }
+                    if (text_callbacks_.target_changed) {
+                        text_callbacks_.target_changed(swap_source);
+                    }
+                }
+            }
+            return 0;
+        }
         if (id == id_text_target && notification == CBN_SELCHANGE) {
             if (!syncing_text_ && text_callbacks_.target_changed) {
                 text_callbacks_.target_changed(text_target_at(text_target_));
             }
             InvalidateRect(text_target_, nullptr, FALSE);
-            return 0;
-        }
-        if (id == id_text_translate && notification == BN_CLICKED) {
-            if (text_callbacks_.translate_now) text_callbacks_.translate_now();
             return 0;
         }
         if (id == id_text_clear && notification == BN_CLICKED) {
@@ -750,9 +801,13 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             if (text_callbacks_.copy) text_callbacks_.copy();
             return 0;
         }
+        if (id == id_text_capture && notification == BN_CLICKED) {
+            if (capture_callback_) capture_callback_();
+            return 0;
+        }
         if (!loading_ && notification == BN_CLICKED && is_checkbox(source)) {
             set_checkbox(source, !checkbox_checked(source));
-            save_values(false);
+            save_values();
             layout_controls();
             RedrawWindow(window_, nullptr, nullptr,
                          RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -763,7 +818,7 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             save_provider_fields();
             cancel_model_refresh(true);
             refresh_provider_fields(true);
-            save_values(false);
+            save_values();
             layout_controls();
             RedrawWindow(window_, nullptr, nullptr,
                          RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -789,7 +844,7 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             }
             config_.set_string(L"translator.provider", loaded_provider_);
             refresh_provider_fields(true);
-            save_values(false);
+            save_values();
             layout_controls();
             RedrawWindow(window_, nullptr, nullptr,
                          RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
@@ -807,14 +862,14 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             }
             cancel_model_refresh(true);
             refresh_provider_fields(true);
-            save_values(false);
+            save_values();
             layout_controls();
             RedrawWindow(window_, nullptr, nullptr,
                          RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
             return 0;
         }
         if (id == id_ai_protocol && notification == CBN_SELCHANGE && !loading_) {
-            save_values(false);
+            save_values();
             return 0;
         }
         if (id == id_profile_add && notification == BN_CLICKED) {
@@ -835,24 +890,14 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             start_model_refresh();
             return 0;
         }
-        if (id == id_open_config && notification == BN_CLICKED) {
-            save_values(false);
-            const auto arguments = L"/select,\"" + config_.path().wstring() + L"\"";
-            ShellExecuteW(window_, L"open", L"explorer.exe", arguments.c_str(), nullptr, SW_SHOWNORMAL);
-            return 0;
-        }
-        if (id == id_copy_diagnostic && notification == BN_CLICKED) {
-            if (copy_text_to_clipboard(window_, text_of(diagnostic_command_))) {
-                set_status(L"自检命令已复制");
-            } else {
-                set_status(L"无法复制自检命令", true);
-            }
-            return 0;
-        }
         if (id == id_check_updates && notification == BN_CLICKED) {
             if (!save_values()) return 0;
             cancel_model_refresh();
-            if (updates_callback_) updates_callback_();
+            // The update used to open its own dialog; progress is reported
+            // inline next to the button so the settings window stays put.
+            set_update_status(L"检查中...");
+            set_update_check_enabled(false);
+            if (update_check_callback_) update_check_callback_();
             return 0;
         }
         if (id == id_restart && notification == BN_CLICKED) {
@@ -867,7 +912,7 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         if (!loading_ && (notification == CBN_SELCHANGE || notification == BN_CLICKED ||
                           notification == EN_KILLFOCUS ||
                           (source == provider_model_ && notification == CBN_KILLFOCUS))) {
-            save_values(false);
+            save_values();
         }
         break;
     }
@@ -900,10 +945,14 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         return FALSE;
     case WM_CTLCOLOREDIT: {
         const auto dc = reinterpret_cast<HDC>(wparam);
+        const auto control = reinterpret_cast<HWND>(lparam);
         SetTextColor(dc, color_text);
-        SetBkColor(dc, color_input);
+        // The text translation editors live inside the shared card, so they
+        // blend into the card surface instead of the usual input well.
+        SetBkColor(dc, control == text_input_ ? color_card : color_input);
         SetBkMode(dc, OPAQUE);
-        return reinterpret_cast<LRESULT>(input_background_);
+        return reinterpret_cast<LRESULT>(control == text_input_ ? card_background_
+                                                               : input_background_);
     }
     case WM_CTLCOLORLISTBOX: {
         const auto dc = reinterpret_cast<HDC>(wparam);
@@ -917,15 +966,9 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         const auto control = reinterpret_cast<HWND>(lparam);
         if (control == text_output_) {
             SetTextColor(dc, color_text);
-            SetBkColor(dc, color_input);
+            SetBkColor(dc, color_card);
             SetBkMode(dc, OPAQUE);
-            return reinterpret_cast<LRESULT>(input_background_);
-        }
-        if (control == config_path_ || control == diagnostic_command_) {
-            SetTextColor(dc, color_text);
-            SetBkColor(dc, color_input);
-            SetBkMode(dc, OPAQUE);
-            return reinterpret_cast<LRESULT>(input_background_);
+            return reinterpret_cast<LRESULT>(card_background_);
         }
         if (control == ocr_languages_ || control == capture_hotkey_ ||
             control == toggle_hotkey_ || control == text_hotkey_) {
@@ -942,6 +985,10 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         if (control == test_status_) {
             SetTextColor(dc, test_pending_ ? color_text_dim
                               : test_success_ ? color_ok : color_bad);
+            return reinterpret_cast<LRESULT>(card_background_);
+        }
+        if (control == update_status_) {
+            SetTextColor(dc, update_status_error_ ? color_bad : color_text_dim);
             return reinterpret_cast<LRESULT>(card_background_);
         }
         const auto control_font = reinterpret_cast<HFONT>(

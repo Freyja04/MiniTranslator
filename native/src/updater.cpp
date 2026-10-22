@@ -786,9 +786,30 @@ void updater_self_test() {
         compare_semver(parse_semver(L"2.0.0+build.7"), parse_semver(L"1.99.99")) <= 0) {
         throw UpdateError("SemVer self-test failed");
     }
-    bool rejected = false;
-    try { (void)parse_semver(L"1.2.3-"); } catch (const UpdateError&) { rejected = true; }
-    if (!rejected) throw UpdateError("invalid SemVer was accepted");
+    // Shared fixtures: release/version_cases.json is the single list, and
+    // release/check_version_cases.py enforces these literals against it while
+    // also validating the release tooling's own parser. Keep them in sync.
+    constexpr std::wstring_view accepted_versions[] = {
+        L"0.0.0", L"1.2.3", L"10.20.30", L"1.2.4-rc.1", L"1.2.4-rc.1+build.7",
+        L"2.0.0+build.7", L"1.0.0-alpha", L"1.0.0-alpha.beta", L"1.0.0-0.3.7",
+        L"1.2.3-Beta-2",
+    };
+    for (const auto version : accepted_versions) {
+        (void)parse_semver(version);
+    }
+    constexpr std::wstring_view rejected_versions[] = {
+        L"", L"1.2", L"1.2.3.4", L"v1.2.3", L"01.2.3", L"1.02.3", L"1.2.3-",
+        L"1.2.3+", L"1.2.3-01", L"1.2.3+build..7",
+    };
+    for (const auto version : rejected_versions) {
+        bool rejected = false;
+        try {
+            (void)parse_semver(version);
+        } catch (const UpdateError&) {
+            rejected = true;
+        }
+        if (!rejected) throw UpdateError("invalid SemVer was accepted");
+    }
 
     // This manifest is a parser/validator fixture only; it is never fetched or
     // installed. The repository comes from the same build-time pin as production.

@@ -9,14 +9,16 @@ void SettingsWindow::self_test(HWND owner) {
     if (window_) throw AppError("settings self-test window already exists");
     create_window(owner);
     if (!window_ || !capture_hotkey_ || !toggle_hotkey_ || !text_hotkey_ ||
-        !provider_ || !ocr_engine_value_ || !navigation_[0] || !navigation_[1] ||
-        !text_session_ || !text_target_ || !text_input_ || !text_output_ ||
-        !text_translate_ || !text_clear_ || !text_copy_) {
+        !provider_ || !ocr_engine_value_ || !translation_target_ ||
+        !navigation_[0] || !navigation_[1] ||
+        !text_session_ || !text_capture_ || !text_source_ || !text_swap_ ||
+        !text_target_ || !text_input_ || !text_output_ || !text_clear_ ||
+        !text_copy_ || !update_status_) {
         throw AppError("settings self-test did not create required controls");
     }
-    constexpr std::array<std::wstring_view, 6> expected_navigation{
-        L"文本翻译", L"截图识别", L"翻译接口",
-        L"快捷键", L"显示", L"其他",
+    constexpr std::array<std::wstring_view, 5> expected_navigation{
+        L"翻译", L"截图识别", L"翻译接口",
+        L"快捷键", L"设置",
     };
     for (std::size_t index = 0; index < expected_navigation.size(); ++index) {
         if (!navigation_[index] ||
@@ -89,19 +91,8 @@ void SettingsWindow::self_test(HWND owner) {
         text_of(text_hotkey_) != L"Ctrl+Alt+Space") {
         throw AppError("settings self-test hotkey order mismatch");
     }
-    std::wstring hotkey_error;
-    const auto capture_spec = parse_hotkey(L"Ctrl+Alt+Q", &hotkey_error);
-    const auto toggle_spec = parse_hotkey(L"Ctrl+Alt+W", &hotkey_error);
-    const auto text_spec = parse_hotkey(L"Ctrl+Alt+Space", &hotkey_error);
-    const auto equivalent_text_spec = parse_hotkey(L"control+alt+space", &hotkey_error);
-    const auto input_method_spec = parse_hotkey(L"Ctrl+Space", &hotkey_error);
-    if (!capture_spec || !toggle_spec || !text_spec || !equivalent_text_spec ||
-        !input_method_spec || same_hotkey(*capture_spec, *toggle_spec) ||
-        same_hotkey(*capture_spec, *text_spec) ||
-        same_hotkey(*toggle_spec, *text_spec) ||
-        !same_hotkey(*text_spec, *equivalent_text_spec)) {
-        throw AppError("settings self-test hotkey duplicate detection mismatch");
-    }
+    // Hotkey parsing and duplicate detection are pure logic and are covered by
+    // core_self_test(); only the control wiring above stays window-bound.
     RECT hotkey_rect{};
     if (!GetWindowRect(capture_hotkey_, &hotkey_rect)) {
         throw AppError("settings self-test could not measure hotkey fields");
@@ -113,8 +104,7 @@ void SettingsWindow::self_test(HWND owner) {
         std::max(1, px(logical_edit_inset_bottom, dpi_));
     RECT toggle_rect{};
     RECT text_rect{};
-    const int minimum_stride = px(logical_control_height + logical_hint_gap +
-                                      logical_hint_height,
+    const int minimum_stride = px(logical_control_height + logical_row_gap,
                                   dpi_);
     const int width_tolerance = std::max(1, px(2, dpi_));
     if (!GetWindowRect(toggle_hotkey_, &toggle_rect) ||
@@ -157,7 +147,10 @@ void SettingsWindow::self_test(HWND owner) {
             throw AppError("settings self-test hotkey text is not left aligned");
         }
     }
-    show_page(5);
+    show_page(4);
+    if (SendMessageW(text_source_, CB_GETCOUNT, 0, 0) != 9) {
+        throw AppError("settings self-test text source list changed size");
+    }
     if (SendMessageW(text_target_, CB_GETCOUNT, 0, 0) != 10) {
         throw AppError("settings self-test text translation page is incomplete");
     }
@@ -176,6 +169,40 @@ void SettingsWindow::self_test(HWND owner) {
         text_input_rect.right - text_input_rect.left < px(480, dpi_) ||
         text_output_rect.bottom - text_output_rect.top < px(120, dpi_)) {
         throw AppError("settings self-test text translation layout is invalid");
+    }
+    RECT text_clear_rect{};
+    RECT text_copy_rect{};
+    if (!GetWindowRect(text_clear_, &text_clear_rect) ||
+        !GetWindowRect(text_copy_, &text_copy_rect)) {
+        throw AppError("settings self-test text action buttons are missing");
+    }
+    if (text_clear_rect.left != text_copy_rect.left ||
+        text_clear_rect.right - text_clear_rect.left !=
+            text_copy_rect.right - text_copy_rect.left ||
+        text_clear_rect.bottom - text_clear_rect.top != px(22, dpi_) ||
+        text_copy_rect.top < text_clear_rect.bottom ||
+        text_clear_rect.left < text_input_rect.left ||
+        text_clear_rect.left >= text_input_rect.left + px(80, dpi_) ||
+        text_clear_rect.bottom > text_input_rect.top ||
+        text_copy_rect.top < text_input_rect.bottom ||
+        text_copy_rect.bottom > text_output_rect.top ||
+        text_copy_rect.right > text_input_rect.right) {
+        throw AppError("settings self-test text action buttons lost their captions");
+    }
+    RECT text_capture_rect{};
+    RECT text_auto_copy_rect{};
+    if (!GetWindowRect(text_capture_, &text_capture_rect) ||
+        !GetWindowRect(auto_copy_, &text_auto_copy_rect)) {
+        throw AppError("settings self-test text translation tools are missing");
+    }
+    if (text_capture_rect.right - text_capture_rect.left != px(34, dpi_) ||
+        text_capture_rect.bottom - text_capture_rect.top != px(34, dpi_) ||
+        text_capture_rect.left >= text_input_rect.left ||
+        text_capture_rect.bottom > text_input_rect.top ||
+        text_of(auto_copy_) != L"译文自动复制到剪贴板" ||
+        text_auto_copy_rect.left != text_capture_rect.left ||
+        text_auto_copy_rect.top < text_output_rect.bottom) {
+        throw AppError("settings self-test text translation tools are misaligned");
     }
     show_page(1);
     SendMessageW(translator_class_, CB_SETCURSEL, 1, 0);
@@ -272,24 +299,36 @@ void SettingsWindow::self_test(HWND owner) {
         throw AppError("settings self-test retained AI fields for a free provider");
     }
     show_page(2);
-    if ((GetWindowLongPtrW(ocr_languages_, GWL_STYLE) & WS_VISIBLE) == 0) {
+    if ((GetWindowLongPtrW(ocr_languages_, GWL_STYLE) & WS_VISIBLE) == 0 ||
+        (GetWindowLongPtrW(translation_target_, GWL_STYLE) & WS_VISIBLE) == 0) {
         throw AppError("settings self-test hid the offline OCR language list");
     }
+    if (SendMessageW(translation_target_, CB_GETCOUNT, 0, 0) !=
+        static_cast<LRESULT>(language_choices.size())) {
+        throw AppError("settings self-test translation target list mismatch");
+    }
+    {
+        wchar_t first_target[64]{};
+        SendMessageW(translation_target_, CB_GETLBTEXT, 0,
+                     reinterpret_cast<LPARAM>(first_target));
+        if (std::wstring_view(first_target) != L"简体中文") {
+            throw AppError("settings self-test translation target default mismatch");
+        }
+    }
     RECT ocr_engine_rect{};
-    RECT ocr_note_rect{};
     RECT ocr_languages_rect{};
+    RECT ocr_target_rect{};
     RECT ocr_upscale_rect{};
     RECT ocr_installed_note_rect{};
     if (!GetWindowRect(ocr_engine_value_, &ocr_engine_rect) ||
-        !GetWindowRect(ocr_engine_note_, &ocr_note_rect) ||
         !GetWindowRect(ocr_languages_, &ocr_languages_rect) ||
+        !GetWindowRect(translation_target_, &ocr_target_rect) ||
         !GetWindowRect(ocr_upscale_, &ocr_upscale_rect) ||
         !GetWindowRect(page_controls_[2][ocr_index::installed_label],
                        &ocr_installed_note_rect) ||
-        ocr_note_rect.top < ocr_engine_rect.bottom ||
-        ocr_note_rect.bottom > ocr_languages_rect.top ||
-        ocr_note_rect.bottom - ocr_note_rect.top < px(20, dpi_) ||
-        ocr_upscale_rect.top <= ocr_languages_rect.bottom ||
+        ocr_languages_rect.top < ocr_engine_rect.bottom ||
+        ocr_target_rect.top < ocr_languages_rect.bottom ||
+        ocr_upscale_rect.top <= ocr_target_rect.bottom ||
         ocr_upscale_rect.bottom >= ocr_installed_note_rect.top ||
         !text_of(page_controls_[2][ocr_index::installed_label])
              .starts_with(L"系统已安装：")) {
@@ -297,62 +336,30 @@ void SettingsWindow::self_test(HWND owner) {
     }
     show_page(3);
     layout_controls();
-    RECT copy_label_rect{};
-    RECT copy_control_rect{};
-    if (page_controls_[3].size() <= appearance_index::copy_label ||
-        text_of(page_controls_[3][appearance_index::copy_label]) != L"复制译文" ||
-        text_of(page_controls_[3][appearance_index::auto_copy_checkbox]) !=
-            L"自动复制到剪贴板" ||
-        !GetWindowRect(page_controls_[3][appearance_index::copy_label],
-                       &copy_label_rect) ||
-        !GetWindowRect(auto_copy_, &copy_control_rect) ||
-        copy_control_rect.left < copy_label_rect.right ||
-        copy_control_rect.top < copy_label_rect.top ||
-        copy_control_rect.top > copy_label_rect.bottom) {
-        throw AppError("settings self-test appearance rows are not aligned");
+    if (page_controls_[3].size() != other_index::check_updates + 2 ||
+        text_of(page_controls_[3][other_index::theme_label]) != L"主题" ||
+        !theme_mode_ || !autostart_ ||
+        text_of(autostart_) != L"开机自动启动" ||
+        text_of(restart_) != L"重启程序" ||
+        text_of(check_updates_) != L"检查更新" ||
+        (GetWindowLongPtrW(check_updates_, GWL_STYLE) & WS_VISIBLE) == 0 ||
+        (GetWindowLongPtrW(theme_mode_, GWL_STYLE) & WS_VISIBLE) == 0) {
+        throw AppError("settings self-test other page rows are missing");
     }
-    if (page_controls_[3].size() != appearance_index::copy_label + 1) {
-        throw AppError("settings self-test appearance controls are unexpected");
-    }
-    for (const HWND control : page_controls_[3]) {
-        if (text_of(control) == L"字体") {
-            throw AppError("settings self-test font selector is still present");
+    {
+        RECT button_bounds{};
+        RECT status_bounds{};
+        if (!GetWindowRect(check_updates_, &button_bounds) ||
+            !GetWindowRect(update_status_, &status_bounds) ||
+            status_bounds.left < button_bounds.right ||
+            status_bounds.top != button_bounds.top) {
+            throw AppError("settings self-test update status is not beside the button");
         }
     }
     for (const HWND control : page_controls_[3]) {
-        if (text_of(control) == L"关闭方式") {
-            throw AppError("settings self-test close mode row is still present");
+        if (text_of(control) == L"配置文件") {
+            throw AppError("settings self-test config file section is still present");
         }
-    }
-    show_page(4);
-    if (text_of(diagnostic_command_) != L"MiniTranslator.exe --selftest") {
-        throw AppError("settings self-test diagnostic command mismatch");
-    }
-    if (!copy_diagnostic_ || text_of(copy_diagnostic_) != L"复制") {
-        throw AppError("settings self-test diagnostic copy button is missing");
-    }
-    wchar_t config_class[16]{};
-    wchar_t diagnostic_class[16]{};
-    if (!GetClassNameW(config_path_, config_class,
-                       static_cast<int>(std::size(config_class))) ||
-        !GetClassNameW(diagnostic_command_, diagnostic_class,
-                       static_cast<int>(std::size(diagnostic_class))) ||
-        _wcsicmp(config_class, L"Static") != 0 ||
-        _wcsicmp(diagnostic_class, L"Static") != 0) {
-        throw AppError("settings self-test path fields are not static");
-    }
-    RECT diagnostic_rect{};
-    RECT copy_rect{};
-    if (!GetWindowRect(diagnostic_command_, &diagnostic_rect) ||
-        !GetWindowRect(copy_diagnostic_, &copy_rect) ||
-        copy_rect.left < diagnostic_rect.right ||
-        copy_rect.bottom < diagnostic_rect.top ||
-        copy_rect.top > diagnostic_rect.bottom) {
-        throw AppError("settings self-test diagnostic copy button is misaligned");
-    }
-    if (!check_updates_ || text_of(check_updates_) != L"检查更新" ||
-        (GetWindowLongPtrW(check_updates_, GWL_STYLE) & WS_VISIBLE) == 0) {
-        throw AppError("settings self-test update command is missing");
     }
     const int content_limit = px(logical_content_limit, dpi_);
     RECT status_bounds{};

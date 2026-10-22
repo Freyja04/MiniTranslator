@@ -119,7 +119,7 @@ PipelineOptions PipelineOptions::from_config(const ConfigStore& config) {
     const auto endpoint = resolve_translation_endpoint(config);
     result.translator_provider = endpoint.provider;
     result.translator_options_json = endpoint.options_json;
-    result.chinese_target = config.string(L"lang.zh_target", L"en");
+    result.target = config.string(L"lang.target", L"zh-Hans");
     return result;
 }
 
@@ -158,21 +158,16 @@ PipelineController::~PipelineController() {
     workers_.clear();
 }
 
-std::uint64_t PipelineController::schedule(std::shared_ptr<const PixelBuffer> image,
-                                           PipelineOptions options,
-                                           PipelineLane lane) {
-    if (!image || image->empty()) {
-        throw AppError("cannot schedule an empty screenshot");
-    }
-    auto request = std::make_shared<Request>();
+std::uint64_t PipelineController::enqueue(std::shared_ptr<Request> request,
+                                          PipelineLane lane) {
+    std::uint64_t request_id = 0;
     {
         std::lock_guard lock(mutex_);
         if (shutting_down_) throw AppError("pipeline is shutting down");
         if (failed_workers_ == 2) throw AppError("pipeline workers are unavailable");
         request->id = ++next_request_;
         request->lane = lane;
-        request->image = std::move(image);
-        request->options = std::move(options);
+        request_id = request->id;
         latest_requests_[lane_index(lane)] = request->id;
         for (auto& [id, active] : active_) {
             if (active->lane == lane) active->cancellation.request_stop();
@@ -182,10 +177,22 @@ std::uint64_t PipelineController::schedule(std::shared_ptr<const PixelBuffer> im
             queued->cancellation.request_stop();
             return true;
         });
-        pending_.push_back(request);
+        pending_.push_back(std::move(request));
     }
     condition_.notify_one();
-    return request->id;
+    return request_id;
+}
+
+std::uint64_t PipelineController::schedule(std::shared_ptr<const PixelBuffer> image,
+                                           PipelineOptions options,
+                                           PipelineLane lane) {
+    if (!image || image->empty()) {
+        throw AppError("cannot schedule an empty screenshot");
+    }
+    auto request = std::make_shared<Request>();
+    request->image = std::move(image);
+    request->options = std::move(options);
+    return enqueue(std::move(request), lane);
 }
 
 std::uint64_t PipelineController::schedule_translation(std::vector<TextBlock> blocks,
@@ -195,27 +202,9 @@ std::uint64_t PipelineController::schedule_translation(std::vector<TextBlock> bl
         throw AppError("cannot translate an empty block list");
     }
     auto request = std::make_shared<Request>();
-    {
-        std::lock_guard lock(mutex_);
-        if (shutting_down_) throw AppError("pipeline is shutting down");
-        if (failed_workers_ == 2) throw AppError("pipeline workers are unavailable");
-        request->id = ++next_request_;
-        request->lane = lane;
-        request->blocks = std::move(blocks);
-        request->options = std::move(options);
-        latest_requests_[lane_index(lane)] = request->id;
-        for (auto& [id, active] : active_) {
-            if (active->lane == lane) active->cancellation.request_stop();
-        }
-        std::erase_if(pending_, [lane](const auto& queued) {
-            if (queued->lane != lane) return false;
-            queued->cancellation.request_stop();
-            return true;
-        });
-        pending_.push_back(request);
-    }
-    condition_.notify_one();
-    return request->id;
+    request->blocks = std::move(blocks);
+    request->options = std::move(options);
+    return enqueue(std::move(request), lane);
 }
 
 void PipelineController::cancel_lane(PipelineLane lane) {
@@ -357,6 +346,31 @@ void PipelineController::self_test() {
             throw AppError("pipeline lane self-test cancel all left queued work");
         }
     }
+
+    // The screenshot path must share the same admission code as the block path:
+    // a second screenshot in one lane replaces the queued one and advances ids.
+    {
+        PipelineController screenshots(nullptr, false);
+        PixelBuffer tiny;
+        tiny.width = 1;
+        tiny.height = 1;
+        tiny.stride = 4;
+        tiny.bgra.assign(4, 0);
+        const auto shot = std::make_shared<const PixelBuffer>(tiny);
+        const auto first = screenshots.schedule(shot, options);
+        const auto second = screenshots.schedule(shot, options);
+        {
+            std::lock_guard lock(screenshots.mutex_);
+            if (screenshots.pending_.size() != 1 ||
+                screenshots.pending_.front()->id != second) {
+                throw AppError("pipeline self-test kept a stale screenshot request");
+            }
+        }
+        if (screenshots.latest_request() != second || second <= first) {
+            throw AppError("pipeline self-test did not advance the screenshot request");
+        }
+        screenshots.cancel_all();
+    }
 }
 
 void PipelineController::worker_loop(std::stop_token shutdown) {
@@ -419,20 +433,26 @@ PipelineResult PipelineController::translate_blocks(std::vector<TextBlock> block
 
     struct TargetGroup {
         std::wstring target;
+        std::wstring source;
         std::vector<std::size_t> indices;
         std::vector<std::wstring> texts;
     };
     std::vector<TargetGroup> groups;
+    // Resolved once: the result assembly below needs the same value and language
+    // detection is not free.
+    std::vector<std::wstring> targets(blocks.size());
     for (std::size_t index = 0; index < blocks.size(); ++index) {
         const auto text = blocks[index].text();
-        const auto target = blocks[index].forced_target_language.empty()
-            ? target_for(text, options.chinese_target)
+        targets[index] = blocks[index].forced_target_language.empty()
+            ? target_for_selection(text, options.target)
             : blocks[index].forced_target_language;
+        const std::wstring& target = targets[index];
+        const std::wstring& source = blocks[index].forced_source_language;
         auto found = std::find_if(groups.begin(), groups.end(), [&](const TargetGroup& group) {
-            return group.target == target;
+            return group.target == target && group.source == source;
         });
         if (found == groups.end()) {
-            groups.push_back(TargetGroup{target, {}, {}});
+            groups.push_back(TargetGroup{target, source, {}, {}});
             found = std::prev(groups.end());
         }
         found->indices.push_back(index);
@@ -442,8 +462,11 @@ PipelineResult PipelineController::translate_blocks(std::vector<TextBlock> block
     const auto translator_options = JsonObject::Parse(options.translator_options_json);
     for (const auto& group : groups) {
         if (stop.stop_requested()) throw AppError("request cancelled");
+        const std::optional<std::wstring> source =
+            group.source.empty() ? std::nullopt
+                                 : std::optional<std::wstring>(group.source);
         auto values = translators_.translate(options.translator_provider, translator_options,
-                                              group.texts, group.target, std::nullopt, stop);
+                                              group.texts, group.target, source, stop);
         if (values.size() != group.indices.size()) {
             throw TranslateError("翻译接口返回条数与输入不一致");
         }
@@ -455,13 +478,10 @@ PipelineResult PipelineController::translate_blocks(std::vector<TextBlock> block
     PipelineResult result;
     result.blocks.reserve(blocks.size());
     for (std::size_t index = 0; index < blocks.size(); ++index) {
-        const auto target = blocks[index].forced_target_language.empty()
-            ? target_for(blocks[index].text(), options.chinese_target)
-            : blocks[index].forced_target_language;
         if (!result.plain_text.empty() && !translated[index].empty()) result.plain_text.push_back(L'\n');
         result.plain_text += translated[index];
         result.blocks.push_back(BlockTranslation{
-            std::move(blocks[index]), std::move(translated[index]), target,
+            std::move(blocks[index]), std::move(translated[index]), std::move(targets[index]),
         });
     }
     return result;

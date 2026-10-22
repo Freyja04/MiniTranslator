@@ -19,11 +19,26 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# MSBuild's .NET Framework host rejects environment blocks containing both
-# PATH and Path. Normalize only this script process; user settings are untouched.
-$processPath = $env:Path
-[Environment]::SetEnvironmentVariable('PATH', $null, [EnvironmentVariableTarget]::Process)
-[Environment]::SetEnvironmentVariable('Path', $processPath, [EnvironmentVariableTarget]::Process)
+# Windows environment variable names are case-insensitive, but a process can be
+# started with the same name twice in different casing (NO_PROXY and no_proxy,
+# PATH and Path). MSBuild's .NET Framework host copies the inherited block into
+# a case-insensitive dictionary and fails with MSB6001 before it launches
+# CL.exe. Windows offers no way to remove one of those duplicates from inside a
+# process, so every build command gets a rebuilt block instead: names are
+# compared case-insensitively and the upper-case spelling wins.
+function New-CleanEnvironmentTable {
+    $table = [System.Collections.Generic.Dictionary[string, string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()) {
+        $name = [string]$entry.Key
+        if (-not $table.ContainsKey($name) -or $name -ceq $name.ToUpperInvariant()) {
+            $table[$name] = [string]$entry.Value
+        }
+    }
+    return $table
+}
+
+$cleanEnvironment = New-CleanEnvironmentTable
 
 function Invoke-NativeCommand {
     param(
@@ -34,9 +49,28 @@ function Invoke-NativeCommand {
         [string[]]$Arguments
     )
 
-    & $Executable @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code $LASTEXITCODE`: $Executable"
+    # Launch through ProcessStartInfo so the child receives the cleaned block;
+    # stdout and stderr still stream straight to this console.
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $Executable
+    $startInfo.UseShellExecute = $false
+    foreach ($argument in $Arguments) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+    $startInfo.Environment.Clear()
+    foreach ($entry in $cleanEnvironment.GetEnumerator()) {
+        $startInfo.Environment[$entry.Key] = $entry.Value
+    }
+
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    try {
+        $process.WaitForExit()
+        $exitCode = $process.ExitCode
+    } finally {
+        $process.Dispose()
+    }
+    if ($exitCode -ne 0) {
+        throw "Command failed with exit code $exitCode`: $Executable"
     }
 }
 
@@ -46,13 +80,43 @@ function Invoke-GuiSelfTest {
         [string]$Executable,
 
         [Parameter(Mandatory)]
-        [string]$Argument
+        [string]$Argument,
+
+        # A self-test that opens a modal dialog would otherwise hang CI until the
+        # job-level timeout, so every run gets a bounded wait.
+        [ValidateRange(10, 900)]
+        [int]$TimeoutSeconds = 180
     )
 
-    $process = Start-Process -FilePath $Executable -ArgumentList $Argument `
-        -WindowStyle Hidden -Wait -PassThru
-    if ($process.ExitCode -ne 0) {
-        throw "Self-test failed with exit code $($process.ExitCode)`: $Argument"
+    # The executable reports the failing assertion on stderr; capture it so CI
+    # says which check broke instead of only 'exit code 1'.
+    $errorLog = [System.IO.Path]::GetTempFileName()
+    try {
+        $process = Start-Process -FilePath $Executable -ArgumentList $Argument `
+            -WindowStyle Hidden -PassThru -RedirectStandardError $errorLog
+        try {
+            if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+                $process.Kill()
+                $null = $process.WaitForExit(5000)
+                throw "Self-test did not finish within $TimeoutSeconds seconds: $Argument"
+            }
+            $exitCode = $process.ExitCode
+        } finally {
+            $process.Dispose()
+        }
+        if ($exitCode -ne 0) {
+            $details = ''
+            if (Test-Path -LiteralPath $errorLog) {
+                $details = Get-Content -LiteralPath $errorLog -Raw -ErrorAction SilentlyContinue
+            }
+            $message = "Self-test failed with exit code $($exitCode)`: $Argument"
+            if (-not [string]::IsNullOrWhiteSpace($details)) {
+                $message = $message + [Environment]::NewLine + $details.Trim()
+            }
+            throw $message
+        }
+    } finally {
+        Remove-Item -LiteralPath $errorLog -ErrorAction SilentlyContinue
     }
 }
 
@@ -82,15 +146,6 @@ if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
     $BuildDirectory = Join-Path $repositoryRoot 'build\native'
 } else {
     $BuildDirectory = [System.IO.Path]::GetFullPath($BuildDirectory)
-}
-
-# 旧命名的中间产物混在同一构建树中会导致 CMake/MSBuild 复用过期目标。
-$staleTargets = @(
-    Get-ChildItem -LiteralPath $BuildDirectory -Recurse -Directory -Filter 'ScreenTranslate.dir' `
-        -ErrorAction SilentlyContinue
-)
-if ($staleTargets.Count -ne 0) {
-    throw "Build directory contains stale ScreenTranslate artifacts. Delete '$BuildDirectory' and run again."
 }
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'

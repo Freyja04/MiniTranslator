@@ -142,19 +142,26 @@ using ui_draw::draw_text;
 
 void draw_settings_nav_icon(HDC dc, int page, const RECT& bounds,
                             COLORREF color, HFONT icon_font) {
-    if (page < 0 || page >= static_cast<int>(navigation_glyphs.size()) || !icon_font) return;
+    if (page < 0 || page >= static_cast<int>(navigation_glyphs.size())) return;
+    // The translation page carries the application mark instead of a generic
+    // glyph, so the sidebar leads with the product identity.
+    if (page == 4) {
+        theme::draw_brand_mark(dc, bounds, color);
+        return;
+    }
+    if (!icon_font) return;
     const wchar_t glyph = navigation_glyphs[static_cast<std::size_t>(page)];
     draw_text(dc, std::wstring_view(&glyph, 1), bounds, icon_font, color,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
-HFONT create_icon_font(int dpi) {
+HFONT create_icon_font(int dpi, int logical_pixels) {
     constexpr std::array<const wchar_t*, 3> faces{
         L"Segoe Fluent Icons", L"Segoe MDL2 Assets", L"Segoe UI Symbol",
     };
     for (const auto* face : faces) {
         HFONT candidate = CreateFontW(
-            -px(17, dpi), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            -px(logical_pixels, dpi), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH, face);
         if (!candidate) continue;
@@ -214,7 +221,9 @@ void style_combo_popup(HWND combo, int dpi, HFONT font) noexcept {
     if (!combo) return;
     SendMessageW(combo, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), px(30, dpi));
     SendMessageW(combo, CB_SETITEMHEIGHT, 0, px(30, dpi));
-    SendMessageW(combo, CB_SETMINVISIBLE, 8, 0);
+    // The language lists stay short, so keeping up to a dozen rows visible
+    // avoids the classic scrollbar that would break the card styling.
+    SendMessageW(combo, CB_SETMINVISIBLE, 12, 0);
 
     RECT combo_rect{};
     GetWindowRect(combo, &combo_rect);
@@ -250,6 +259,32 @@ void style_combo_popup(HWND combo, int dpi, HFONT font) noexcept {
     SetWindowPos(info.hwndList, nullptr, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
                      SWP_FRAMECHANGED);
+
+    // The list keeps the height it received on its first show, and that height
+    // is roughly eight rows regardless of CB_SETMINVISIBLE. Size it right
+    // before the drop-down appears so short language lists never need the
+    // classic scrollbar.
+    RECT list{};
+    if (count <= 0 || !GetWindowRect(info.hwndList, &list)) return;
+    const int item_height =
+        static_cast<int>(SendMessageW(combo, CB_GETITEMHEIGHT, 0, 0));
+    if (item_height <= 0) return;
+    const int rows = std::clamp(count, 1, 12);
+    const int height = rows * item_height + 2;
+    // A drop-down that Windows already flipped above the combo has to grow
+    // upwards as well, otherwise the extra rows would cover the combo.
+    int top = list.bottom <= combo_rect.top ? static_cast<int>(list.bottom) - height
+                                            : static_cast<int>(list.top);
+    MONITORINFO monitor{sizeof(monitor)};
+    if (GetMonitorInfoW(MonitorFromWindow(info.hwndList, MONITOR_DEFAULTTONEAREST),
+                        &monitor)) {
+        const int min_top = static_cast<int>(monitor.rcWork.top);
+        const int max_top = static_cast<int>(monitor.rcWork.bottom) - height;
+        top = std::max(min_top, std::min(top, std::max(min_top, max_top)));
+    }
+    SetWindowPos(info.hwndList, nullptr, list.left, top,
+                 static_cast<int>(list.right - list.left), height,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 
@@ -272,6 +307,31 @@ void populate_text_targets(HWND combo) {
                      reinterpret_cast<LPARAM>(label.c_str()));
     }
     select_combo(combo, 0);
+}
+
+void populate_text_sources(HWND combo) {
+    SendMessageW(combo, CB_RESETCONTENT, 0, 0);
+    for (const auto source : text_translation_targets()) {
+        const auto label = target_display_name(source);
+        SendMessageW(combo, CB_ADDSTRING, 0,
+                     reinterpret_cast<LPARAM>(label.c_str()));
+    }
+    select_combo(combo, 0);
+}
+
+int text_source_index(std::wstring_view source) {
+    if (source.empty()) return -1;
+    const auto& sources = text_translation_targets();
+    const auto found = std::find(sources.begin(), sources.end(), source);
+    return found == sources.end()
+        ? -1 : static_cast<int>(std::distance(sources.begin(), found));
+}
+
+std::wstring text_source_at(HWND combo) {
+    const auto& sources = text_translation_targets();
+    const int selected = selected_index(combo);
+    return selected >= 0 && static_cast<std::size_t>(selected) < sources.size()
+        ? std::wstring(sources[static_cast<std::size_t>(selected)]) : std::wstring{};
 }
 
 int text_target_index(std::wstring_view target) {
@@ -311,7 +371,7 @@ std::wstring text_translation_status(const TextTranslationSession& session) {
     case TextTranslationState::error:
         return session.error().empty() ? L"文字翻译失败" : session.error();
     case TextTranslationState::too_long:
-        return L"最多支持 5000 个字符，请删减后重试";
+        return L"最多支持 500 个字符，请删减后重试";
     }
     return {};
 }
@@ -381,22 +441,6 @@ void set_autostart(bool enabled) {
         reinterpret_cast<const BYTE*>(command.c_str()), bytes);
     if (written != ERROR_SUCCESS) throw_last_error("enable autostart", written);
 }
-
-std::wstring ocr_language_name(std::wstring_view tag) {
-    if (tag.starts_with(L"zh-Hans")) return L"简体中文";
-    if (tag.starts_with(L"zh-Hant")) return L"繁体中文";
-    if (tag.starts_with(L"en")) return L"英语";
-    if (tag.starts_with(L"ja")) return L"日语";
-    if (tag.starts_with(L"ko")) return L"韩语";
-    if (tag.starts_with(L"fr")) return L"法语";
-    if (tag.starts_with(L"de")) return L"德语";
-    if (tag.starts_with(L"es")) return L"西班牙语";
-    if (tag.starts_with(L"ru")) return L"俄语";
-    if (tag.starts_with(L"it")) return L"意大利语";
-    if (tag.starts_with(L"pt")) return L"葡萄牙语";
-    return std::wstring(tag);
-}
-
 
 bool same_hotkey(const HotkeySpec& left, const HotkeySpec& right) noexcept {
     return left.modifiers == right.modifiers &&

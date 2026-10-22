@@ -1,7 +1,8 @@
 #include "language.hpp"
 
+#include "language_catalog.hpp"
+
 #include <algorithm>
-#include <array>
 #include <cwctype>
 
 namespace minitrans {
@@ -114,43 +115,50 @@ std::wstring target_for(std::wstring_view text, std::wstring_view chinese_target
     if (detect_language(text) != L"zh") {
         return L"zh-Hans";
     }
-    constexpr std::array<std::wstring_view, 8> allowed{
-        L"en", L"ja", L"ko", L"fr", L"de", L"es", L"ru", L"zh-Hant",
-    };
-    if (std::find(allowed.begin(), allowed.end(), chinese_target) != allowed.end()) {
-        return std::wstring(chinese_target);
+    const LanguageRow* requested = find_language(chinese_target);
+    if (requested && requested->chinese_target) {
+        return std::wstring(requested->code);
     }
     return L"en";
 }
 
-std::wstring target_display_name(std::wstring_view code) {
-    constexpr std::array<std::pair<std::wstring_view, std::wstring_view>, 9> names{{
-        {L"zh-Hans", L"简体中文"}, {L"zh-Hant", L"繁体中文"},
-        {L"en", L"英语"}, {L"ja", L"日语"}, {L"ko", L"韩语"},
-        {L"fr", L"法语"}, {L"de", L"德语"}, {L"es", L"西班牙语"},
-        {L"ru", L"俄语"},
-    }};
-    for (const auto& [key, value] : names) {
-        if (key == code) {
-            return std::wstring(value);
-        }
+bool is_chinese_code(const LanguageRow* row) {
+    return row && (row->code == L"zh-Hans" || row->code == L"zh-Hant");
+}
+
+std::wstring target_for_selection(std::wstring_view text, std::wstring_view selected) {
+    const LanguageRow* chosen = find_language(selected);
+    if (!chosen) {
+        return target_for(text, L"en");
     }
-    return std::wstring(code);
+    const std::wstring detected = detect_language(text);
+    // A Chinese selection would be a no-op for Chinese text and would lose the
+    // meaning of every other language, so both fall back to a real translation.
+    if (detected == L"zh" && is_chinese_code(chosen)) {
+        return L"en";
+    }
+    if (std::wstring_view(detected) == chosen->code) {
+        return L"zh-Hans";
+    }
+    return std::wstring(chosen->code);
+}
+
+std::wstring chinese_target_for_selection(std::wstring_view selected) {
+    const LanguageRow* chosen = find_language(selected);
+    if (!chosen || is_chinese_code(chosen)) {
+        return L"en";
+    }
+    return std::wstring(chosen->code);
+}
+
+std::wstring target_display_name(std::wstring_view code) {
+    const LanguageRow* row = find_language(code);
+    return row ? std::wstring(row->display) : std::wstring(code);
 }
 
 std::wstring target_prompt_name(std::wstring_view code) {
-    constexpr std::array<std::pair<std::wstring_view, std::wstring_view>, 9> names{{
-        {L"zh-Hans", L"Simplified Chinese"}, {L"zh-Hant", L"Traditional Chinese"},
-        {L"en", L"English"}, {L"ja", L"Japanese"}, {L"ko", L"Korean"},
-        {L"fr", L"French"}, {L"de", L"German"}, {L"es", L"Spanish"},
-        {L"ru", L"Russian"},
-    }};
-    for (const auto& [key, value] : names) {
-        if (key == code) {
-            return std::wstring(value);
-        }
-    }
-    return std::wstring(code);
+    const LanguageRow* row = find_language(code);
+    return row ? std::wstring(row->prompt) : std::wstring(code);
 }
 
 bool matches_target(std::wstring_view text, std::wstring_view target) {

@@ -13,7 +13,7 @@ MiniTranslator 是一个 Windows 屏幕翻译工具：框选屏幕区域后，�
 - 结果窗口支持移动、缩放、收起、复制、查看原文和重新翻译；
 - 分块 OCR 校对，可只重译修改过的文本块；
 - 托盘菜单提供文字翻译窗口和快速翻译面板；
-- 截图与文字翻译使用隔离的后台请求通道；
+- 截图与文字翻译各自使用独立的请求通道，互不取消；
 - API 密钥使用当前 Windows 账户的 DPAPI 加密存储；
 - 基于 GitHub Releases 的更新检查、下载、SHA-256 校验和安装。
 
@@ -65,6 +65,11 @@ release/                版本、PE 和更新清单校验工具
 .github/workflows/      CI 与 Release 流程
 ```
 
+## 开发与自测
+
+构建：`pwsh scripts/build-native.ps1 -RunSmokeTest`（会用 `--self-test` 跑完整自测）。
+自测分两层：`native/src/core_self_test.cpp` 是不创建任何窗口的纯逻辑检查（语言表、设置常量、快捷键解析），在 `AppHost` 之前执行；窗口布局、绘制和控件状态断言留在各自的 `*_self_test.cpp`。新增纯逻辑断言请放进 `core_self_test.cpp`，这样在没有可用桌面的环境里也能跑。
+
 ## 已知限制
 
 - 只支持 Windows 10/11 x64；
@@ -76,3 +81,5 @@ release/                版本、PE 和更新清单校验工具
 ## 许可证
 
 MiniTranslator 自有代码采用 [MIT License](LICENSE)。发布版使用 Windows SDK 提供的系统接口，不捆绑 Qt、Python 或第三方运行时；来源声明见 [native/THIRD_PARTY_NOTICES.txt](native/THIRD_PARTY_NOTICES.txt)。
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)

@@ -27,6 +27,8 @@ add_executable(MiniTranslator WIN32
     src/capture.hpp
     src/config.cpp
     src/config.hpp
+    src/core_self_test.cpp
+    src/core_self_test.hpp
     src/crypto.cpp
     src/crypto.hpp
     src/dpapi.cpp
@@ -39,6 +41,7 @@ add_executable(MiniTranslator WIN32
     src/hotkey.hpp
     src/language.cpp
     src/language.hpp
+    src/language_catalog.hpp
     src/layout.cpp
     src/layout.hpp
     src/main.cpp
@@ -57,6 +60,12 @@ add_executable(MiniTranslator WIN32
     src/MiniTranslator.rc
     src/selection_overlay.cpp
     src/selection_overlay.hpp
+    src/settings_catalog.hpp
+    src/settings_ocr.cpp
+    src/settings_ocr.hpp
+    src/settings_profiles.cpp
+    src/settings_profiles.hpp
+    src/settings_provider.hpp
     src/settings_window.cpp
     src/settings_window.hpp
     src/settings_window_internal.cpp
@@ -77,14 +86,6 @@ add_executable(MiniTranslator WIN32
     src/ui_draw.hpp
     src/updater.cpp
     src/updater.hpp
-    src/update_window.cpp
-    src/update_window.hpp
-    src/update_window_controls.cpp
-    src/update_window_install_dialog.cpp
-    src/update_window_internal.hpp
-    src/update_window_render.cpp
-    src/update_window_self_test.cpp
-    src/update_window_worker.cpp
     src/translator.cpp
     src/translator.hpp
     src/util.cpp
@@ -140,7 +141,6 @@ target_link_libraries(MiniTranslator PRIVATE
     comctl32
     gdi32
     d2d1
-    dwrite
     windowscodecs
     winhttp
     crypt32
