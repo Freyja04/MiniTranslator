@@ -270,7 +270,9 @@ void SettingsWindow::layout_controls() {
         const int pair_height = px(318, dpi_);
         const int swap_width = px(30, dpi_);
         const int gap = px(8, dpi_);
-        const int toolbar_left = inner_left;
+        // Align the language row with the card's left edge, matching the quick
+        // translation window where the header and the card share one margin.
+        const int toolbar_left = card_left;
         MoveWindow(text_source_, toolbar_left, toolbar_top, pair_width,
                    pair_height, FALSE);
         MoveWindow(text_swap_, toolbar_left + pair_width + gap, toolbar_top,
