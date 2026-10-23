@@ -260,18 +260,17 @@ void SettingsWindow::layout_controls() {
                        std::max(1, inner_right - status_left), control_height, FALSE);
         }
     } else if (current_page_ == 4) {
-        // Mirrors the quick translation window: capture sits on the left edge
-        // of the card, the language row is right-aligned, and one card holds
-        // both editors and the auto-copy option.
+        // The language row takes the left edge and the capture button moves to
+        // the right edge, mirroring the quick translation window's header
+        // while keeping both on the page background above one shared card.
         const int toolbar_top = px(logical_translation_toolbar_top, dpi_);
-        MoveWindow(text_capture_, card_left, toolbar_top, control_height,
-                   control_height, FALSE);
+        MoveWindow(text_capture_, card_right - control_height, toolbar_top,
+                   control_height, control_height, FALSE);
         const int pair_width = px(126, dpi_);
         const int pair_height = px(318, dpi_);
         const int swap_width = px(30, dpi_);
         const int gap = px(8, dpi_);
-        const int toolbar_width = pair_width * 2 + swap_width + gap * 2;
-        const int toolbar_left = std::max(inner_left, card_right - toolbar_width);
+        const int toolbar_left = inner_left;
         MoveWindow(text_source_, toolbar_left, toolbar_top, pair_width,
                    pair_height, FALSE);
         MoveWindow(text_swap_, toolbar_left + pair_width + gap, toolbar_top,

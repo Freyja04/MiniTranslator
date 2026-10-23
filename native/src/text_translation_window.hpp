@@ -70,6 +70,7 @@ private:
     HWND copy_button_{};
     HWND clear_button_{};
     HWND capture_button_{};
+    HWND home_button_{};
     HWND close_button_{};
     HFONT font_{};
     HFONT small_font_{};

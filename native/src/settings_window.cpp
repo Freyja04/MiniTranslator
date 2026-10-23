@@ -7,6 +7,7 @@
 #include "theme.hpp"
 #include "translator.hpp"
 #include "ui_draw.hpp"
+#include "ui_controls.hpp"
 #include "ui_icons.hpp"
 #include "util.hpp"
 
@@ -557,17 +558,6 @@ void SettingsWindow::draw_combo(HWND control, HDC dc) {
     if (!dc) return;
     RECT rect{};
     GetClientRect(control, &rect);
-    FillRect(dc, &rect, card_background_);
-    const bool enabled = IsWindowEnabled(control) != FALSE;
-    const bool focused = GetFocus() == control || IsChild(control, GetFocus());
-    const COLORREF accent = theme::accent;
-    fill_round_rect(dc, rect, px(6, dpi_), color_input,
-                    focused ? accent : color_line);
-
-    RECT text_rect = rect;
-    text_rect.left += px(9, dpi_);
-    text_rect.right -= px(32, dpi_);
-    OffsetRect(&text_rect, 0, px(logical_field_text_offset_y, dpi_));
     std::wstring value = text_of(control);
     if (text_session_) {
         if (control == text_target_) {
@@ -576,20 +566,20 @@ void SettingsWindow::draw_combo(HWND control, HDC dc) {
             value = target_display_name(text_session_->source());
         }
     }
-    draw_text(dc, value, text_rect, font_,
-              enabled ? color_text : color_text_faint,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
-    HPEN pen = CreatePen(PS_SOLID, std::max(1, px(2, dpi_)),
-                         enabled ? color_text_dim : color_text_faint);
-    const auto old_pen = SelectObject(dc, pen);
-    const int x = rect.right - px(16, dpi_);
-    const int y = (rect.top + rect.bottom) / 2;
-    MoveToEx(dc, x - px(4, dpi_), y - px(2, dpi_), nullptr);
-    LineTo(dc, x, y + px(2, dpi_));
-    LineTo(dc, x + px(4, dpi_), y - px(2, dpi_));
-    SelectObject(dc, old_pen);
-    DeleteObject(pen);
+    ui_controls::FieldStyle style;
+    style.background = theme::color_card;
+    style.fill = color_input;
+    style.border = color_line;
+    style.focus_border = theme::accent;
+    style.text = color_text;
+    style.disabled_text = color_text_faint;
+    style.chevron = color_text_dim;
+    style.font = font_;
+    style.dpi = dpi_;
+    style.enabled = IsWindowEnabled(control) != FALSE;
+    style.focused = GetFocus() == control || IsChild(control, GetFocus());
+    ui_controls::draw_field(dc, rect, value, style,
+                            &settings_internal::fill_round_rect);
 }
 
 bool SettingsWindow::is_checkbox(HWND control) const noexcept {
@@ -759,7 +749,9 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             }
             return 0;
         }
-        if (id == id_text_source && notification == CBN_SELCHANGE) {
+        // text_source_ shares command id 7024 with translator_class_, so these
+        // two must be told apart by their window handles.
+        if (source == text_source_ && notification == CBN_SELCHANGE) {
             if (!syncing_text_ && text_callbacks_.source_changed) {
                 text_callbacks_.source_changed(text_source_at(text_source_));
             }
@@ -781,11 +773,14 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
                     if (text_callbacks_.target_changed) {
                         text_callbacks_.target_changed(swap_source);
                     }
+                    // The typed text belongs to the previous direction; drop it
+                    // so the next translation starts from the new pair.
+                    if (text_callbacks_.clear) text_callbacks_.clear();
                 }
             }
             return 0;
         }
-        if (id == id_text_target && notification == CBN_SELCHANGE) {
+        if (source == text_target_ && notification == CBN_SELCHANGE) {
             if (!syncing_text_ && text_callbacks_.target_changed) {
                 text_callbacks_.target_changed(text_target_at(text_target_));
             }
@@ -813,7 +808,7 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
                          RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
             return 0;
         }
-        if (id == id_translator_class && notification == CBN_SELCHANGE && !loading_) {
+        if (source == translator_class_ && notification == CBN_SELCHANGE && !loading_) {
             ScopedRedrawPause redraw_pause(window_);
             save_provider_fields();
             cancel_model_refresh(true);
@@ -824,7 +819,7 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
                          RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
             return 0;
         }
-        if (id == id_provider && notification == CBN_SELCHANGE && !loading_) {
+        if (source == provider_ && notification == CBN_SELCHANGE && !loading_) {
             ScopedRedrawPause redraw_pause(window_);
             save_provider_fields();
             cancel_model_refresh(true);

@@ -318,8 +318,12 @@ void check_hotkeys() {
     const auto text = parse_hotkey(L"Ctrl+Alt+Space", &error);
     const auto equivalent = parse_hotkey(L"control+alt+space", &error);
     const auto input_method = parse_hotkey(L"Ctrl+Space", &error);
-    check(capture && toggle && text && equivalent && input_method,
-          "core self-test could not parse the default hotkeys");
+    // Throw directly instead of going through check(); the static analyzer cannot
+    // see that check() never returns, and would flag the dereferences below as
+    // empty-optional access.
+    if (!capture || !toggle || !text || !equivalent || !input_method) {
+        throw AppError("core self-test could not parse the default hotkeys");
+    }
     check(!same_hotkey(*capture, *toggle) && !same_hotkey(*capture, *text) &&
               !same_hotkey(*toggle, *text),
           "core self-test treated distinct hotkeys as duplicates");

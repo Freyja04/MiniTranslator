@@ -1,5 +1,6 @@
 #include "settings_window.hpp"
 #include "settings_window_internal.hpp"
+#include "ui_controls.hpp"
 
 namespace minitrans {
 
@@ -184,15 +185,20 @@ void SettingsWindow::paint() {
         const int footer_height = px(logical_hint_height, dpi_);
         const int footer_status_right = card_right - px(220, dpi_);
         if (text_session_) {
+            const bool copied = text_session_->copy_confirmation_visible();
             const bool over_limit =
                 text_session_->state() == TextTranslationState::too_long;
-            const bool error = text_session_->state() == TextTranslationState::error ||
-                               over_limit;
-            draw_text(dc, over_limit ? L"已超出 500 字上限"
-                                     : text_translation_status(*text_session_),
+            const bool error = !copied &&
+                               (text_session_->state() == TextTranslationState::error ||
+                                over_limit);
+            draw_text(dc, copied ? L"已复制到剪贴板"
+                                 : over_limit
+                                       ? L"已超出 500 字上限"
+                                       : text_translation_status(*text_session_),
                       RECT{card_left, footer_top, footer_status_right,
                            footer_top + footer_height},
-                      small_font_, error ? color_bad : color_text_dim,
+                      small_font_,
+                      error ? color_bad : color_text_dim,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
         draw_text(dc, L"Ctrl+Enter 翻译 · 停止输入后自动翻译",
@@ -259,32 +265,17 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
         FillRect(dc, &rect, background_);
         const COLORREF capture_fill = pressed ? theme::color_hover
                                      : hot ? theme::color_line_high : color_card;
-        fill_round_rect(dc, rect, px(7, dpi_), capture_fill,
-                        focused || hot ? accent : color_line);
-        draw_text(dc, std::wstring_view(&ui_icons::capture_translation, 1), rect,
-                  icon_font_,
-                  disabled ? color_text_faint
-                           : hot || focused ? color_text : color_text_dim,
-                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        ui_controls::draw_icon_button(
+            dc, rect, ui_icons::capture_translation, icon_font_, dpi_,
+            capture_fill, focused || hot ? accent : color_line,
+            disabled ? color_text_faint
+                     : hot || focused ? color_text : color_text_dim,
+            &settings_internal::fill_round_rect);
         return TRUE;
     }
 
     if (item.CtlType == ODT_COMBOBOX) {
         const bool list_item = (item.itemState & ODS_COMBOBOXEDIT) == 0;
-        const bool selected = list_item && (item.itemState & ODS_SELECTED) != 0;
-        FillRect(dc, &rect, input_background_);
-        if (selected) {
-            RECT highlight = rect;
-            InflateRect(&highlight, -px(4, dpi_), -px(2, dpi_));
-            const COLORREF selected_fill = blend_color(color_input, accent, 16);
-            const COLORREF selected_border = blend_color(color_line_high, accent, 34);
-            fill_round_rect(dc, highlight, px(5, dpi_), selected_fill, selected_border);
-            RECT marker{highlight.left + px(3, dpi_), highlight.top + px(6, dpi_),
-                        highlight.left + px(5, dpi_), highlight.bottom - px(6, dpi_)};
-            HBRUSH marker_brush = CreateSolidBrush(accent);
-            FillRect(dc, &marker, marker_brush);
-            DeleteObject(marker_brush);
-        }
         std::wstring value;
         if (item.itemID != static_cast<UINT>(-1)) {
             const LRESULT length = SendMessageW(item.hwndItem, CB_GETLBTEXTLEN, item.itemID, 0);
@@ -297,23 +288,31 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
         } else {
             value = text_of(item.hwndItem);
         }
-        rect.left += px(list_item ? 13 : 9, dpi_);
-        rect.right -= px(list_item ? 9 : 25, dpi_);
-        if (!list_item) {
-            OffsetRect(&rect, 0, px(logical_field_text_offset_y, dpi_));
-        }
-        draw_text(dc, value, rect, font_, disabled ? color_text_faint : color_text,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        if (!list_item) {
-            HPEN pen = CreatePen(PS_SOLID, px(2, dpi_), color_text_dim);
-            const auto previous = SelectObject(dc, pen);
-            const int x = item.rcItem.right - px(14, dpi_);
-            const int y = (item.rcItem.top + item.rcItem.bottom) / 2;
-            MoveToEx(dc, x - px(4, dpi_), y - px(2, dpi_), nullptr);
-            LineTo(dc, x, y + px(2, dpi_));
-            LineTo(dc, x + px(4, dpi_), y - px(2, dpi_));
-            SelectObject(dc, previous);
-            DeleteObject(pen);
+        if (list_item) {
+            ui_controls::FieldItemStyle style;
+            style.background = color_input;
+            style.text = color_text;
+            style.disabled_text = color_text_faint;
+            style.accent = accent;
+            style.font = font_;
+            style.dpi = dpi_;
+            style.selected = (item.itemState & ODS_SELECTED) != 0;
+            style.disabled = disabled;
+            ui_controls::draw_field_item(dc, rect, value, style,
+                                         &settings_internal::fill_round_rect);
+        } else {
+            ui_controls::FieldStyle style;
+            style.background = color_input;
+            style.fill = color_input;
+            style.border = color_line;
+            style.focus_border = accent;
+            style.text = color_text;
+            style.disabled_text = color_text_faint;
+            style.chevron = color_text_dim;
+            style.font = font_;
+            style.dpi = dpi_;
+            ui_controls::draw_field(dc, rect, value, style,
+                                    &settings_internal::fill_round_rect);
         }
         return TRUE;
     }
@@ -342,42 +341,23 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
     }
 
     if (is_checkbox(item.hwndItem)) {
-        // Most option rows sit on a card surface; the auto-copy option closes
-        // the translation page on the page background instead.
-        const std::wstring caption = text_of(item.hwndItem);
-        FillRect(dc, &rect,
-                 item.hwndItem == auto_copy_ ? background_ : card_background_);
-        int caption_width = 0;
-        if (font_) {
-            const HGDIOBJ previous = SelectObject(dc, font_);
-            SIZE measured{};
-            GetTextExtentPoint32W(dc, caption.data(),
-                                  static_cast<int>(caption.size()), &measured);
-            SelectObject(dc, previous);
-            caption_width = static_cast<int>(measured.cx);
-        }
-        const int size = px(16, dpi_);
-        const int top = rect.top + (rect.bottom - rect.top - size) / 2;
-        const LONG box_left = std::min(
-            static_cast<LONG>(rect.right - size),
-            static_cast<LONG>(rect.left + caption_width + px(9, dpi_)));
-        RECT box{box_left, top, box_left + size, top + size};
-        RECT text_rect{rect.left, rect.top, box.left - px(6, dpi_), rect.bottom};
-        draw_text(dc, caption, text_rect, font_,
-                  disabled ? color_text_faint : color_text,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        const bool checked = checkbox_checked(item.hwndItem);
-        fill_round_rect(dc, box, px(4, dpi_), checked ? accent : color_input,
-                        checked ? accent : color_line);
-        if (checked) {
-            HPEN pen = CreatePen(PS_SOLID, px(2, dpi_), theme::accent_foreground);
-            const auto previous = SelectObject(dc, pen);
-            MoveToEx(dc, box.left + px(4, dpi_), box.top + px(8, dpi_), nullptr);
-            LineTo(dc, box.left + px(7, dpi_), box.top + px(11, dpi_));
-            LineTo(dc, box.left + px(13, dpi_), box.top + px(5, dpi_));
-            SelectObject(dc, previous);
-            DeleteObject(pen);
-        }
+        // Most option rows sit on a card surface; the auto-copy option sits on
+        // the page background instead.
+        ui_controls::CheckboxStyle style;
+        style.background =
+            item.hwndItem == auto_copy_ ? theme::color_page : theme::color_card;
+        style.fill = color_input;
+        style.border = color_line;
+        style.checked_fill = accent;
+        style.check = theme::accent_foreground;
+        style.text = color_text;
+        style.disabled_text = color_text_faint;
+        style.font = font_;
+        style.dpi = dpi_;
+        style.checked = checkbox_checked(item.hwndItem);
+        style.enabled = !disabled;
+        ui_controls::draw_checkbox(dc, rect, text_of(item.hwndItem), style,
+                                   &settings_internal::fill_round_rect);
         return TRUE;
     }
 

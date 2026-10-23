@@ -45,6 +45,8 @@ public:
     // outcome back to the message window so the settings page can stay open.
     static constexpr UINT settings_update_stage_message = WM_APP + 43;
     static constexpr UINT settings_update_completed_message = WM_APP + 42;
+    // Posted by the background silent check that runs outside the settings page.
+    static constexpr UINT silent_update_completed_message = WM_APP + 41;
     enum class SettingsUpdateOutcome : WPARAM {
         no_update = 0,
         updated = 1,
@@ -70,6 +72,12 @@ private:
     void begin_capture_now();
     void on_selected(const RECT& rect, PixelBuffer image);
     void start_pipeline(std::shared_ptr<const PixelBuffer> image, const RECT& rect);
+    // Resolving the provider and the language pair is cheap but not free: the
+    // configuration JSON is re-read and the endpoint is re-selected every time.
+    // Warm it once at startup and after settings changes so the first capture
+    // does not pay for it.
+    void refresh_pipeline_options();
+    const PipelineOptions& pipeline_options();
     void process_pipeline_completions();
     void open_text_translation();
     void toggle_quick_translation();
@@ -123,6 +131,8 @@ private:
     };
     std::uint64_t current_request_{};
     std::optional<BlockTranslationRequest> block_translation_request_;
+    PipelineOptions pipeline_options_{};
+    bool pipeline_options_ready_{};
     std::shared_ptr<const PixelBuffer> last_image_;
     std::vector<TextBlock> last_blocks_;
     std::optional<PipelineResult> last_result_;

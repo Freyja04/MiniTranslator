@@ -2,7 +2,9 @@
 
 #include "language.hpp"
 #include "resource.h"
+#include "self_test_support.hpp"
 #include "theme.hpp"
+#include "ui_controls.hpp"
 #include "ui_icons.hpp"
 #include "util.hpp"
 
@@ -49,129 +51,14 @@ constexpr int id_quick_capture = 4109;
 constexpr int id_source = 4110;
 constexpr int id_swap = 4111;
 constexpr int id_quick_close = 4112;
+constexpr int id_quick_home = 4113;
 
-struct ProcessResourceSnapshot {
-    DWORD gdi_objects{};
-    DWORD user_objects{};
-    DWORD threads{};
-    SIZE_T private_bytes{};
-};
+using self_test_support::ProcessResourceSnapshot;
+using self_test_support::process_resources;
+using self_test_support::resource_change;
+using self_test_support::resource_series_stable;
+using self_test_support::settle_self_test_ui;
 
-DWORD process_thread_count() noexcept {
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) return 0;
-    THREADENTRY32 entry{sizeof(entry)};
-    DWORD count = 0;
-    if (Thread32First(snapshot, &entry)) {
-        const DWORD process = GetCurrentProcessId();
-        do {
-            if (entry.th32OwnerProcessID == process) ++count;
-        } while (Thread32Next(snapshot, &entry));
-    }
-    CloseHandle(snapshot);
-    return count;
-}
-
-SIZE_T process_private_bytes() noexcept {
-    using GetMemoryInfo = BOOL(WINAPI*)(HANDLE, PPROCESS_MEMORY_COUNTERS, DWORD);
-    const auto function = reinterpret_cast<GetMemoryInfo>(
-        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "K32GetProcessMemoryInfo"));
-    if (!function) return 0;
-    PROCESS_MEMORY_COUNTERS_EX counters{};
-    counters.cb = sizeof(counters);
-    return function(GetCurrentProcess(),
-                    reinterpret_cast<PPROCESS_MEMORY_COUNTERS>(&counters),
-                    sizeof(counters))
-        ? counters.PrivateUsage : 0;
-}
-
-ProcessResourceSnapshot process_resources() noexcept {
-    return ProcessResourceSnapshot{
-        GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS),
-        GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS),
-        process_thread_count(), process_private_bytes(),
-    };
-}
-
-template <std::size_t Count>
-bool resource_series_stable(
-        const std::array<ProcessResourceSnapshot, Count>& samples) noexcept {
-    static_assert(Count >= 5);
-    constexpr DWORD total_gdi_tolerance = 8;
-    constexpr DWORD total_user_tolerance = 4;
-    constexpr DWORD total_thread_tolerance = 1;
-    constexpr SIZE_T total_private_tolerance = 3U * 1024U * 1024U;
-    constexpr SIZE_T per_batch_private_tolerance = 2U * 1024U * 1024U;
-
-    constexpr std::size_t warmup_batches = 3;
-    const auto& first = samples[warmup_batches];
-    const auto& last = samples.back();
-    if (last.gdi_objects > first.gdi_objects + total_gdi_tolerance ||
-        last.user_objects > first.user_objects + total_user_tolerance ||
-        (first.threads && last.threads > first.threads + total_thread_tolerance) ||
-        (first.private_bytes &&
-         last.private_bytes > first.private_bytes + total_private_tolerance)) {
-        return false;
-    }
-
-    int significant_growth_streak = 0;
-    int gdi_growth_streak = 0;
-    int user_growth_streak = 0;
-    int thread_growth_streak = 0;
-    int private_growth_streak = 0;
-    for (std::size_t index = 1; index < samples.size(); ++index) {
-        const auto& before = samples[index - 1];
-        const auto& after = samples[index];
-        const bool significant_growth =
-            after.gdi_objects > before.gdi_objects + 1 ||
-            after.user_objects > before.user_objects + 1 ||
-            (before.threads && after.threads > before.threads) ||
-            (before.private_bytes &&
-             after.private_bytes > before.private_bytes + per_batch_private_tolerance);
-        significant_growth_streak = significant_growth
-            ? significant_growth_streak + 1 : 0;
-        if (significant_growth_streak >= 2) return false;
-
-        gdi_growth_streak = after.gdi_objects > before.gdi_objects
-            ? gdi_growth_streak + 1 : 0;
-        user_growth_streak = after.user_objects > before.user_objects
-            ? user_growth_streak + 1 : 0;
-        thread_growth_streak = before.threads && after.threads > before.threads
-            ? thread_growth_streak + 1 : 0;
-        constexpr SIZE_T private_growth_floor = 128U * 1024U;
-        private_growth_streak =
-            before.private_bytes &&
-            after.private_bytes > before.private_bytes + private_growth_floor
-                ? private_growth_streak + 1 : 0;
-        if (gdi_growth_streak >= 3 || user_growth_streak >= 3 ||
-            thread_growth_streak >= 3 || private_growth_streak >= 3) {
-            return false;
-        }
-    }
-    return true;
-}
-
-std::string resource_change(const ProcessResourceSnapshot& before,
-                            const ProcessResourceSnapshot& after) {
-    return " gdi=" + std::to_string(before.gdi_objects) + "->" +
-           std::to_string(after.gdi_objects) + " user=" +
-           std::to_string(before.user_objects) + "->" +
-           std::to_string(after.user_objects) + " threads=" +
-           std::to_string(before.threads) + "->" + std::to_string(after.threads) +
-           " private=" + std::to_string(before.private_bytes) + "->" +
-           std::to_string(after.private_bytes);
-}
-
-void settle_self_test_ui() noexcept {
-    DwmFlush();
-    Sleep(500);
-    MSG message{};
-    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
-    }
-    DwmFlush();
-}
 
 HMENU control_id(int id) noexcept {
     return reinterpret_cast<HMENU>(static_cast<INT_PTR>(id));
@@ -335,16 +222,6 @@ void fill_rect(HDC dc, const RECT& rect, COLORREF color) {
     DeleteObject(brush);
 }
 
-COLORREF mix_color(COLORREF base, COLORREF tint, int tint_percent) noexcept {
-    const int amount = std::clamp(tint_percent, 0, 100);
-    const auto channel = [amount](BYTE base_value, BYTE tint_value) {
-        return static_cast<BYTE>((base_value * (100 - amount) + tint_value * amount) / 100);
-    };
-    return RGB(channel(GetRValue(base), GetRValue(tint)),
-               channel(GetGValue(base), GetGValue(tint)),
-               channel(GetBValue(base), GetBValue(tint)));
-}
-
 void draw_rounded_control(HDC dc, RECT bounds, COLORREF fill, COLORREF border,
                           int radius) {
     HBRUSH brush = CreateSolidBrush(fill);
@@ -398,32 +275,28 @@ std::wstring source_selector_text(const TextTranslationSession& session) {
                                     : target_display_name(session.source());
 }
 
+void quick_round_rect(HDC dc, const RECT& bounds, int radius, COLORREF fill,
+                      COLORREF border) {
+    draw_rounded_control(dc, bounds, fill, border, radius);
+}
+
 void draw_target_selector(HWND combo, HDC dc, HFONT font, int dpi,
                           COLORREF accent, std::wstring_view value) {
     if (!combo || !dc) return;
     RECT bounds{};
     GetClientRect(combo, &bounds);
-    fill_rect(dc, bounds, color_background);
-    const bool focused = GetFocus() == combo;
-    // Match the settings window: the focused selector gets an accent outline
-    // instead of a separate underline.
-    draw_rounded_control(dc, bounds, color_input,
-                         focused ? accent : color_border, scaled(7, dpi));
-    RECT text_bounds = bounds;
-    text_bounds.left += scaled(11, dpi);
-    text_bounds.right -= scaled(32, dpi);
-    draw_label(dc, value, text_bounds, font, color_text,
-               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
-    HPEN pen = CreatePen(PS_SOLID, std::max(1, scaled(2, dpi)), color_dim);
-    const HGDIOBJ previous = SelectObject(dc, pen);
-    const int x = bounds.right - scaled(16, dpi);
-    const int y = (bounds.top + bounds.bottom) / 2;
-    MoveToEx(dc, x - scaled(4, dpi), y - scaled(2, dpi), nullptr);
-    LineTo(dc, x, y + scaled(2, dpi));
-    LineTo(dc, x + scaled(4, dpi), y - scaled(2, dpi));
-    SelectObject(dc, previous);
-    DeleteObject(pen);
+    ui_controls::FieldStyle style;
+    style.background = color_background;
+    style.fill = color_input;
+    style.border = color_border;
+    style.focus_border = accent;
+    style.text = color_text;
+    style.disabled_text = color_faint;
+    style.chevron = color_dim;
+    style.font = font;
+    style.dpi = dpi;
+    style.focused = GetFocus() == combo;
+    ui_controls::draw_field(dc, bounds, value, style, quick_round_rect);
 }
 
 void style_target_popup(HWND combo, int dpi, bool update_selection_height = true) {
@@ -514,8 +387,6 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
         const bool focused = (item.itemState & ODS_FOCUS) != 0;
         const bool hot = (item.itemState & ODS_HOTLIGHT) != 0;
         const int identifier = GetDlgCtrlID(item.hwndItem);
-        const bool flat = identifier == id_copy || identifier == id_clear ||
-                          identifier == id_swap;
         // Clear/copy are borderless icons that sit on the card surface, so they
         // repaint the surface colour; the page colour would leave a visible box
         // behind the glyph.
@@ -523,64 +394,57 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
         SetDCBrushColor(item.hDC, on_card ? color_surface : color_background);
         FillRect(item.hDC, &item.rcItem,
                  reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
-        if (!flat) {
-            const COLORREF fill = selected ? color_hover
-                                  : hot ? theme::color_line_high : color_surface;
-            draw_rounded_control(item.hDC, item.rcItem, fill,
-                                 focused || hot ? accent : color_border, 7);
-        }
-        const COLORREF content_color = disabled ? color_faint
-                                        : hot || focused ? color_text : color_dim;
-        if (identifier == id_copy || identifier == id_clear) {
-            const wchar_t glyph =
-                identifier == id_copy ? ui_icons::copy : ui_icons::delete_glyph;
-            draw_label(item.hDC, std::wstring_view(&glyph, 1), item.rcItem,
-                       action_icon_font ? action_icon_font : icon_font,
-                       disabled ? color_faint : content_color,
-                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            return TRUE;
-        }
+
         wchar_t glyph = 0;
+        HFONT glyph_font = icon_font;
         if (identifier == id_quick_capture) {
             glyph = ui_icons::capture_translation;
         } else if (identifier == id_quick_close) {
             glyph = 0xE8BB;  // ChromeClose
+            // The close cross reads heavier than the capture glyph at the same
+            // font size, so draw it with its own slightly smaller icon font.
+            if (close_icon_font) glyph_font = close_icon_font;
+        } else if (identifier == id_quick_home) {
+            glyph = 0xE80F;  // Home
         } else if (identifier == id_swap) {
             glyph = 0xE8AB;
+        } else if (identifier == id_copy) {
+            glyph = ui_icons::copy;
+            if (action_icon_font) glyph_font = action_icon_font;
+        } else if (identifier == id_clear) {
+            glyph = ui_icons::delete_glyph;
+            if (action_icon_font) glyph_font = action_icon_font;
         } else {
             return TRUE;
         }
-        // The close cross reads heavier than the capture glyph at the same
-        // font size, so draw it with its own slightly smaller icon font.
-        const HFONT glyph_font = identifier == id_quick_close
-                                     ? (close_icon_font ? close_icon_font : icon_font)
-                                     : icon_font;
-        draw_label(item.hDC, std::wstring_view(&glyph, 1), item.rcItem, glyph_font,
-                   content_color, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        const COLORREF content_color = disabled ? color_faint
+                                        : hot || focused ? color_text : color_dim;
+        const bool boxed = identifier == id_quick_capture ||
+                           identifier == id_quick_home ||
+                           identifier == id_quick_close;
+        if (boxed) {
+            const int dpi = static_cast<int>(GetDpiForWindow(item.hwndItem));
+            const COLORREF fill = selected ? color_hover
+                                  : hot ? theme::color_line_high : color_surface;
+            ui_controls::draw_icon_button(
+                item.hDC, item.rcItem, glyph, glyph_font, dpi, fill,
+                focused || hot ? accent : color_border, content_color,
+                quick_round_rect);
+            return TRUE;
+        }
+        draw_label(item.hDC, std::wstring_view(&glyph, 1), item.rcItem,
+                   glyph_font, content_color,
+                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         return TRUE;
     }
     if (item.CtlType == ODT_COMBOBOX) {
-        RECT bounds = item.rcItem;
         const bool list_item = item.itemID != static_cast<UINT>(-1);
         const int dpi = static_cast<int>(GetDpiForWindow(item.hwndItem));
-        fill_rect(item.hDC, bounds, color_input);
-        const bool selected = list_item && (item.itemState & ODS_SELECTED) != 0;
-        if (selected) {
-            RECT highlight = bounds;
-            InflateRect(&highlight, -scaled(4, dpi), -scaled(2, dpi));
-            draw_rounded_control(item.hDC, highlight,
-                                 mix_color(color_input, accent, 16),
-                                 mix_color(color_line_high, accent, 34),
-                                 scaled(5, dpi));
-            RECT marker{highlight.left + scaled(3, dpi),
-                        highlight.top + scaled(6, dpi),
-                        highlight.left + scaled(5, dpi),
-                        highlight.bottom - scaled(6, dpi)};
-            fill_rect(item.hDC, marker, accent);
-        }
         std::wstring text;
         if (list_item) {
-            const LRESULT length = SendMessageW(item.hwndItem, CB_GETLBTEXTLEN, item.itemID, 0);
+            const LRESULT length =
+                SendMessageW(item.hwndItem, CB_GETLBTEXTLEN, item.itemID, 0);
             if (length >= 0) {
                 text.resize(static_cast<std::size_t>(length) + 1);
                 SendMessageW(item.hwndItem, CB_GETLBTEXT, item.itemID,
@@ -588,15 +452,17 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
                 text.resize(static_cast<std::size_t>(length));
             }
         }
-        bounds.left += scaled(13, dpi);
-        bounds.right -= scaled(9, dpi);
-        SetBkMode(item.hDC, TRANSPARENT);
-        SetTextColor(item.hDC,
-                     (item.itemState & ODS_DISABLED) ? color_faint : color_text);
-        const HGDIOBJ previous = font ? SelectObject(item.hDC, font) : nullptr;
-        DrawTextW(item.hDC, text.c_str(), static_cast<int>(text.size()), &bounds,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-        if (previous) SelectObject(item.hDC, previous);
+        ui_controls::FieldItemStyle style;
+        style.background = color_input;
+        style.text = color_text;
+        style.disabled_text = color_faint;
+        style.accent = accent;
+        style.font = font;
+        style.dpi = dpi;
+        style.selected = list_item && (item.itemState & ODS_SELECTED) != 0;
+        style.disabled = (item.itemState & ODS_DISABLED) != 0;
+        ui_controls::draw_field_item(item.hDC, item.rcItem, text, style,
+                                     quick_round_rect);
         return TRUE;
     }
     return FALSE;
@@ -747,6 +613,9 @@ void QuickTranslateWindow::create_controls() {
     capture_button_ = CreateWindowExW(0, L"BUTTON", L"截图翻译",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
         0, 0, 0, 0, window_, control_id(id_quick_capture), instance_, nullptr);
+    home_button_ = CreateWindowExW(0, L"BUTTON", L"首页",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+        0, 0, 0, 0, window_, control_id(id_quick_home), instance_, nullptr);
     close_button_ = CreateWindowExW(0, L"BUTTON", L"关闭",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
         0, 0, 0, 0, window_, control_id(id_quick_close), instance_, nullptr);
@@ -757,15 +626,16 @@ void QuickTranslateWindow::create_controls() {
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
         0, 0, 0, 0, window_, control_id(id_clear), instance_, nullptr);
     for (HWND control : {source_combo_, swap_button_, target_combo_, input_, output_,
-                         capture_button_, close_button_, copy_button_,
+                         capture_button_, home_button_, close_button_, copy_button_,
                          clear_button_}) {
         theme::apply_control_theme(control);
         set_control_font(control, font_);
     }
+    // No left margin: the text starts at the same x as the 原文/译文 captions.
     SendMessageW(input_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                 MAKELPARAM(scaled(12, dpi_), scaled(12, dpi_)));
+                 MAKELPARAM(0, scaled(12, dpi_)));
     SendMessageW(output_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                 MAKELPARAM(scaled(12, dpi_), scaled(12, dpi_)));
+                 MAKELPARAM(0, scaled(12, dpi_)));
     SendMessageW(input_, EM_SETCUEBANNER, TRUE,
                  reinterpret_cast<LPARAM>(L"输入或粘贴要翻译的文字"));
     SendMessageW(output_, EM_SETCUEBANNER, TRUE,
@@ -788,6 +658,7 @@ void QuickTranslateWindow::create_controls() {
     add_tooltip(window_, clear_button_, L"清空原文");
     add_tooltip(window_, swap_button_, L"对调原文与译文语种");
     add_tooltip(window_, capture_button_, L"截图翻译");
+    add_tooltip(window_, home_button_, L"首页");
     add_tooltip(window_, close_button_, L"关闭");
     layout_controls();
 }
@@ -812,8 +683,8 @@ void QuickTranslateWindow::layout_controls() {
         return control_height + count * scaled(30, dpi_);
     };
 
-    // The language selectors sit on the left edge; capture and its matching
-    // close button share the right edge.
+    // The language selectors sit on the left edge; capture, home and close
+    // share the right edge in that order.
     MoveWindow(source_combo_, margin, header_top, combo_width,
                combo_height_for(source_combo_), TRUE);
     MoveWindow(swap_button_, margin + combo_width + gap, header_top, icon_width,
@@ -822,7 +693,9 @@ void QuickTranslateWindow::layout_controls() {
                header_top, combo_width, combo_height_for(target_combo_), TRUE);
     MoveWindow(close_button_, width - margin - icon_width, header_top,
                icon_width, control_height, TRUE);
-    MoveWindow(capture_button_, width - margin - icon_width * 2 - gap,
+    MoveWindow(home_button_, width - margin - icon_width * 2 - gap, header_top,
+               icon_width, control_height, TRUE);
+    MoveWindow(capture_button_, width - margin - icon_width * 3 - gap * 2,
                header_top, icon_width, control_height, TRUE);
 
     const int body_top = header_top + control_height + scaled(14, dpi_);
@@ -892,14 +765,18 @@ void QuickTranslateWindow::paint() {
                small_font_, color_dim,
                DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    const std::wstring footer = session_.state() == TextTranslationState::too_long
-                                    ? std::wstring(L"已超出 500 字上限")
-                                    : session_status(session_);
+    const bool copied = session_.copy_confirmation_visible();
+    const std::wstring footer = copied
+                                    ? std::wstring(L"已复制到剪贴板")
+                                    : session_.state() == TextTranslationState::too_long
+                                          ? std::wstring(L"已超出 500 字上限")
+                                          : session_status(session_);
     draw_label(dc, footer,
                RECT{margin + scaled(2, dpi_), body.bottom + scaled(6, dpi_),
                     client.right - margin - scaled(200, dpi_),
                     client.bottom - scaled(8, dpi_)},
-               small_font_, status_error_ ? color_error : color_dim,
+               small_font_,
+               status_error_ ? color_error : color_dim,
                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     draw_label(dc, L"Ctrl+Enter 翻译 · Esc 关闭",
                RECT{margin, body.bottom + scaled(6, dpi_), client.right - margin,
@@ -988,8 +865,12 @@ void QuickTranslateWindow::toggle_near(HWND owner, POINT anchor, bool select_all
 }
 
 void QuickTranslateWindow::hide() {
+    const bool was_visible = window_ && IsWindowVisible(window_);
     if (window_) ShowWindow(window_, SW_HIDE);
     if (callbacks_.composition_changed) callbacks_.composition_changed(false);
+    // A hidden window cannot show a translation that is still on the wire, so
+    // let the host cancel it instead of letting it finish in the background.
+    if (was_visible && callbacks_.hidden) callbacks_.hidden();
 }
 
 void QuickTranslateWindow::on_input_changed() {
@@ -1022,6 +903,9 @@ void QuickTranslateWindow::swap_languages() {
     syncing_ = false;
     if (callbacks_.source_changed) callbacks_.source_changed(session_.source());
     if (callbacks_.target_changed) callbacks_.target_changed(session_.target());
+    // Swapping the pair invalidates the text that was typed for the old
+    // direction, so clear the editor instead of translating stale input.
+    if (callbacks_.clear) callbacks_.clear();
     InvalidateRect(source_combo_, nullptr, FALSE);
     InvalidateRect(target_combo_, nullptr, FALSE);
     SetFocus(input_);
@@ -1072,7 +956,7 @@ bool QuickTranslateWindow::preprocess_message(MSG& message) {
 void QuickTranslateWindow::self_test(HWND owner) {
     create_window(owner);
     if (!input_ || !output_ || !target_combo_ || !source_combo_ || !swap_button_ ||
-        !copy_button_ || !clear_button_ || !capture_button_ ||
+        !copy_button_ || !clear_button_ || !capture_button_ || !home_button_ ||
         SendMessageW(source_combo_, CB_GETCOUNT, 0, 0) != 9 ||
         SendMessageW(target_combo_, CB_GETCOUNT, 0, 0) != 10) {
         throw AppError("quick translation window self-test controls are incomplete");
@@ -1187,21 +1071,33 @@ void QuickTranslateWindow::self_test(HWND owner) {
         throw AppError("quick translation window self-test capture button mismatch");
     }
     RECT capture_rect{};
+    RECT home_rect{};
     RECT close_rect{};
     RECT source_combo_rect{};
     if (!GetWindowRect(capture_button_, &capture_rect) ||
+        !GetWindowRect(home_button_, &home_rect) ||
         !GetWindowRect(close_button_, &close_rect) ||
         !GetWindowRect(source_combo_, &source_combo_rect)) {
         throw AppError("quick translation window self-test header buttons missing");
     }
     if (close_rect.right - close_rect.left != capture_rect.right - capture_rect.left ||
         close_rect.bottom - close_rect.top != capture_rect.bottom - capture_rect.top ||
-        close_rect.top != capture_rect.top || close_rect.left <= capture_rect.right ||
+        close_rect.top != capture_rect.top || close_rect.left <= home_rect.right ||
+        home_rect.left <= capture_rect.right ||
         capture_rect.left <= source_combo_rect.right ||
         close_rect.right > source_combo_rect.left + scaled(480, dpi_)) {
         throw AppError("quick translation window self-test header layout mismatch");
     }
     show(owner);
+    bool home_called = false;
+    auto home_callback = callbacks_.home;
+    callbacks_.home = [&] { home_called = true; };
+    SendMessageW(window_, WM_COMMAND, MAKEWPARAM(id_quick_home, BN_CLICKED),
+                 reinterpret_cast<LPARAM>(home_button_));
+    callbacks_.home = std::move(home_callback);
+    if (!home_called) {
+        throw AppError("quick translation window self-test home button mismatch");
+    }
     SendMessageW(window_, WM_COMMAND, MAKEWPARAM(id_quick_close, BN_CLICKED),
                  reinterpret_cast<LPARAM>(close_button_));
     if (visible()) {
@@ -1449,6 +1345,11 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
                 if (callbacks_.capture) callbacks_.capture();
             }
             return 0;
+        case id_quick_home:
+            if (HIWORD(wparam) == BN_CLICKED && callbacks_.home) {
+                callbacks_.home();
+            }
+            return 0;
         case id_quick_close:
             if (HIWORD(wparam) == BN_CLICKED) hide();
             return 0;
@@ -1480,7 +1381,8 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
             point_in_window(target_combo_, point) ||
             point_in_window(copy_button_, point) ||
             point_in_window(clear_button_, point) ||
-            point_in_window(capture_button_, point)) {
+            point_in_window(capture_button_, point) ||
+            point_in_window(home_button_, point)) {
             return HTCLIENT;
         }
         return HTCAPTION;
@@ -1512,7 +1414,7 @@ LRESULT QuickTranslateWindow::handle_message(UINT message, WPARAM wparam, LPARAM
         window_ = nullptr;
         source_combo_ = swap_button_ = nullptr;
         target_combo_ = input_ = output_ = nullptr;
-        capture_button_ = close_button_ = nullptr;
+        capture_button_ = home_button_ = close_button_ = nullptr;
         copy_button_ = clear_button_ = nullptr;
         return 0;
     default: break;

@@ -240,10 +240,11 @@ void SettingsWindow::create_text_translation_page() {
         id_text_output);
     auto_copy_ = add_control(4, 0, L"BUTTON", L"译文自动复制到剪贴板",
                              BS_OWNERDRAW | WS_TABSTOP);
+    // No left margin: the text starts at the same x as the 原文/译文 captions.
     SendMessageW(text_input_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                 MAKELPARAM(px(12, dpi_), px(12, dpi_)));
+                 MAKELPARAM(0, px(12, dpi_)));
     SendMessageW(text_output_, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
-                 MAKELPARAM(px(12, dpi_), px(12, dpi_)));
+                 MAKELPARAM(0, px(12, dpi_)));
     SendMessageW(text_input_, EM_SETCUEBANNER, TRUE,
                  reinterpret_cast<LPARAM>(L"输入或粘贴需要翻译的文字"));
     SendMessageW(text_output_, EM_SETCUEBANNER, TRUE,

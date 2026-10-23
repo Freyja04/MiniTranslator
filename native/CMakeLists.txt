@@ -21,6 +21,7 @@ endif()
 add_executable(MiniTranslator WIN32
     src/app.cpp
     src/app.hpp
+    src/app_update.cpp
     src/block_editor.cpp
     src/block_editor.hpp
     src/capture.cpp
@@ -81,7 +82,11 @@ add_executable(MiniTranslator WIN32
     src/text_translation_window.hpp
     src/theme.cpp
     src/theme.hpp
+    src/tray_menu.cpp
+    src/tray_menu.hpp
     src/types.hpp
+    src/ui_controls.cpp
+    src/ui_controls.hpp
     src/ui_icons.hpp
     src/ui_draw.hpp
     src/updater.cpp

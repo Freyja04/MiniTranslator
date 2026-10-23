@@ -283,6 +283,9 @@ void ResultWindow::close() {
 void ResultWindow::minimize() {
     if (window_) {
         if (!recapturing_) KillTimer(window_, recapture_restore_timer);
+        // The loading ring only repaints while the window is on screen; stop its
+        // timer so a minimized result window does not wake the process.
+        KillTimer(window_, progress_timer);
         ShowWindow(window_, SW_HIDE);
         if (control_bar_) ShowWindow(control_bar_, SW_HIDE);
         SetLayeredWindowAttributes(window_, 0, 255, LWA_ALPHA);
@@ -293,6 +296,7 @@ void ResultWindow::minimize() {
 
 void ResultWindow::restore() {
     if (!window_) return;
+    if (loading_ || refreshing_) SetTimer(window_, progress_timer, 16, nullptr);
     ShowWindow(window_, SW_SHOW);
     SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);

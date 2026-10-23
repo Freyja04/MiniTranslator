@@ -5,9 +5,11 @@
 #include "pipeline.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -34,6 +36,12 @@ struct TextTranslationCallbacks {
     std::function<void()> clear_output;
     std::function<void()> capture;
     std::function<void()> open_settings;
+    // Opens the main window, mirroring the tray menu's 首页 entry.
+    std::function<void()> home;
+    // The quick window can hide itself (Esc, its close button, or the toggle
+    // hotkey), so the host needs a signal to cancel translation work that is
+    // still in flight and can no longer be shown.
+    std::function<void()> hidden;
 };
 
 class TextTranslationSession {
@@ -51,7 +59,18 @@ public:
     bool configuration_changed();
     bool handle_completion(PipelineCompletion completion);
     void cancel();
+    // Resolve the provider and the language pair while the window is opening so
+    // the first submit does not pay for reading the configuration again.
+    void prewarm();
     void self_test();
+
+    // The two translation surfaces show a short confirmation in their footer
+    // status line after the user copies the translation, then fall back to the
+    // regular status text.
+    static constexpr auto copy_confirmation_duration = std::chrono::seconds(2);
+    void note_copied();
+    void clear_copy_confirmation();
+    [[nodiscard]] bool copy_confirmation_visible() const noexcept;
 
     void set_changed_callback(std::function<void()> callback) {
         changed_callback_ = std::move(callback);
@@ -72,11 +91,15 @@ public:
 private:
     [[nodiscard]] bool has_visible_text() const noexcept;
     [[nodiscard]] std::wstring configuration_signature() const;
+    // Re-resolving the provider and the language pair re-reads the whole
+    // configuration JSON, so keep the last resolution until settings change.
+    [[nodiscard]] const PipelineOptions& current_options();
     void invalidate(TextTranslationState next_state);
     void notify_changed();
 
     ConfigStore& config_;
     PipelineController& pipeline_;
+    std::optional<PipelineOptions> options_cache_;
     std::wstring input_;
     std::wstring output_;
     std::wstring error_;
@@ -86,6 +109,7 @@ private:
     std::wstring submitted_configuration_;
     TextTranslationState state_{TextTranslationState::idle};
     std::uint64_t request_id_{};
+    std::chrono::steady_clock::time_point copy_confirmation_until_{};
     std::function<void()> changed_callback_;
 };
 

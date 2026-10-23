@@ -5,6 +5,7 @@
 #include "language.hpp"
 #include "resource.h"
 #include "theme.hpp"
+#include "tray_menu.hpp"
 #include "ui_icons.hpp"
 #include "util.hpp"
 
@@ -30,7 +31,7 @@ constexpr UINT_PTR capture_timer = 1;
 constexpr UINT_PTR recapture_timer = 2;
 constexpr UINT_PTR update_timer = 3;
 constexpr UINT_PTR text_translate_timer = 4;
-constexpr UINT silent_update_completed_message = WM_APP + 41;
+constexpr UINT_PTR copy_toast_timer = 5;
 constexpr int hotkey_capture = 1;
 constexpr int hotkey_toggle = 2;
 constexpr int hotkey_text_translate = 3;
@@ -40,363 +41,6 @@ constexpr UINT command_settings = 3003;
 constexpr UINT command_exit = 3006;
 constexpr UINT command_text_translate = 3007;
 constexpr UINT tray_icon_id = 1;
-
-using theme::tray_color_background;
-using theme::tray_color_hover;
-using theme::tray_color_separator;
-using theme::tray_color_text;
-using theme::tray_color_text_dim;
-using theme::tray_color_text_faint;
-constexpr int tray_menu_min_width = 240;
-constexpr int tray_menu_row_height = 32;
-constexpr int tray_menu_edge_padding = 4;
-constexpr int tray_menu_icon_size = 16;
-constexpr std::uint32_t tray_item_magic = 0x53544D49;  // STMI
-
-enum class TrayMenuIcon {
-    none,
-    check,
-    capture,
-    text,
-    brand,
-    restore,
-    home,
-    exit,
-};
-
-struct TrayMenuItem {
-    std::uint32_t magic{tray_item_magic};
-    UINT command{};
-    TrayMenuIcon icon{TrayMenuIcon::none};
-    std::wstring label;
-    std::wstring secondary;
-    std::wstring accessible_text;
-    UINT dpi{96};
-    HFONT font{};
-    bool enabled{true};
-    bool separator{};
-    bool first{};
-    bool last{};
-};
-
-int tray_scaled(int logical, UINT dpi) noexcept {
-    return std::max(1, MulDiv(logical, static_cast<int>(dpi), 96));
-}
-
-UINT tray_menu_dpi(POINT location) noexcept {
-    const HMONITOR monitor = MonitorFromPoint(location, MONITOR_DEFAULTTONEAREST);
-    UINT dpi_x = 96;
-    UINT dpi_y = 96;
-    if (monitor && SUCCEEDED(GetDpiForMonitor(
-            monitor, MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y))) {
-        return std::max<UINT>(96, dpi_x);
-    }
-    return std::max<UINT>(96, GetDpiForSystem());
-}
-
-HFONT create_tray_menu_font(UINT dpi) noexcept {
-    return CreateFontW(-MulDiv(9, static_cast<int>(dpi), 72), 0, 0, 0, FW_NORMAL,
-                       FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                       CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                       DEFAULT_PITCH | FF_DONTCARE, theme::font_family.c_str());
-}
-
-void CALLBACK style_tray_menu_window(HWINEVENTHOOK, DWORD event, HWND window,
-                                     LONG, LONG, DWORD, DWORD) noexcept {
-    if (event != EVENT_SYSTEM_MENUPOPUPSTART || !window) return;
-    wchar_t class_name[16]{};
-    if (!GetClassNameW(window, class_name, static_cast<int>(std::size(class_name))) ||
-        wcscmp(class_name, L"#32768") != 0) {
-        return;
-    }
-
-    theme::apply_window_theme(window);
-}
-
-bool is_tray_menu_item(ULONG_PTR data) noexcept {
-    const auto* item = reinterpret_cast<const TrayMenuItem*>(data);
-    return item && item->magic == tray_item_magic;
-}
-
-int CALLBACK find_tray_icon_font(const LOGFONTW*, const TEXTMETRICW*, DWORD,
-                                 LPARAM data) {
-    *reinterpret_cast<bool*>(data) = true;
-    return 0;
-}
-
-bool tray_icon_font_available(HDC dc, const wchar_t* face) {
-    LOGFONTW query{};
-    query.lfCharSet = DEFAULT_CHARSET;
-    if (wcsncpy_s(query.lfFaceName, LF_FACESIZE, face, _TRUNCATE) != 0) {
-        return false;
-    }
-    bool found = false;
-    EnumFontFamiliesExW(dc, &query, find_tray_icon_font,
-                        reinterpret_cast<LPARAM>(&found), 0);
-    return found;
-}
-
-const wchar_t* tray_icon_font(HDC dc) {
-    static int fluent_available = -1;
-    if (fluent_available < 0) {
-        fluent_available = tray_icon_font_available(dc, L"Segoe Fluent Icons") ? 1 : 0;
-    }
-    return fluent_available ? L"Segoe Fluent Icons" : L"Segoe MDL2 Assets";
-}
-
-// Use the real tray icon position for both entry points so the panel has one
-// stable anchor even when the hotkey fires while the cursor is elsewhere.
-POINT quick_translation_anchor(HWND owner) noexcept {
-    NOTIFYICONIDENTIFIER identifier{};
-    identifier.cbSize = sizeof(identifier);
-    identifier.hWnd = owner;
-    identifier.uID = tray_icon_id;
-    RECT icon{};
-    if (SUCCEEDED(Shell_NotifyIconGetRect(&identifier, &icon))) {
-        return POINT{(icon.left + icon.right) / 2, (icon.top + icon.bottom) / 2};
-    }
-    const HMONITOR monitor = MonitorFromWindow(owner, MONITOR_DEFAULTTOPRIMARY);
-    MONITORINFO info{sizeof(info)};
-    if (monitor && GetMonitorInfoW(monitor, &info)) {
-        return POINT{info.rcWork.right, info.rcWork.bottom};
-    }
-    return POINT{GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
-}
-
-void draw_tray_menu_icon(HDC dc, const RECT& bounds, TrayMenuIcon icon,
-                         COLORREF color, UINT dpi) {
-    if (icon == TrayMenuIcon::none) return;
-    // The text translation entry leads with the application mark instead of a
-    // generic glyph; it is redrawn in the menu foreground color so it matches
-    // the neighbouring icons.
-    if (icon == TrayMenuIcon::brand) {
-        theme::draw_brand_mark(dc, bounds, color);
-        return;
-    }
-    wchar_t glyph = 0;
-    switch (icon) {
-    case TrayMenuIcon::check:
-        glyph = static_cast<wchar_t>(0xE73E);  // CheckMark
-        break;
-    case TrayMenuIcon::capture:
-        glyph = ui_icons::capture_translation;
-        break;
-    case TrayMenuIcon::text:
-        glyph = ui_icons::text_translation;
-        break;
-    case TrayMenuIcon::restore:
-        glyph = static_cast<wchar_t>(0xE890);  // View
-        break;
-    case TrayMenuIcon::home:
-        glyph = static_cast<wchar_t>(0xE80F);  // Home
-        break;
-    case TrayMenuIcon::exit:
-        glyph = static_cast<wchar_t>(0xE7E8);  // PowerButton
-        break;
-    case TrayMenuIcon::none:
-        break;
-    case TrayMenuIcon::brand:
-        break;
-    }
-    if (!glyph) return;
-
-    const int icon_width = static_cast<int>(bounds.right - bounds.left);
-    const int icon_height = static_cast<int>(bounds.bottom - bounds.top);
-    const int font_pixels = std::max(tray_scaled(14, dpi),
-                                     std::min(icon_width, icon_height));
-    HFONT font = CreateFontW(-font_pixels, 0, 0, 0, FW_NORMAL,
-                             FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                             tray_icon_font(dc));
-    if (!font) return;
-
-    const int saved = SaveDC(dc);
-    SelectObject(dc, font);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, color);
-    RECT text_bounds = bounds;
-    DrawTextW(dc, &glyph, 1, &text_bounds,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    RestoreDC(dc, saved);
-    DeleteObject(font);
-}
-
-bool measure_tray_menu_item(MEASUREITEMSTRUCT& measure) {
-    if (measure.CtlType != ODT_MENU || !is_tray_menu_item(measure.itemData)) return false;
-    const auto& item = *reinterpret_cast<const TrayMenuItem*>(measure.itemData);
-    const int top_padding = item.first ? tray_menu_edge_padding : 0;
-    const int bottom_padding = item.last ? tray_menu_edge_padding : 0;
-    if (item.separator) {
-        measure.itemWidth = static_cast<UINT>(tray_scaled(tray_menu_min_width, item.dpi));
-        measure.itemHeight = static_cast<UINT>(tray_scaled(9 + top_padding + bottom_padding,
-                                                           item.dpi));
-        return true;
-    }
-
-    SIZE label_size{};
-    SIZE secondary_size{};
-    HDC dc = GetDC(nullptr);
-    HGDIOBJ previous_font = nullptr;
-    if (dc && item.font) previous_font = SelectObject(dc, item.font);
-    if (dc) {
-        GetTextExtentPoint32W(dc, item.label.c_str(), static_cast<int>(item.label.size()),
-                              &label_size);
-        GetTextExtentPoint32W(dc, item.secondary.c_str(),
-                              static_cast<int>(item.secondary.size()), &secondary_size);
-        if (previous_font) SelectObject(dc, previous_font);
-        ReleaseDC(nullptr, dc);
-    }
-
-    const int secondary_gap = item.secondary.empty() ? 0 : tray_scaled(22, item.dpi);
-    const int measured_width = tray_scaled(54, item.dpi) + label_size.cx +
-                               secondary_gap + secondary_size.cx + tray_scaled(14, item.dpi);
-    measure.itemWidth = static_cast<UINT>(std::max(
-        tray_scaled(tray_menu_min_width, item.dpi), measured_width));
-    measure.itemHeight = static_cast<UINT>(tray_scaled(
-        tray_menu_row_height + top_padding + bottom_padding,
-                                                       item.dpi));
-    return true;
-}
-
-bool draw_tray_menu_item(const DRAWITEMSTRUCT& draw) {
-    if (draw.CtlType != ODT_MENU || !is_tray_menu_item(draw.itemData)) return false;
-    const auto& item = *reinterpret_cast<const TrayMenuItem*>(draw.itemData);
-    const bool disabled = !item.enabled || (draw.itemState & ODS_DISABLED) != 0;
-    const bool selected = !disabled && (draw.itemState & ODS_SELECTED) != 0;
-
-    HBRUSH background = CreateSolidBrush(tray_color_background);
-    if (background) {
-        FillRect(draw.hDC, &draw.rcItem, background);
-        DeleteObject(background);
-    }
-
-    RECT content = draw.rcItem;
-    if (item.first) content.top += tray_scaled(tray_menu_edge_padding, item.dpi);
-    if (item.last) content.bottom -= tray_scaled(tray_menu_edge_padding, item.dpi);
-
-    if (item.separator) {
-        const int middle = content.top + (content.bottom - content.top) / 2;
-        HPEN pen = CreatePen(PS_SOLID, tray_scaled(1, item.dpi), tray_color_separator);
-        if (pen) {
-            const auto previous = SelectObject(draw.hDC, pen);
-            MoveToEx(draw.hDC, content.left + tray_scaled(14, item.dpi), middle, nullptr);
-            LineTo(draw.hDC, content.right - tray_scaled(14, item.dpi), middle);
-            SelectObject(draw.hDC, previous);
-            DeleteObject(pen);
-        }
-        return true;
-    }
-
-    if (selected) {
-        RECT highlight = content;
-        InflateRect(&highlight, -tray_scaled(3, item.dpi), -tray_scaled(1, item.dpi));
-        HBRUSH accent_brush = CreateSolidBrush(tray_color_hover);
-        HPEN accent_pen = CreatePen(PS_SOLID, 1, tray_color_hover);
-        if (accent_brush && accent_pen) {
-            const auto old_brush = SelectObject(draw.hDC, accent_brush);
-            const auto old_pen = SelectObject(draw.hDC, accent_pen);
-            RoundRect(draw.hDC, highlight.left, highlight.top, highlight.right, highlight.bottom,
-                      tray_scaled(8, item.dpi), tray_scaled(8, item.dpi));
-            SelectObject(draw.hDC, old_pen);
-            SelectObject(draw.hDC, old_brush);
-        }
-        if (accent_pen) DeleteObject(accent_pen);
-        if (accent_brush) DeleteObject(accent_brush);
-    }
-
-    const COLORREF foreground = selected ? theme::color_text
-        : disabled ? tray_color_text_faint : tray_color_text;
-    const COLORREF secondary_color = selected ? theme::color_text_dim
-        : disabled ? tray_color_text_faint : tray_color_text_dim;
-    const int icon_size = tray_scaled(tray_menu_icon_size, item.dpi);
-    RECT icon_bounds{
-        content.left + tray_scaled(14, item.dpi),
-        content.top + (content.bottom - content.top - icon_size) / 2,
-        content.left + tray_scaled(14, item.dpi) + icon_size,
-        content.top + (content.bottom - content.top + icon_size) / 2,
-    };
-    const auto icon = (draw.itemState & ODS_CHECKED) != 0
-        ? TrayMenuIcon::check : item.icon;
-    draw_tray_menu_icon(draw.hDC, icon_bounds, icon,
-                        foreground, item.dpi);
-
-    const int saved = SaveDC(draw.hDC);
-    SetBkMode(draw.hDC, TRANSPARENT);
-    if (item.font) SelectObject(draw.hDC, item.font);
-
-    RECT label_rect = content;
-    label_rect.left += tray_scaled(43, item.dpi);
-    label_rect.right -= tray_scaled(14, item.dpi);
-    if (!item.secondary.empty()) {
-        SIZE secondary_size{};
-        GetTextExtentPoint32W(draw.hDC, item.secondary.c_str(),
-                              static_cast<int>(item.secondary.size()), &secondary_size);
-        label_rect.right -= secondary_size.cx + tray_scaled(22, item.dpi);
-        RECT secondary_rect = content;
-        secondary_rect.left = label_rect.right + tray_scaled(12, item.dpi);
-        secondary_rect.right -= tray_scaled(14, item.dpi);
-        SetTextColor(draw.hDC, secondary_color);
-        DrawTextW(draw.hDC, item.secondary.c_str(), static_cast<int>(item.secondary.size()),
-                  &secondary_rect, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
-    }
-    SetTextColor(draw.hDC, foreground);
-    DrawTextW(draw.hDC, item.label.c_str(), static_cast<int>(item.label.size()), &label_rect,
-              DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
-    RestoreDC(draw.hDC, saved);
-    return true;
-}
-
-void tray_menu_layout_self_test() {
-    static_assert(tray_menu_icon_size <= tray_menu_row_height / 2);
-    TrayMenuItem item;
-    item.command = command_capture;
-    item.icon = TrayMenuIcon::capture;
-    item.label = L"截图翻译";
-    item.secondary = L"Ctrl+Alt+Q";
-    item.dpi = 96;
-    item.font = create_tray_menu_font(item.dpi);
-    item.first = true;
-
-    MEASUREITEMSTRUCT measured{};
-    measured.CtlType = ODT_MENU;
-    measured.itemData = reinterpret_cast<ULONG_PTR>(&item);
-    if (!measure_tray_menu_item(measured) ||
-        measured.itemHeight != static_cast<UINT>(tray_scaled(
-            tray_menu_row_height + tray_menu_edge_padding, item.dpi)) ||
-        measured.itemWidth < static_cast<UINT>(
-            tray_scaled(tray_menu_min_width, item.dpi))) {
-        if (item.font) DeleteObject(item.font);
-        throw AppError("tray menu layout self-test failed");
-    }
-
-    HDC screen_dc = GetDC(nullptr);
-    HDC dc = CreateCompatibleDC(screen_dc);
-    HBITMAP bitmap = dc && screen_dc ? CreateCompatibleBitmap(
-        screen_dc, static_cast<int>(measured.itemWidth),
-        static_cast<int>(measured.itemHeight)) : nullptr;
-    if (screen_dc) ReleaseDC(nullptr, screen_dc);
-    HGDIOBJ previous_bitmap = bitmap && dc ? SelectObject(dc, bitmap) : nullptr;
-    DRAWITEMSTRUCT drawn{};
-    drawn.CtlType = ODT_MENU;
-    drawn.itemState = ODS_SELECTED;
-    drawn.hDC = dc;
-    drawn.rcItem = {0, 0, static_cast<LONG>(measured.itemWidth),
-                    static_cast<LONG>(measured.itemHeight)};
-    drawn.itemData = reinterpret_cast<ULONG_PTR>(&item);
-    const bool rendered = dc && bitmap && draw_tray_menu_item(drawn);
-    if (previous_bitmap) SelectObject(dc, previous_bitmap);
-    if (bitmap) DeleteObject(bitmap);
-    if (dc) DeleteDC(dc);
-    if (item.font) DeleteObject(item.font);
-    if (!rendered) throw AppError("tray menu render self-test failed");
-}
-
-HICON load_brand_icon(HINSTANCE instance) {
-    return static_cast<HICON>(LoadImageW(
-        instance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
-        32, 32, LR_DEFAULTCOLOR));
-}
 
 }  // namespace
 
@@ -429,10 +73,20 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
     text_callbacks.translate_now = [this] { schedule_text_translation(true); };
     text_callbacks.clear = [this] {
         KillTimer(window_, text_translate_timer);
+        if (pipeline_) pipeline_->cancel_lane(PipelineLane::text);
         if (text_session_) text_session_->clear();
     };
     text_callbacks.copy = [this] {
-        if (text_session_) copy_to_clipboard(text_session_->output());
+        if (!text_session_ || text_session_->output().empty()) return;
+        copy_to_clipboard(text_session_->output());
+        text_session_->note_copied();
+        refresh_text_translation_views();
+        SetTimer(window_, copy_toast_timer,
+                 static_cast<UINT>(
+                     std::chrono::duration_cast<std::chrono::milliseconds>(
+                         TextTranslationSession::copy_confirmation_duration)
+                         .count()),
+                 nullptr);
     };
     text_callbacks.copy_source = [this] {
         if (text_session_) copy_to_clipboard(text_session_->input());
@@ -442,6 +96,21 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
     };
     text_callbacks.capture = [this] { start_capture(); };
     text_callbacks.open_settings = [this] { open_translation_settings(); };
+    text_callbacks.home = [this] {
+        if (quick_window_) quick_window_->hide();
+        open_settings();
+    };
+    text_callbacks.hidden = [this] {
+        // The reply can no longer be shown, so stop the debounce and any request
+        // still on the wire. A finished translation is kept: reopening the
+        // window should show it again.
+        KillTimer(window_, text_translate_timer);
+        if (pipeline_) pipeline_->cancel_lane(PipelineLane::text);
+        if (text_session_ &&
+            text_session_->state() == TextTranslationState::translating) {
+            text_session_->cancel();
+        }
+    };
     settings_.attach_text_translation(*text_session_, text_callbacks);
     settings_.set_capture_callback([this] { start_capture_from_settings(); });
     quick_window_->set_callbacks(std::move(text_callbacks));
@@ -465,12 +134,14 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
     settings_.set_restart_callback([this] { restart(); });
     settings_.set_update_check_callback([this] { start_update_check(); });
     settings_.set_settings_changed_callback([this] {
+        refresh_pipeline_options();
         refresh_theme_windows();
         refresh_tray_tooltip();
         if (text_session_ && text_session_->configuration_changed()) {
             schedule_text_translation(true);
         }
     });
+    refresh_pipeline_options();
     if (!PostMessageW(window_, initialize_message, 0, 0)) {
         throw_last_error("queue application initialization");
     }
@@ -528,7 +199,7 @@ void AppHost::add_tray_icon() {
         icon_ = nullptr;
     }
 
-    HICON icon = load_brand_icon(instance_);
+    HICON icon = tray_menu::load_app_icon(instance_);
     if (!icon) throw_last_error("load notification icon");
 
     NOTIFYICONDATAW tray{};
@@ -568,7 +239,7 @@ void AppHost::remove_tray_icon() {
 
 void AppHost::refresh_tray_icon() {
     if (!tray_.hWnd || icon_) return;
-    HICON replacement = load_brand_icon(instance_);
+    HICON replacement = tray_menu::load_app_icon(instance_);
     if (!replacement) return;
     const HICON previous = icon_;
     tray_.uFlags = NIF_ICON;
@@ -623,11 +294,11 @@ void AppHost::show_tray_menu(POINT location) {
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
 
-    const UINT dpi = tray_menu_dpi(location);
-    HFONT menu_font = create_tray_menu_font(dpi);
+    const UINT dpi = tray_menu::menu_dpi(location);
+    HFONT menu_font = tray_menu::create_font(dpi);
     const bool owns_font = menu_font != nullptr;
     if (!menu_font) menu_font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-    HBRUSH menu_background = CreateSolidBrush(tray_color_background);
+    HBRUSH menu_background = CreateSolidBrush(theme::tray_color_background);
     MENUINFO menu_info{};
     menu_info.cbSize = sizeof(menu_info);
     menu_info.fMask = MIM_STYLE | (menu_background ? MIM_BACKGROUND : 0);
@@ -639,11 +310,11 @@ void AppHost::show_tray_menu(POINT location) {
     const auto toggle = config_.string(L"hotkey_toggle", L"Ctrl+Alt+W");
     const auto text = config_.string(L"hotkey_text_translate", L"Ctrl+Alt+Space");
     const bool can_restore = last_image_ && !result_.visible();
-    std::vector<TrayMenuItem> items;
+    std::vector<tray_menu::Item> items;
     items.reserve(7);
-    const auto add_item = [&](UINT command, TrayMenuIcon icon, std::wstring label,
+    const auto add_item = [&](UINT command, tray_menu::Icon icon, std::wstring label,
                               std::wstring secondary = {}, bool enabled = true) {
-        TrayMenuItem item;
+        tray_menu::Item item;
         item.command = command;
         item.icon = icon;
         item.label = std::move(label);
@@ -653,17 +324,17 @@ void AppHost::show_tray_menu(POINT location) {
         item.enabled = enabled;
         items.push_back(std::move(item));
     };
-    add_item(command_text_translate, TrayMenuIcon::brand, L"文本翻译", text);
-    add_item(command_capture, TrayMenuIcon::capture, L"截图翻译", capture);
-    add_item(command_restore, TrayMenuIcon::restore, L"显示上次译文", toggle, can_restore);
-    TrayMenuItem separator;
+    add_item(command_text_translate, tray_menu::Icon::brand, L"文本翻译", text);
+    add_item(command_capture, tray_menu::Icon::capture, L"截图翻译", capture);
+    add_item(command_restore, tray_menu::Icon::restore, L"显示上次译文", toggle, can_restore);
+    tray_menu::Item separator;
     separator.separator = true;
     separator.enabled = false;
     separator.dpi = dpi;
     separator.font = menu_font;
     items.push_back(std::move(separator));
-    add_item(command_settings, TrayMenuIcon::home, L"首页");
-    add_item(command_exit, TrayMenuIcon::exit, L"退出");
+    add_item(command_settings, tray_menu::Icon::home, L"首页");
+    add_item(command_exit, tray_menu::Icon::exit, L"退出");
     items.front().first = true;
     items.back().last = true;
 
@@ -687,7 +358,7 @@ void AppHost::show_tray_menu(POINT location) {
     SetForegroundWindow(window_);
     HWINEVENTHOOK menu_hook = SetWinEventHook(
         EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_MENUPOPUPSTART, nullptr,
-        &style_tray_menu_window, GetCurrentProcessId(), GetCurrentThreadId(),
+        &tray_menu::style_menu_window, GetCurrentProcessId(), GetCurrentThreadId(),
         WINEVENT_OUTOFCONTEXT);
     TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_LEFTALIGN,
                    location.x, location.y, 0, window_, nullptr);
@@ -829,11 +500,21 @@ void AppHost::on_selected(const RECT& rect, PixelBuffer image) {
     DwmFlush();
 }
 
+void AppHost::refresh_pipeline_options() {
+    pipeline_options_ = PipelineOptions::from_config(config_);
+    pipeline_options_ready_ = true;
+}
+
+const PipelineOptions& AppHost::pipeline_options() {
+    if (!pipeline_options_ready_) refresh_pipeline_options();
+    return pipeline_options_;
+}
+
 void AppHost::start_pipeline(std::shared_ptr<const PixelBuffer> image, const RECT& rect) {
     last_image_ = image;
     result_.show_loading(rect, image, result_appearance());
     try {
-        current_request_ = pipeline_->schedule(image, PipelineOptions::from_config(config_));
+        current_request_ = pipeline_->schedule(image, pipeline_options());
     } catch (const std::exception& error) {
         result_.set_error(L"启动翻译失败：" + utf8_to_wide(error.what()));
     }
@@ -880,8 +561,11 @@ void AppHost::open_text_translation() {
 
 void AppHost::toggle_quick_translation() {
     if (!quick_window_ || shutting_down_ || overlay_.active()) return;
+    // Opening the window is a natural moment to resolve the provider and the
+    // language pair, well before the debounce timer submits the text.
+    if (text_session_) text_session_->prewarm();
     try {
-        quick_window_->toggle_near(window_, quick_translation_anchor(window_), true);
+        quick_window_->toggle_near(window_, tray_menu::anchor_for_quick_translation(window_, tray_icon_id), true);
     } catch (const std::exception& error) {
         notify(MINITRANS_DISPLAY_NAME, L"无法打开快速翻译：" + utf8_to_wide(error.what()));
     }
@@ -914,7 +598,13 @@ void AppHost::on_text_composition_changed(bool composing) {
 
 void AppHost::schedule_text_translation(bool immediate) {
     KillTimer(window_, text_translate_timer);
-    if (!text_session_ || text_composing_ || !text_session_->can_submit()) return;
+    if (!text_session_ || text_composing_ || !text_session_->can_submit()) {
+        // Nothing new can be submitted (empty, too long, or composing), so any
+        // reply still on the wire would land in a view that no longer matches
+        // the input. Drop it instead of letting it finish in the background.
+        if (pipeline_) pipeline_->cancel_lane(PipelineLane::text);
+        return;
+    }
     if (immediate) {
         text_session_->submit();
     } else {
@@ -953,11 +643,10 @@ void AppHost::retry_translation() {
     current_request_ = 0;
     try {
         if (!last_blocks_.empty()) {
-            current_request_ = pipeline_->schedule_translation(
-                last_blocks_, PipelineOptions::from_config(config_));
+            current_request_ = pipeline_->schedule_translation(last_blocks_,
+                                                               pipeline_options());
         } else {
-            current_request_ = pipeline_->schedule(
-                last_image_, PipelineOptions::from_config(config_));
+            current_request_ = pipeline_->schedule(last_image_, pipeline_options());
         }
     } catch (const std::exception& error) {
         result_.set_error(L"\u542F\u52A8\u7FFB\u8BD1\u5931\u8D25\uFF1A" +
@@ -1040,8 +729,8 @@ bool AppHost::schedule_block_translations(std::vector<std::size_t> indices,
         // is cancelled on purpose: its result would overwrite the blocks this
         // request is about to replace.
         current_request_ = 0;
-        request_id = pipeline_->schedule_translation(
-            std::move(blocks), PipelineOptions::from_config(config_));
+        request_id = pipeline_->schedule_translation(std::move(blocks),
+                                                     pipeline_options());
     } catch (const std::exception& error) {
         auto replaced = std::move(block_translation_request_);
         block_translation_request_.reset();
@@ -1184,137 +873,6 @@ void AppHost::open_translation_settings() {
     }
 }
 
-void AppHost::start_update_check() {
-    // One inline update at a time: the settings page shows progress beside the
-    // button and the worker reports back through the message window.
-    if (settings_update_thread_.joinable() || shutting_down_) return;
-    const auto manifest = config_.string(L"updates.manifest_url");
-    const auto repository = config_.string(L"updates.repository_url");
-    const auto channel = config_.string(L"updates.channel", L"stable");
-    if (manifest.empty() || repository.empty()) {
-        settings_.set_update_status(L"更新失败！", true);
-        settings_.set_update_check_enabled(true);
-        return;
-    }
-    const HWND dispatcher = window_;
-    settings_update_thread_ = std::jthread(
-        [dispatcher, manifest, repository, channel](std::stop_token stop) {
-            using Outcome = SettingsUpdateOutcome;
-            Outcome outcome = Outcome::failed;
-            try {
-                WinrtApartment apartment(winrt::apartment_type::multi_threaded);
-                const auto update =
-                    check_for_update(manifest, repository, channel, stop);
-                if (!update) {
-                    outcome = Outcome::no_update;
-                } else {
-                    PostMessageW(dispatcher, settings_update_stage_message, 0, 0);
-                    const auto installer =
-                        download_update(*update, repository, stop);
-                    if (!launch_update_helper(installer, *update, repository,
-                                              GetCurrentProcessId())) {
-                        throw AppError("launch update helper");
-                    }
-                    outcome = Outcome::updated;
-                }
-            } catch (...) {
-                outcome = stop.stop_requested() ? Outcome::cancelled
-                                                : Outcome::failed;
-            }
-            PostMessageW(dispatcher, settings_update_completed_message,
-                         static_cast<WPARAM>(outcome), 0);
-        });
-}
-
-void AppHost::handle_settings_update_completed(WPARAM outcome) {
-    if (settings_update_thread_.joinable()) settings_update_thread_.join();
-    switch (static_cast<SettingsUpdateOutcome>(outcome)) {
-    case SettingsUpdateOutcome::no_update:
-        settings_.set_update_status(L"没有新版本！");
-        settings_.set_update_check_enabled(true);
-        break;
-    case SettingsUpdateOutcome::updated:
-        // The helper waits for this process to exit, then installs and the
-        // installer's [Run] entry starts the new build again.
-        settings_.set_update_status(L"更新中...");
-        quit();
-        return;
-    case SettingsUpdateOutcome::failed:
-    case SettingsUpdateOutcome::cancelled:
-    default:
-        settings_.set_update_status(L"更新失败！", true);
-        settings_.set_update_check_enabled(true);
-        break;
-    }
-}
-
-void AppHost::start_silent_update_check() {
-    if (silent_update_thread_.joinable() || shutting_down_) return;
-    auto manifest = config_.string(L"updates.manifest_url");
-    const auto repository = config_.string(L"updates.repository_url");
-    const auto channel = config_.string(L"updates.channel", L"stable");
-    if (manifest.empty() || repository.empty()) return;
-    if (update_self_test_mode_) {
-        // Exercise the complete worker/message/shutdown path without making a
-        // smoke test depend on GitHub or the machine's proxy configuration.
-        manifest = L"https://github.com/minitrans-self-test/invalid/"
-                   L"releases/latest/download/update-manifest.json";
-    }
-    const HWND dispatcher = window_;
-    silent_update_thread_ = std::jthread(
-        [this, dispatcher, manifest, repository, channel](std::stop_token stop) {
-            try {
-                WinrtApartment apartment(winrt::apartment_type::multi_threaded);
-                std::optional<UpdateInfo> result;
-                try {
-                    result = check_for_update(manifest, repository, channel, stop);
-                } catch (...) {
-                    result.reset();
-                }
-                {
-                    std::lock_guard lock(silent_update_mutex_);
-                    silent_update_result_ = std::move(result);
-                }
-                PostMessageW(dispatcher, silent_update_completed_message, 0, 0);
-            } catch (...) {
-                // No exception may escape a std::jthread entry point: doing so
-                // invokes std::terminate and aborts the whole tray process.
-                PostMessageW(dispatcher, silent_update_completed_message, 0, 0);
-            }
-        });
-}
-
-std::optional<UpdateInfo> AppHost::process_silent_update_check() {
-    if (silent_update_thread_.joinable()) silent_update_thread_.join();
-    std::lock_guard lock(silent_update_mutex_);
-    return std::move(silent_update_result_);
-}
-
-void AppHost::handle_update_available(const UpdateInfo& update) {
-    notify(std::wstring(MINITRANS_DISPLAY_NAME) + L" · 有新版本",
-           std::wstring(MINITRANS_DISPLAY_NAME) + L" " + update.version +
-               L" 已发布，打开设置窗口后点「检查更新」即可更新。");
-}
-
-void AppHost::restart() {
-    try {
-        const auto executable = executable_path();
-        std::wstring command_line = L"\"" + executable.wstring() + L"\" --restart-wait-pid " +
-                                    std::to_wstring(GetCurrentProcessId());
-        STARTUPINFOW startup{};
-        startup.cb = sizeof(startup);
-        PROCESS_INFORMATION process{};
-        if (!CreateProcessW(executable.c_str(), command_line.data(), nullptr, nullptr, FALSE, 0,
-                            nullptr, nullptr, &startup, &process)) {
-            throw_last_error("start replacement process");
-        }
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        quit();
-    } catch (const std::exception& error) {
-        notify(MINITRANS_DISPLAY_NAME, L"重启失败：" + utf8_to_wide(error.what()));
-    }
-}
 
 void AppHost::quit() {
     if (shutting_down_) return;
@@ -1404,9 +962,10 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         // raw mouse messages too would toggle the panel twice in one click.
         if (event == NIN_SELECT || event == NIN_KEYSELECT) {
             if (quick_window_ && !overlay_.active()) {
+                if (text_session_) text_session_->prewarm();
                 try {
                     quick_window_->toggle_near(
-                        nullptr, quick_translation_anchor(window_), false);
+                        nullptr, tray_menu::anchor_for_quick_translation(window_, tray_icon_id), false);
                 } catch (const std::exception& error) {
                     notify(MINITRANS_DISPLAY_NAME,
                            L"无法打开快速翻译：" + utf8_to_wide(error.what()));
@@ -1418,13 +977,13 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return 0;
     }
     case WM_MEASUREITEM:
-        if (wparam == 0 && lparam && measure_tray_menu_item(
+        if (wparam == 0 && lparam && tray_menu::measure_item(
                 *reinterpret_cast<MEASUREITEMSTRUCT*>(lparam))) {
             return TRUE;
         }
         break;
     case WM_DRAWITEM:
-        if (wparam == 0 && lparam && draw_tray_menu_item(
+        if (wparam == 0 && lparam && tray_menu::draw_item(
                 *reinterpret_cast<const DRAWITEMSTRUCT*>(lparam))) {
             return TRUE;
         }
@@ -1454,6 +1013,12 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         if (wparam == text_translate_timer) {
             KillTimer(window_, text_translate_timer);
             schedule_text_translation(true);
+            return 0;
+        }
+        if (wparam == copy_toast_timer) {
+            KillTimer(window_, copy_toast_timer);
+            if (text_session_) text_session_->clear_copy_confirmation();
+            refresh_text_translation_views();
             return 0;
         }
         break;
@@ -1501,8 +1066,8 @@ int AppHost::run(bool self_test, bool update_self_test,
     if (self_test) {
         PipelineController::self_test();
         if (text_session_) text_session_->self_test();
-        tray_menu_layout_self_test();
-        HICON brand_icon = load_brand_icon(instance_);
+        tray_menu::layout_self_test();
+        HICON brand_icon = tray_menu::load_app_icon(instance_);
         if (!brand_icon) throw AppError("application icon self-test failed");
         DestroyIcon(brand_icon);
         BlockEditor::self_test(instance_, window_);

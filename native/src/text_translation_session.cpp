@@ -155,7 +155,7 @@ bool TextTranslationSession::submit() {
         std::vector<TextBlock> blocks;
         blocks.push_back(std::move(block));
         request_id_ = pipeline_.schedule_translation(
-            std::move(blocks), PipelineOptions::from_config(config_), PipelineLane::text);
+            std::move(blocks), current_options(), PipelineLane::text);
         output_.clear();
         error_.clear();
         state_ = TextTranslationState::translating;
@@ -169,7 +169,13 @@ bool TextTranslationSession::submit() {
     return state_ == TextTranslationState::translating;
 }
 
+const PipelineOptions& TextTranslationSession::current_options() {
+    if (!options_cache_) options_cache_ = PipelineOptions::from_config(config_);
+    return *options_cache_;
+}
+
 bool TextTranslationSession::configuration_changed() {
+    options_cache_.reset();
     if (!has_visible_text() || character_count() > max_characters) return false;
     if (!submitted_configuration_.empty() &&
         submitted_configuration_ == configuration_signature()) {
@@ -203,6 +209,27 @@ void TextTranslationSession::cancel() {
     invalidate(has_visible_text() ? TextTranslationState::waiting
                                   : TextTranslationState::idle);
     notify_changed();
+}
+
+void TextTranslationSession::prewarm() {
+    (void)current_options();
+}
+
+void TextTranslationSession::note_copied() {
+    copy_confirmation_until_ =
+        std::chrono::steady_clock::now() + copy_confirmation_duration;
+    notify_changed();
+}
+
+void TextTranslationSession::clear_copy_confirmation() {
+    if (copy_confirmation_until_ == std::chrono::steady_clock::time_point{}) return;
+    copy_confirmation_until_ = {};
+    notify_changed();
+}
+
+bool TextTranslationSession::copy_confirmation_visible() const noexcept {
+    return copy_confirmation_until_ != std::chrono::steady_clock::time_point{} &&
+           std::chrono::steady_clock::now() < copy_confirmation_until_;
 }
 
 void TextTranslationSession::self_test() {

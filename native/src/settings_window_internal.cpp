@@ -1,5 +1,7 @@
 #include "settings_window_internal.hpp"
 
+#include "ui_controls.hpp"
+
 namespace minitrans::settings_internal {
 
 void align_combo_edit(HWND combo, int dpi) noexcept {
@@ -208,13 +210,7 @@ void set_combo_edit_redraw(HWND combo, bool enabled) noexcept {
 }
 
 COLORREF blend_color(COLORREF base, COLORREF tint, int tint_percent) noexcept {
-    const int amount = std::clamp(tint_percent, 0, 100);
-    const auto channel = [amount](BYTE base_value, BYTE tint_value) {
-        return static_cast<BYTE>((base_value * (100 - amount) + tint_value * amount) / 100);
-    };
-    return RGB(channel(GetRValue(base), GetRValue(tint)),
-               channel(GetGValue(base), GetGValue(tint)),
-               channel(GetBValue(base), GetBValue(tint)));
+    return ui_controls::mix_color(base, tint, tint_percent);
 }
 
 void style_combo_popup(HWND combo, int dpi, HFONT font) noexcept {

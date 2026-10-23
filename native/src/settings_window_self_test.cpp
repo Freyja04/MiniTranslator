@@ -1,5 +1,6 @@
 #include "settings_window.hpp"
 #include "settings_window_internal.hpp"
+#include "self_test_support.hpp"
 
 namespace minitrans {
 
@@ -191,16 +192,19 @@ void SettingsWindow::self_test(HWND owner) {
     }
     RECT text_capture_rect{};
     RECT text_auto_copy_rect{};
+    RECT text_target_rect{};
     if (!GetWindowRect(text_capture_, &text_capture_rect) ||
-        !GetWindowRect(auto_copy_, &text_auto_copy_rect)) {
+        !GetWindowRect(auto_copy_, &text_auto_copy_rect) ||
+        !GetWindowRect(text_target_, &text_target_rect)) {
         throw AppError("settings self-test text translation tools are missing");
     }
     if (text_capture_rect.right - text_capture_rect.left != px(34, dpi_) ||
         text_capture_rect.bottom - text_capture_rect.top != px(34, dpi_) ||
-        text_capture_rect.left >= text_input_rect.left ||
+        text_capture_rect.top != text_target_rect.top ||
+        text_capture_rect.left <= text_target_rect.right ||
         text_capture_rect.bottom > text_input_rect.top ||
         text_of(auto_copy_) != L"译文自动复制到剪贴板" ||
-        text_auto_copy_rect.left != text_capture_rect.left ||
+        text_auto_copy_rect.left >= text_input_rect.left ||
         text_auto_copy_rect.top < text_output_rect.bottom) {
         throw AppError("settings self-test text translation tools are misaligned");
     }
@@ -395,6 +399,28 @@ void SettingsWindow::self_test(HWND owner) {
             SendMessageW(translator_class_, CB_SETCURSEL, 0, 0);
             refresh_provider_fields(false);
         }
+    }
+    // Switching pages repaints every self-drawn control. The window keeps its
+    // theme resources alive between switches, so a loop like this must not grow
+    // GDI/USER objects or private bytes.
+    self_test_support::settle_self_test_ui();
+    std::array<self_test_support::ProcessResourceSnapshot, 7> resource_samples{};
+    resource_samples[0] = self_test_support::process_resources();
+    for (std::size_t batch = 1; batch < resource_samples.size(); ++batch) {
+        for (int pass = 0; pass < 6; ++pass) {
+            for (int page = 0; page < static_cast<int>(page_controls_.size()); ++page) {
+                show_page(page);
+                layout_controls();
+                RedrawWindow(window_, nullptr, nullptr,
+                             RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+            }
+        }
+        resource_samples[batch] = self_test_support::process_resources();
+    }
+    if (!self_test_support::resource_series_stable(resource_samples)) {
+        throw AppError("settings window self-test leaked process resources" +
+                       self_test_support::resource_change(resource_samples.front(),
+                                                          resource_samples.back()));
     }
     DestroyWindow(window_);
     window_ = nullptr;
