@@ -1,6 +1,23 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(MiniTranslatorNative VERSION 1.0.1 LANGUAGES CXX RC)
+# The version is single-sourced from resource.h: the four defines below feed
+# both the .rc version resource and this project() call, so a release only
+# ever edits one file.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/resource.h" MINITRANS_RESOURCE_HEADER)
+foreach(component MAJOR MINOR PATCH)
+    string(REGEX MATCH
+        "#define MINITRANS_VERSION_${component}[ \\t]+([0-9]+)"
+        _minitrans_version_${component}
+        "${MINITRANS_RESOURCE_HEADER}")
+    set(MINITRANS_VERSION_${component} "${CMAKE_MATCH_1}")
+endforeach()
+set(MINITRANS_PROJECT_VERSION
+    "${MINITRANS_VERSION_MAJOR}.${MINITRANS_VERSION_MINOR}.${MINITRANS_VERSION_PATCH}")
+if(NOT MINITRANS_PROJECT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "Could not read the project version from src/resource.h")
+endif()
+
+project(MiniTranslatorNative VERSION ${MINITRANS_PROJECT_VERSION} LANGUAGES CXX RC)
 
 set(MINITRANS_UPDATE_REPOSITORY_URL
     "https://github.com/Freyja04/MiniTranslator"

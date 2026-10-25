@@ -63,14 +63,18 @@ def source_versions() -> dict[str, str]:
             raise VersionError(f"resource.h has an invalid {name.lower()} marker")
         resource_parts.append(matches[0])
 
-    return {
-        "native CMake": _one(
-            "native/CMakeLists.txt",
-            r"^project\(MiniTranslatorNative VERSION ([0-9]+\.[0-9]+\.[0-9]+)",
-            "native CMake",
-        ),
-        "native resource": ".".join(resource_parts),
-    }
+    versions = {"native resource": ".".join(resource_parts)}
+
+    # resource.h is the single version source: the CMake project version is
+    # derived from it at configure time, so the build script only needs the
+    # derivation snippet, not a second literal version.
+    cmake = _read("native/CMakeLists.txt")
+    derivation = "#define MINITRANS_VERSION_"
+    if derivation not in cmake:
+        raise VersionError(
+            "native CMake does not derive its version from resource.h"
+        )
+    return versions
 
 
 def validate(expected: str) -> dict[str, str]:
@@ -93,7 +97,6 @@ def validate(expected: str) -> dict[str, str]:
 
     versions = source_versions()
     expected_by_source = {
-        "native CMake": core,
         "native resource": f"{core}.0",
     }
     errors = [

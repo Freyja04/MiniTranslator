@@ -28,3 +28,6 @@ $RECYCLE.BIN/
 # Signing certificates must never enter Git.
 *.pfx
 *.p12
+
+# Local agent guidance (not distributed)
+AGENTS.md
