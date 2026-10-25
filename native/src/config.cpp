@@ -231,8 +231,7 @@ JsonObject ConfigStore::defaults() {
         "tencent_free":{},"microsoft_free":{},"iciba_free":{},
         "yandex_free":{},
         "deepl":{"key":"","free_plan":true},
-        "ai_profiles":[],
-        "ai_selected":""
+        "ai_profiles":[]
       },
       "lang":{"zh_target":"en","target":"zh-Hans"},
       "appearance":{
@@ -293,6 +292,28 @@ void ConfigStore::load() {
             translators.SetNamedValue(
                 L"provider", JsonValue::CreateStringValue(L"microsoft_free"));
             rewrite_migrated_values = true;
+        }
+        // The per-row enable switch replaced translator.ai_selected: an older
+        // file that picked one endpoint turns that row on, and the retired key
+        // is dropped so the two sources of truth cannot drift apart.
+        const winrt::hstring selected_key(L"ai_selected");
+        if (translators.HasKey(selected_key)) {
+            const std::wstring selected =
+                translators.GetNamedString(selected_key, L"").c_str();
+            translators.Remove(selected_key);
+            rewrite_migrated_values = true;
+            if (configured_provider == L"ai" && !selected.empty()) {
+                if (const auto profiles =
+                        translators.GetNamedArray(L"ai_profiles", nullptr)) {
+                    for (std::uint32_t index = 0; index < profiles.Size(); ++index) {
+                        const auto item = profiles.GetAt(index);
+                        if (!item || item.ValueType() != JsonValueType::Object) continue;
+                        const auto profile = item.GetObject();
+                        if (profile.GetNamedString(L"name", L"") != selected) continue;
+                        profile.SetNamedValue(L"enabled", JsonValue::CreateBooleanValue(true));
+                    }
+                }
+            }
         }
     }
     const auto appearance = root_.GetNamedObject(L"appearance");

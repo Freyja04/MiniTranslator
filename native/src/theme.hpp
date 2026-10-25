@@ -4,6 +4,7 @@
 
 #include <windows.h>
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -45,8 +46,7 @@ inline COLORREF color_text = RGB(231, 233, 236);
 inline COLORREF color_text_dim = RGB(148, 154, 164);
 inline COLORREF color_text_faint = RGB(110, 116, 126);
 inline COLORREF color_bad = RGB(255, 107, 107);
-inline COLORREF color_ok = RGB(78, 209, 139);
-inline COLORREF color_warn = RGB(232, 180, 74);
+inline COLORREF color_ok = RGB(78, 209, 139);inline COLORREF color_warn = RGB(232, 180, 74);
 inline COLORREF accent = RGB(40, 199, 111);
 inline COLORREF accent_foreground = RGB(14, 16, 19);
 
@@ -68,6 +68,11 @@ inline COLORREF tray_color_text_faint = RGB(112, 112, 112);
 [[nodiscard]] bool system_uses_dark_mode() noexcept;
 [[nodiscard]] std::wstring mode_name(Mode value);
 [[nodiscard]] Mode parse_mode(std::wstring_view value) noexcept;
+
+// Bumped whenever the shared palette actually changes. Windows cache fonts and
+// brushes created from these colours, so they only need rebuilding when this
+// number moves; an unrelated settings write must not repaint every control.
+[[nodiscard]] std::uint64_t visual_revision() noexcept;
 
 void initialize(const ConfigStore& config);
 void apply_mode(Mode value) noexcept;

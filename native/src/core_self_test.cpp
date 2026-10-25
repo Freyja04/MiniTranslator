@@ -4,6 +4,7 @@
 #include "http.hpp"
 #include "language.hpp"
 #include "settings_ocr.hpp"
+#include "settings_ai_list.hpp"
 #include "settings_profiles.hpp"
 #include "settings_provider.hpp"
 #include "settings_window_internal.hpp"
@@ -180,30 +181,73 @@ void check_provider_selection() {
     check(settings_provider::default_id() == L"microsoft_free",
           "the default provider changed");
 
-    const auto free = settings_provider::fields_for(L"microsoft_free");
-    check(free.provider_combo && !free.key && !free.profile_picker &&
-              !free.protocol && !free.endpoint && !free.model && !free.model_refresh,
-          "a key-free provider exposes paid-endpoint fields");
-    const auto deepl = settings_provider::fields_for(L"deepl");
-    check(deepl.provider_combo && deepl.key && !deepl.model,
-          "DeepL lost its key field or gained model fields");
-    const auto ai = settings_provider::fields_for(L"ai");
-    check(!ai.provider_combo && ai.profile_picker && ai.protocol && ai.key &&
-              ai.endpoint && ai.model && ai.model_refresh,
-          "the large-model entry is missing part of its form");
+    // The page branch: only the large-model entry swaps the form for the
+    // endpoint list, and only a paid traditional provider shows a key field.
+    check(settings_provider::uses_endpoint_list(L"ai"),
+          "the large-model entry no longer opens the endpoint list");
+    check(!settings_provider::uses_endpoint_list(L"deepl") &&
+              !settings_provider::uses_endpoint_list(L"microsoft_free"),
+          "a traditional provider leaked into the endpoint list branch");
+    check(settings_provider::needs_key(L"deepl"),
+          "DeepL lost its key field");
+    check(!settings_provider::needs_key(L"microsoft_free"),
+          "a key-free provider asks for a key");
+    check(!settings_provider::needs_key(L"ai") &&
+              !settings_provider::needs_key(L"gone"),
+          "an unknown or large-model provider resolved to a key field");
 }
 
 void check_profile_state() {
     using settings_profiles::Profile;
-    const std::vector<Profile> list{{L"A", L"openai_chat"}, {L"接口 2", L"openai_chat"}};
+    const std::vector<Profile> list{
+        {L"A", L"openai_chat", L"https://a.test/v1", L"k", L"m", true},
+        {L"接口 2", L"openai_chat", L"https://b.test/v1", L"", L"n", false},
+    };
 
-    // The combo must never end up without a row while the list is non-empty.
-    check(settings_profiles::resolve_selection(list, L"接口 2") == L"接口 2",
-          "profile selection lost an existing name");
-    check(settings_profiles::resolve_selection(list, L"gone") == L"A",
-          "profile selection does not fall back to the first row");
-    check(settings_profiles::resolve_selection({}, L"A").empty(),
-          "empty profile list produced a selection");
+    // The name is the row's identity, so the page finds rows by name only.
+    check(settings_profiles::find_index(list, L"接口 2") == std::optional<std::size_t>(1),
+          "profile lookup by name missed a row");
+    check(!settings_profiles::find_index(list, L"gone").has_value(),
+          "profile lookup found a name that is not in the list");
+    check(!settings_profiles::find_index(list, L"").has_value(),
+          "an empty name resolved to a profile row");
+
+    // A row is usable once it has an address and a model; the key stays
+    // optional because self-hosted gateways allow anonymous calls.
+    check(settings_profiles::is_configured(list[0]) &&
+              settings_profiles::is_configured(list[1]),
+          "a complete endpoint did not count as configured");
+    check(!settings_profiles::is_configured({L"C", L"openai_chat", L"", L"k", L"m", false}) &&
+              !settings_profiles::is_configured(
+                  {L"C", L"openai_chat", L"https://c.test/v1", L"", L"", false}),
+          "an incomplete endpoint counted as configured");
+
+    // One request channel honours one endpoint, so enabling a row must switch
+    // the others off and normalising must keep only the first usable one.
+    auto enabled = list;
+    settings_profiles::select_enabled(enabled, 1);
+    check(!enabled[0].enabled && enabled[1].enabled,
+          "enabling an endpoint left another one enabled");
+    settings_profiles::select_enabled(enabled, 0);
+    check(enabled[0].enabled && !enabled[1].enabled,
+          "the enable switch is not repeatable");
+    auto both = list;
+    both[1].enabled = true;
+    settings_profiles::normalize_enabled(both);
+    check(both[0].enabled && !both[1].enabled,
+          "normalising kept more than the first enabled endpoint");
+    auto incomplete = list;
+    incomplete[0].enabled = true;
+    incomplete[0].model.clear();
+    incomplete[1].enabled = true;
+    settings_profiles::normalize_enabled(incomplete);
+    check(!incomplete[0].enabled && incomplete[1].enabled,
+          "normalising kept an endpoint that cannot serve requests");
+    auto none = list;
+    none[0].enabled = false;
+    settings_profiles::normalize_enabled(none);
+    check(!none[0].enabled && !none[1].enabled,
+          "normalising promoted an endpoint the user never enabled");
 
     check(settings_profiles::next_default_name({}) == L"接口 1",
           "first default profile name changed");
@@ -211,18 +255,6 @@ void check_profile_state() {
           "default profile name does not count existing rows");
     check(settings_profiles::next_default_name({{L"接口 3"}}) == L"接口 2",
           "default profile name skipped a free row");
-
-    // Removing must keep the row that slid into the erased position selected.
-    auto after_first = list;
-    after_first.erase(after_first.begin());
-    check(settings_profiles::name_after_removal(after_first, 0) == L"接口 2",
-          "profile removal selected the wrong neighbour");
-    auto after_last = list;
-    after_last.erase(after_last.begin() + 1);
-    check(settings_profiles::name_after_removal(after_last, 1) == L"A",
-          "removing the last profile did not fall back to the previous row");
-    check(settings_profiles::name_after_removal({}, 0).empty(),
-          "profile removal on an empty list produced a name");
 
     check(settings_profiles::unique_rename(list, 0, L"B") == L"B",
           "a free profile name was changed");
@@ -234,12 +266,32 @@ void check_profile_state() {
     check(settings_profiles::unique_rename(list, 0, L"").empty(),
           "an empty profile rename produced a name");
 
-    check(settings_profiles::clamp_index(-1, 2) == 0,
-          "empty combo index no longer clamps to the first row");
-    check(settings_profiles::clamp_index(9, 2) == 1,
-          "stale combo index no longer clamps to the last row");
-    check(settings_profiles::clamp_index(0, 0) == 0,
-          "clamping against an empty list changed");
+    // The stored array and the wire options are the same shape, so a round trip
+    // keeps every field the pipeline reads, including the enable flag.
+    const auto stored = settings_profiles::serialize_profiles(list);
+    const auto parsed = settings_profiles::parse_profiles(stored);
+    check(parsed.size() == list.size() && parsed[0].name == L"A" &&
+              parsed[0].protocol == L"openai_chat" &&
+              parsed[0].base_url == L"https://a.test/v1" && parsed[0].key == L"k" &&
+              parsed[0].model == L"m" && parsed[0].enabled &&
+              parsed[1].name == L"接口 2" && !parsed[1].enabled,
+          "endpoint list round trip changed a field");
+    check(settings_profiles::parse_profiles(
+              winrt::Windows::Data::Json::JsonArray{}).empty() &&
+              settings_profiles::serialize_profiles({}).Size() == 0,
+          "endpoint list round trip does not handle an empty list");
+    // An unnamed row cannot be addressed, and a row without a protocol still
+    // needs the default wire format.
+    const auto tidy = settings_profiles::parse_profiles(
+        winrt::Windows::Data::Json::JsonArray::Parse(
+            L"[{\"name\":\"  \"},{\"name\":\"丙\","
+            L"\"base_url\":\"https://c.test/v1\",\"model\":\"m\",\"enabled\":true}]"));
+    check(tidy.size() == 1 && tidy[0].protocol == L"openai_chat" && tidy[0].enabled,
+          "endpoint list parsing did not drop an unnamed row or default a protocol");
+    const auto options = settings_profiles::to_options(list[0]);
+    check(options.HasKey(L"enabled") && options.HasKey(L"base_url") &&
+              options.HasKey(L"key"),
+          "endpoint options lost a field the pipeline reads");
 }
 
 void check_ocr_options() {
@@ -355,6 +407,9 @@ void core_self_test() {
     check_settings_tables();
     check_provider_selection();
     check_profile_state();
+    // Row geometry is shared by painting and hit testing, so it is checked here
+    // where no window exists.
+    settings_ai_list::self_test();
     check_ocr_options();
     check_http_retry();
     check_hotkeys();

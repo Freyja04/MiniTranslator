@@ -6,8 +6,122 @@ namespace minitrans {
 
 using namespace settings_internal;
 
+
+void SettingsWindow::draw_ai_row(HDC dc, const RECT& item,
+                                 const settings_ai_list::Row& row, bool hovered,
+                                 settings_ai_list::Button hover_button,
+                                 bool confirming, bool last) {
+    // The row sits on the page card, so it erases with the card colour and
+    // keeps the hairline separators the other pages use.
+    FillRect(dc, &item, card_background_);
+    const int padding = px(settings_ai_list::logical_row_padding(), dpi_);
+    if (!last) {
+        // The separator spans the full row width, the same line the layout
+        // draws between the page's other rows - padded variants read as
+        // different lengths next to it.
+        HPEN pen = CreatePen(PS_SOLID, 1, color_line);
+        const auto previous = SelectObject(dc, pen);
+        const int y = item.bottom - 1;
+        MoveToEx(dc, item.left, y, nullptr);
+        LineTo(dc, item.right, y);
+        SelectObject(dc, previous);
+        DeleteObject(pen);
+    }
+    // The buttons and the narrow flag come from the row rectangle itself, which
+    // is the same rectangle the click was hit-tested against; the row kind
+    // decides whether the row carries only the toggle, toggle plus 编辑, or
+    // the full endpoint set.
+    bool narrow = false;
+    const auto actions = settings_ai_list::buttons(item, dpi_, &row, &narrow);
+    static_cast<void>(narrow);
+    // The row content keeps the card's inner padding; the name starts at the
+    // same edge as every other control on the page.
+    // The name starts exactly at the separator's left end, so the text and
+    // the line under it share one alignment edge.
+    const int text_left = item.left;
+    const int name_right = actions.empty()
+        ? item.right - padding
+        : std::max(text_left, static_cast<int>(actions.front().second.left) -
+                                  px(logical_provider_gap, dpi_));
+    draw_text(dc, row.name,
+              RECT{text_left, item.top, std::max(text_left, name_right), item.bottom},
+              font_,
+              // A row that is not ready yet reads as a caption, and the row
+              // under the cursor always brightens so the pointer is traceable.
+              !row.configured && !hovered ? color_text_dim
+                            : hovered && hover_button == settings_ai_list::Button::none
+                                  ? color_text
+                                  : row.configured ? color_text : color_text_dim,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    for (const auto& [button, bounds] : actions) {
+        // An endpoint without an address or model cannot be switched on, so the
+        // enable control reads as off and inert instead of failing on click.
+        const bool usable = button != settings_ai_list::Button::enable ||
+                            row.configured;
+        const bool active = usable && hovered && hover_button == button;
+        if (button == settings_ai_list::Button::enable) {
+            // The toggle is drawn like the Windows settings switch: a pill
+            // whose knob slides to the themed edge, filling with the text
+            // colour when on. Everything runs through the antialiased rounded
+            // painter - including the knob, a square with a full-radius
+            // corner - so the circle never picks up GDI jaggies.
+            FillRect(dc, &bounds, card_background_);
+            const int pill_height = px(14, dpi_);
+            const int pill_w = px(26, dpi_);
+            const int pill_top =
+                bounds.top + (bounds.bottom - bounds.top - pill_height) / 2;
+            const int pill_left = bounds.left +
+                (bounds.right - bounds.left - pill_w) / 2;
+            RECT pill{pill_left, pill_top, pill_left + pill_w,
+                      pill_top + pill_height};
+            const COLORREF on = theme::color_text;
+            // The off pill keeps enough contrast against the card that both
+            // states read at the same size; a darker fill made the off
+            // switch look like a lone floating knob.
+            const COLORREF off = usable ? (active ? color_line_high : color_line_high)
+                                        : color_line;
+            fill_round_rect(dc, pill, pill_height / 2,
+                            row.enabled ? on : off,
+                            row.enabled ? on : off);
+            const int knob = pill_height - px(4, dpi_);
+            const int inset = px(2, dpi_);
+            RECT knob_rect{row.enabled ? pill.right - knob - inset
+                                       : pill.left + inset,
+                           pill.top + inset,
+                           row.enabled ? pill.right - inset
+                                       : pill.left + inset + knob,
+                           pill.bottom - inset};
+            fill_round_rect(dc, knob_rect, knob / 2,
+                            row.enabled ? theme::color_page
+                                        : usable ? color_page : color_text_faint,
+                            row.enabled ? theme::color_page : color_page);
+            continue;
+        }
+        // 编辑 and 删除 are bare glyphs: hover brightens the icon itself, no
+        // chip background around it.
+        const COLORREF text = button == settings_ai_list::Button::remove
+                                  ? (confirming ? color_bad
+                                   : active ? color_text : color_text_dim)
+                                  : active ? color_text : color_text_dim;
+        const HFONT glyph_font = action_icon_font_ ? action_icon_font_ : icon_font_;
+        if (glyph_font) {
+            const wchar_t glyph = button == settings_ai_list::Button::edit
+                ? static_cast<wchar_t>(0xE70F)
+                : confirming ? static_cast<wchar_t>(0xE74A)
+                             : ui_icons::delete_glyph;
+            draw_text(dc, std::wstring_view(&glyph, 1), bounds, glyph_font, text,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        } else {
+            const wchar_t* caption = button == settings_ai_list::Button::edit
+                ? L"编" : confirming ? L"确" : L"删";
+            draw_text(dc, caption, bounds, small_font_, text,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+}
+
 void SettingsWindow::paint() {
-    const COLORREF accent = theme::accent;
     PAINTSTRUCT state{};
     HDC target = BeginPaint(window_, &state);
     if (!target) {
@@ -60,13 +174,16 @@ void SettingsWindow::paint() {
         fill_round_rect(dc, RECT{card_left, px(top, dpi_), card_right, px(bottom, dpi_)},
                         px(7, dpi_), color_card, color_line);
     };
-    const auto separator = [&](int logical_y) {
+    const auto separator_line = [&](int left, int right, int y) {
         HPEN pen = CreatePen(PS_SOLID, 1, color_line);
         const auto previous = SelectObject(dc, pen);
-        MoveToEx(dc, inner_left, px(logical_y, dpi_), nullptr);
-        LineTo(dc, inner_right, px(logical_y, dpi_));
+        MoveToEx(dc, left, y, nullptr);
+        LineTo(dc, right, y);
         SelectObject(dc, previous);
         DeleteObject(pen);
+    };
+    const auto separator = [&](int logical_y) {
+        separator_line(inner_left, inner_right, px(logical_y, dpi_));
     };
     const auto group = [&](int top, int rows) {
         const int bottom = top + rows * logical_setting_row_height;
@@ -107,23 +224,17 @@ void SettingsWindow::paint() {
                                 logical_card_padding;
         card(logical_content_top, main_bottom);
     } else if (current_page_ == 1) {
-        const bool large_model = selected_index(translator_class_) == 1;
-        const auto chosen = std::find_if(
-            providers.begin(), providers.end(),
-            [&](const ProviderInfo& value) { return value.id == loaded_provider_; });
-        const bool has_key = large_model ||
-            (chosen != providers.end() && chosen->kind != ProviderInfo::Kind::free);
-        // Mirror the row arithmetic in layout_controls so the card's top and
-        // bottom breathing room stay identical.
-        int last_top = logical_content_top + logical_card_padding;
-        last_top += logical_setting_row_height;  // class
-        last_top += logical_setting_row_height;  // provider/profile
-        if (large_model) last_top += logical_setting_row_height;
-        if (has_key) last_top += logical_setting_row_height;
-        if (large_model) last_top += logical_setting_row_height * 2;
-        const int hint_top = last_top + logical_control_height + logical_hint_gap;
-        const int main_bottom = hint_top + 34 + logical_card_padding;
-        card(logical_content_top, main_bottom);
+        // The layout pass measured this page against the controls it placed, so
+        // the card and its separators are painted from that geometry instead of
+        // repeating the row arithmetic here.
+        const auto& geometry = translation_;
+        fill_round_rect(dc,
+                        RECT{card_left, geometry.card_top, card_right,
+                             geometry.card_bottom},
+                        px(7, dpi_), color_card, color_line);
+        for (int index = 0; index < geometry.separator_count; ++index) {
+            separator_line(inner_left, inner_right, geometry.separators[index]);
+        }
     } else if (current_page_ == 2) {
         card(logical_content_top, logical_ocr_main_bottom);
         section(L"安装其他语言", logical_ocr_language_section_top);
@@ -208,7 +319,6 @@ void SettingsWindow::paint() {
                   DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
-    const HWND focused = GetFocus();
     for (const auto control : page_controls_[static_cast<std::size_t>(current_page_)]) {
         if (!control || !IsWindowVisible(control)) continue;
         wchar_t type[24]{};
@@ -228,7 +338,7 @@ void SettingsWindow::paint() {
         frame.top -= inset_top;
         frame.bottom += inset_bottom;
         fill_round_rect(dc, frame, px(logical_edit_corner_radius, dpi_), color_input,
-                        focused == control ? accent : color_line);
+                        color_line);
     }
 
     BitBlt(target, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
@@ -247,13 +357,29 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
     const bool focused = (item.itemState & ODS_FOCUS) != 0;
     const COLORREF accent = theme::accent;
 
+    if (item.CtlType == ODT_LISTBOX && item.hwndItem == ai_list_) {
+        // The rows live in the list box so a long list scrolls with the
+        // separators and buttons attached to the right row. Both branches
+        // share the control; shown_rows() carries whichever is on screen.
+        const auto& rows = shown_rows();
+        const auto index = static_cast<std::size_t>(item.itemID);
+        const bool last = index + 1 >= rows.size();
+        const bool confirming = large_model() && index < rows.size() &&
+                                rows[index].name == pending_delete_;
+        draw_ai_row(dc, rect, index < rows.size() ? rows[index]
+                                                  : settings_ai_list::Row{},
+                    static_cast<int>(item.itemID) == ai_list_hover_,
+                    ai_hover_button_, confirming, last);
+        return TRUE;
+    }
+
     if (item.CtlType == ODT_BUTTON && item.CtlID == id_text_swap) {
         // The language row floats on the page background, so the swap glyph has
         // to erase with the page colour rather than the card surface.
         FillRect(dc, &rect, background_);
         if (icon_font_) {
             draw_text(dc, std::wstring_view(L"\uE8AB", 1), rect, icon_font_,
-                      pressed ? accent : color_text_dim,
+                      hot ? color_text : color_text_dim,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         return TRUE;
@@ -267,9 +393,9 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
                                      : hot ? theme::color_line_high : color_card;
         ui_controls::draw_icon_button(
             dc, rect, ui_icons::capture_translation, icon_font_, dpi_,
-            capture_fill, focused || hot ? accent : color_line,
+            capture_fill, hot ? accent : color_line,
             disabled ? color_text_faint
-                     : hot || focused ? color_text : color_text_dim,
+                     : hot ? color_text : color_text_dim,
             &settings_internal::fill_round_rect);
         return TRUE;
     }
@@ -293,7 +419,9 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
             style.background = color_input;
             style.text = color_text;
             style.disabled_text = color_text_faint;
-            style.accent = accent;
+            // The selected drop-down row reads through a neutral tint instead
+            // of the accent, which is reserved for persistent state.
+            style.accent = color_line_high;
             style.font = font_;
             style.dpi = dpi_;
             style.selected = (item.itemState & ODS_SELECTED) != 0;
@@ -305,7 +433,7 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
             style.background = color_input;
             style.fill = color_input;
             style.border = color_line;
-            style.focus_border = accent;
+            style.focus_border = color_line;
             style.text = color_text;
             style.disabled_text = color_text_faint;
             style.chevron = color_text_dim;
@@ -340,6 +468,76 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
         return TRUE;
     }
 
+    if (item.hwndItem == ai_add_) {
+        // 添加 reads as a circle with a plus, the quieter sibling of the
+        // other icon buttons on this page.
+        FillRect(dc, &rect, card_background_);
+        const int diameter =
+            std::min({static_cast<int>(rect.right - rect.left),
+                      static_cast<int>(rect.bottom - rect.top), px(22, dpi_)});
+        // The circle sits at the rect's right edge - the row toggles below
+        // close at the same column, so the two read as one right-aligned
+        // column of controls.
+        const int left = rect.right - diameter - px(4, dpi_);
+        const int top = rect.top + (rect.bottom - rect.top - diameter) / 2;
+        RECT circle{left, top, left + diameter, top + diameter};
+        const COLORREF stroke = disabled ? color_line
+                                : (pressed || hot) ? color_text : color_text_dim;
+        // The ring runs through the antialiased rounded painter (a full-radius
+        // rounded square is the circle), filled with the card colour so only
+        // the outline reads.
+        fill_round_rect(dc, circle, diameter / 2, theme::color_card, stroke);
+        const HFONT glyph_font = action_icon_font_ ? action_icon_font_ : icon_font_;
+        if (glyph_font) {
+            const int inset = diameter / 5;
+            RECT glyph_rect{circle.left + inset, circle.top + inset,
+                            circle.right - inset, circle.bottom - inset};
+            draw_text(dc, std::wstring_view(&ui_icons::add_glyph, 1), glyph_rect,
+                      glyph_font,
+                      disabled ? color_text_faint : color_text_dim,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        } else {
+            draw_text(dc, L"+", rect, small_font_,
+                      disabled ? color_text_faint : color_text_dim,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        return TRUE;
+    }
+
+    if (item.hwndItem == class_traditional_ || item.hwndItem == class_ai_ ||
+        item.hwndItem == theme_mode_ || item.hwndItem == theme_segment_[0] ||
+        item.hwndItem == theme_segment_[1]) {
+        // One segmented row: the active chip reads as a raised field and the
+        // inactive ones as plain captions, which is the look of the protocol
+        // row inside the endpoint dialog. The two class halves keep the old
+        // accent fill because that pair is the page's primary switch; the
+        // theme chips follow the quieter segmented style.
+        const bool theme_chip = item.hwndItem == theme_mode_ ||
+                                item.hwndItem == theme_segment_[0] ||
+                                item.hwndItem == theme_segment_[1];
+        const bool active = theme_chip
+            ? static_cast<int>(item.hwndItem == theme_mode_ ? 0
+                               : item.hwndItem == theme_segment_[0] ? 1 : 2) ==
+              theme_selection()
+            : large_model() ? item.hwndItem == class_ai_
+                            : item.hwndItem == class_traditional_;
+        if (theme_chip) {
+            draw_segment_option(dc, rect, text_of(item.hwndItem), font_, dpi_,
+                                active, hot != FALSE, focused != FALSE,
+                                card_background_);
+            return TRUE;
+        }
+        FillRect(dc, &rect, card_background_);
+        const COLORREF fill = active ? color_nav_active : color_input;
+        fill_round_rect(dc, rect, px(logical_class_corner_radius, dpi_), fill,
+                        color_line);
+        draw_text(dc, text_of(item.hwndItem), rect, font_,
+                  disabled ? color_text_faint
+                           : active ? theme::color_text : color_text_dim,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        return TRUE;
+    }
+
     if (is_checkbox(item.hwndItem)) {
         // Most option rows sit on a card surface; the auto-copy option sits on
         // the page background instead.
@@ -348,8 +546,10 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
             item.hwndItem == auto_copy_ ? theme::color_page : theme::color_card;
         style.fill = color_input;
         style.border = color_line;
-        style.checked_fill = accent;
-        style.check = theme::accent_foreground;
+        // The check mark keeps a neutral fill so nothing in the window turns
+        // green on interaction; the caption still says what is on.
+        style.checked_fill = theme::color_line_high;
+        style.check = theme::color_text;
         style.text = color_text;
         style.disabled_text = color_text_faint;
         style.font = font_;
@@ -379,7 +579,7 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
                           : pressed ? theme::color_hover
                           : hot ? theme::color_line_high : color_input;
     FillRect(dc, &rect, card_background_);
-    fill_round_rect(dc, rect, px(7, dpi_), fill, focused ? accent : color_line);
+    fill_round_rect(dc, rect, px(7, dpi_), fill, color_line);
     draw_text(dc, text_of(item.hwndItem), rect, font_,
               disabled ? color_text_faint : color_text_dim,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);

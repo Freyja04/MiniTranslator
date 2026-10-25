@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,8 +45,11 @@ constexpr int id_nav_last = id_nav_first + 4;
 constexpr int id_provider = 7010;
 constexpr int id_test = 7013;
 constexpr int id_restart = 7015;
-constexpr int id_theme_mode = 7016;
-constexpr int id_refresh_models = 7017;
+// The segmented 主题 row: three consecutive ids after the page's other
+// controls, clear of the 7018+ text-translation range below.
+constexpr int id_theme_mode = 7140;
+constexpr int id_theme_light = 7141;
+constexpr int id_theme_dark = 7142;
 constexpr int id_text_target = 7018;
 constexpr int id_text_input = 7019;
 constexpr int id_text_output = 7020;
@@ -53,20 +57,22 @@ constexpr int id_text_clear = 7022;
 constexpr int id_text_copy = 7023;
 constexpr int id_text_source = 7024;
 constexpr int id_text_swap = 7025;
-constexpr int id_translator_class = 7024;
-constexpr int id_ai_protocol = 7026;
-constexpr int id_profile_add = 7027;
-constexpr int id_profile_remove = 7028;
+constexpr int id_class_traditional = 7026;
+constexpr int id_class_ai = 7027;
 constexpr int id_check_updates = 7029;
 constexpr int id_text_capture = 7030;
+constexpr int id_ai_list = 7031;
+constexpr int id_ai_add = 7032;
 constexpr UINT_PTR combo_subclass_id = 1;
 constexpr UINT_PTR hotkey_subclass_id = 2;
 constexpr UINT_PTR edit_subclass_id = 3;
 constexpr UINT_PTR combo_edit_subclass_id = 4;
+constexpr UINT_PTR list_subclass_id = 5;
 
 using theme::color_bad;
 using theme::color_card;
 using theme::color_input;
+using theme::color_hover;
 using theme::color_line;
 using theme::color_line_high;
 using theme::color_nav_active;
@@ -103,6 +109,17 @@ constexpr int logical_edit_inset_bottom = 4;
 constexpr int logical_edit_corner_radius = 8;
 constexpr int logical_field_text_offset_y = 0;
 constexpr int logical_combo_edit_offset_y = 4;
+
+// The 类别 switch is two owner-drawn buttons that read as one segmented
+// control, so both halves share the field column and only the active half is
+// filled. The endpoint list is a card capped at a few rows so the page never
+// pushes the hint under the footer. The row height and the row inset come from
+// settings_ai_list, which paints and hit tests with them, so they cannot drift
+// apart here.
+constexpr int logical_class_corner_radius = 8;
+constexpr int logical_ai_list_max_rows = 5;
+constexpr int logical_ai_add_width = 64;
+constexpr int logical_provider_gap = 8;
 
 constexpr int logical_ocr_engine_top =
     logical_content_top + logical_card_padding;
@@ -200,26 +217,22 @@ constexpr std::size_t toggle_edit = 5;
 }  // namespace hotkey_index
 
 namespace translation_index {
+// Page 1 control order, which is exactly the order create_translation_page
+// appends to page_controls_[1].
 constexpr std::size_t class_label = 0;
-constexpr std::size_t class_combo = 1;
-constexpr std::size_t provider_label = 2;
-constexpr std::size_t provider_combo = 3;
-constexpr std::size_t profile_label = 4;
-constexpr std::size_t profile_combo = 5;
-constexpr std::size_t profile_add = 6;
-constexpr std::size_t profile_remove = 7;
-constexpr std::size_t protocol_label = 8;
-constexpr std::size_t protocol_combo = 9;
-constexpr std::size_t key_label = 10;
-constexpr std::size_t key_edit = 11;
-constexpr std::size_t endpoint_label = 12;
-constexpr std::size_t endpoint_edit = 13;
-constexpr std::size_t model_label = 14;
-constexpr std::size_t model_combo = 15;
-constexpr std::size_t refresh_button = 16;
-constexpr std::size_t test_button = 17;
-constexpr std::size_t test_status = 18;
-constexpr std::size_t provider_hint = 19;
+constexpr std::size_t class_traditional = 1;
+constexpr std::size_t class_ai = 2;
+constexpr std::size_t provider_label = 3;
+constexpr std::size_t provider_combo = 4;
+constexpr std::size_t ai_caption = 5;
+constexpr std::size_t ai_list = 6;
+constexpr std::size_t key_label = 7;
+constexpr std::size_t key_edit = 8;
+constexpr std::size_t test_button = 9;
+constexpr std::size_t test_status = 10;
+constexpr std::size_t ai_add = 11;
+constexpr std::size_t provider_hint = 12;
+constexpr std::size_t control_count = 13;
 }  // namespace translation_index
 
 namespace ocr_index {
@@ -303,6 +316,17 @@ void align_combo_edit(HWND combo, int dpi) noexcept;
 void set_rounded_control_region(HWND control, int radius) noexcept;
 void fill_round_rect(HDC dc, const RECT& rect, int radius,
                      COLORREF fill, COLORREF border);
+// One chip of a segmented option row: the active segment reads as a raised
+// field, the rest as plain captions, so the row reads like image-2 style
+// segmented controls rather than a drop-down.
+void draw_segment_option(HDC dc, const RECT& bounds, std::wstring_view caption,
+                         HFONT font, int dpi, bool active, bool hot, bool focused,
+                         HBRUSH surface);
+// Natural chip widths for one segmented row: caption width plus the shared
+// horizontal padding, in device pixels, in caption order.
+[[nodiscard]] std::vector<int> segment_widths(HDC dc, HFONT font,
+                                              std::span<const std::wstring_view> captions,
+                                              int dpi);
 void draw_settings_nav_icon(HDC dc, int page, const RECT& bounds,
                             COLORREF color, HFONT icon_font);
 HFONT create_icon_font(int dpi, int logical_pixels = 17);

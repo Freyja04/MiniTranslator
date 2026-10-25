@@ -51,6 +51,9 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
       settings_(instance, config_),
       overlay_(instance), result_(instance) {
     theme::initialize(config_);
+    // The windows created below build their fonts and brushes from the palette
+    // that was just applied, so there is nothing to refresh until it moves.
+    applied_visual_revision_ = theme::visual_revision();
     create_message_window();
     pipeline_ = std::make_unique<PipelineController>(window_);
     text_session_ = std::make_unique<TextTranslationSession>(config_, *pipeline_);
@@ -267,16 +270,27 @@ void AppHost::refresh_tray_tooltip() {
 }
 
 void AppHost::refresh_theme_windows() {
-    settings_.refresh_appearance();
-    if (quick_window_) quick_window_->refresh_appearance();
-    if (result_.handle()) {
-        result_.refresh_appearance(result_appearance());
-        PostMessageW(result_.handle(), theme::changed_message, 0, 0);
+    // Every settings write ends up here, but a cached font, brush or DWM frame
+    // is only stale once the palette or the system UI font actually changed.
+    // Rebuilding on every save made the large-model rows flicker while their
+    // buttons were being clicked.
+    const std::uint64_t revision = theme::visual_revision();
+    const bool appearance_changed = revision != applied_visual_revision_;
+    applied_visual_revision_ = revision;
+    if (appearance_changed) {
+        settings_.refresh_appearance();
+        if (quick_window_) quick_window_->refresh_appearance();
+        if (result_.handle()) {
+            result_.refresh_appearance(result_appearance());
+            PostMessageW(result_.handle(), theme::changed_message, 0, 0);
+        }
+        BlockEditor::refresh_active_theme();
+        refresh_tray_icon();
     }
-    BlockEditor::refresh_active_theme();
-    refresh_tray_icon();
     refresh_tray_tooltip();
-    if (window_) RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE);
+    if (appearance_changed && window_) {
+        RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE);
+    }
 }
 
 void AppHost::notify(std::wstring_view title, std::wstring_view message) {

@@ -258,16 +258,13 @@ int measure_label_width(HWND window, HFONT font, std::wstring_view text) {
 
 std::wstring target_selector_text(const TextTranslationSession& session,
                                   bool compact = false) {
-    if (!session.target().empty()) return target_display_name(session.target());
-    if (session.input().find_first_not_of(L" \t\r\n") == std::wstring::npos) {
-        return L"自动选择";
-    }
+    // The target is always a concrete language now; the auto picker is gone.
     auto target = target_display_name(session.effective_target());
     if (compact) {
         if (session.effective_target() == L"zh-Hans") target = L"中文";
         else if (session.effective_target() == L"zh-Hant") target = L"繁中";
     }
-    return L"自动 · " + target;
+    return target;
 }
 
 std::wstring source_selector_text(const TextTranslationSession& session) {
@@ -456,7 +453,7 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
         style.background = color_input;
         style.text = color_text;
         style.disabled_text = color_faint;
-        style.accent = accent;
+        style.accent = theme::color_line_high;
         style.font = font;
         style.dpi = dpi;
         style.selected = list_item && (item.itemState & ODS_SELECTED) != 0;
@@ -545,7 +542,9 @@ void QuickTranslateWindow::create_window(HWND owner) {
 
 void QuickTranslateWindow::create_theme_resources() {
     destroy_theme_resources();
-    accent_ = theme::accent;
+    // The quick window keeps no green: focus and hover borders read through
+    // the same neutral hairline as the rest of the chrome.
+    accent_ = theme::color_line_high;
     font_ = create_font(dpi_, font_size_translation, FW_NORMAL,
                         theme::font_family);
     small_font_ = create_font(dpi_, font_size_small, FW_NORMAL,
@@ -643,7 +642,7 @@ void QuickTranslateWindow::create_controls() {
     SetWindowSubclass(output_, &keep_editor_unfocused, output_editor_subclass_id,
                       reinterpret_cast<DWORD_PTR>(input_));
     populate_targets(source_combo_, false);
-    populate_targets(target_combo_, true);
+    populate_targets(target_combo_, false);
     SetWindowSubclass(source_combo_, &QuickTranslateWindow::target_combo_proc,
                       source_combo_subclass_id,
                       reinterpret_cast<DWORD_PTR>(this));
@@ -802,7 +801,7 @@ void QuickTranslateWindow::sync_source() {
 }
 
 void QuickTranslateWindow::sync_target() {
-    const int expected = target_index(session_.target(), true);
+    const int expected = target_index(session_.target(), false);
     if (SendMessageW(target_combo_, CB_GETCURSEL, 0, 0) == expected) return;
     syncing_ = true;
     SendMessageW(target_combo_, CB_SETCURSEL, expected, 0);
@@ -887,19 +886,19 @@ void QuickTranslateWindow::on_source_changed() {
 
 void QuickTranslateWindow::on_target_changed() {
     if (syncing_) return;
-    const std::wstring target = target_at(target_combo_, true);
+    const std::wstring target = target_at(target_combo_, false);
     if (callbacks_.target_changed) callbacks_.target_changed(target);
 }
 
 void QuickTranslateWindow::swap_languages() {
     const std::wstring source = target_at(source_combo_, false);
-    const std::wstring target = target_at(target_combo_, true);
+    const std::wstring target = target_at(target_combo_, false);
     if (source.empty() || target.empty() || source == target) return;
     session_.set_source(target);
     session_.set_target(source);
     syncing_ = true;
     SendMessageW(source_combo_, CB_SETCURSEL, target_index(target, false), 0);
-    SendMessageW(target_combo_, CB_SETCURSEL, target_index(source, true), 0);
+    SendMessageW(target_combo_, CB_SETCURSEL, target_index(source, false), 0);
     syncing_ = false;
     if (callbacks_.source_changed) callbacks_.source_changed(session_.source());
     if (callbacks_.target_changed) callbacks_.target_changed(session_.target());
@@ -958,7 +957,7 @@ void QuickTranslateWindow::self_test(HWND owner) {
     if (!input_ || !output_ || !target_combo_ || !source_combo_ || !swap_button_ ||
         !copy_button_ || !clear_button_ || !capture_button_ || !home_button_ ||
         SendMessageW(source_combo_, CB_GETCOUNT, 0, 0) != 9 ||
-        SendMessageW(target_combo_, CB_GETCOUNT, 0, 0) != 10) {
+        SendMessageW(target_combo_, CB_GETCOUNT, 0, 0) != 9) {
         throw AppError("quick translation window self-test controls are incomplete");
     }
     const LONG_PTR ex_style = GetWindowLongPtrW(window_, GWL_EXSTYLE);

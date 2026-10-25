@@ -3,6 +3,7 @@
 
 #include "hotkey.hpp"
 #include "language.hpp"
+#include "settings_provider.hpp"
 #include "resource.h"
 #include "theme.hpp"
 #include "translator.hpp"
@@ -36,7 +37,14 @@ SettingsWindow::SettingsWindow(HINSTANCE instance, ConfigStore& config)
     : instance_(instance), config_(config) {}
 
 SettingsWindow::~SettingsWindow() {
-    cancel_model_refresh();
+    // A debounced endpoint save may still be pending when the window is torn
+    // down without close(). The list already lives in the in-memory config, so
+    // only the disk write is owed here; reading the controls would touch
+    // handles that are gone.
+    if (profiles_save_pending_) {
+        profiles_save_pending_ = false;
+        config_.save();
+    }
     if (test_thread_.joinable()) {
         test_thread_.request_stop();
         test_thread_.join();
@@ -72,7 +80,6 @@ void SettingsWindow::show(HWND owner) {
     }
     finished_ = false;
     test_pending_ = false;
-    model_refreshing_ = false;
     create_window(owner);
     const HWND window = window_;
     if (!window) throw AppError("settings window creation returned no window");
@@ -554,6 +561,181 @@ LRESULT CALLBACK SettingsWindow::hotkey_proc(HWND control, UINT message,
     return DefSubclassProc(control, message, wparam, lparam);
 }
 
+LRESULT CALLBACK SettingsWindow::list_proc(HWND control, UINT message,
+                                           WPARAM wparam, LPARAM lparam,
+                                           UINT_PTR subclass_id,
+                                           DWORD_PTR reference) {
+    auto* self = reinterpret_cast<SettingsWindow*>(reference);
+    switch (message) {
+    case WM_GETDLGCODE:
+        // The rows are buttons, not a dialog selection, so IsDialogMessage
+        // must not treat the list as an editable control and hammer it with
+        // focus/dialog traffic: a focused owner-drawn LBS_NOSEL row enters a
+        // focus-repaint loop that flickers for as long as the window is open.
+        return DLGC_WANTARROWS;
+    case WM_SETCURSOR:
+        // The row buttons paint their own hover, so the cursor has to be set
+        // here and the default handler skipped; a returned TRUE keeps the class
+        // cursor from overwriting the hand pointer on the next mouse move.
+        if (self && LOWORD(lparam) == HTCLIENT) {
+            POINT cursor{};
+            GetCursorPos(&cursor);
+            ScreenToClient(control, &cursor);
+            self->update_ai_hover(control, cursor);
+            return TRUE;
+        }
+        break;
+    case WM_MOUSEMOVE:
+        if (self) {
+            self->update_ai_hover(control, POINT{GET_X_LPARAM(lparam),
+                                                 GET_Y_LPARAM(lparam)});
+        }
+        break;
+    case WM_MOUSELEAVE:
+        if (self) {
+            self->ai_list_tracking_ = false;
+            self->clear_ai_hover(control);
+        }
+        break;
+    case WM_VSCROLL:
+    case WM_MOUSEWHEEL: {
+        // Scrolling moves the rows under a hover index that no longer matches
+        // the pointer, so the highlight is dropped and the next mouse position
+        // picks the row that ended up under the cursor.
+        const LRESULT result = DefSubclassProc(control, message, wparam, lparam);
+        if (self) self->clear_ai_hover(control);
+        return result;
+    }
+    case WM_LBUTTONUP: {
+        // The rows are button targets, not list selections, so the click is
+        // handled on release the way a button is: the pointer can still move
+        // away from the target before the action happens.
+        if (self) {
+            self->on_ai_list_click(POINT{GET_X_LPARAM(lparam),
+                                         GET_Y_LPARAM(lparam)});
+        }
+        return 0;
+    }
+    case WM_LBUTTONDBLCLK:
+        return 0;
+    case WM_NCDESTROY:
+        if (self) {
+            self->ai_list_tracking_ = false;
+            self->ai_list_hover_ = -1;
+            self->ai_hover_button_ = settings_ai_list::Button::none;
+        }
+        RemoveWindowSubclass(control, &SettingsWindow::list_proc, subclass_id);
+        break;
+    default:
+        break;
+    }
+    return DefSubclassProc(control, message, wparam, lparam);
+}
+
+void SettingsWindow::update_ai_hover(HWND list, POINT list_point) {
+    if (!list || current_page_ != 1 || !large_model()) return;
+    const auto [row, button] =
+        settings_ai_list::hit_test(list, list_point, dpi_, shown_rows());
+    if (!ai_list_tracking_) {
+        TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, list, 0};
+        ai_list_tracking_ = TrackMouseEvent(&track) != FALSE;
+    }
+    if (row == ai_list_hover_ && button == ai_hover_button_) return;
+    const int previous = ai_list_hover_;
+    ai_list_hover_ = row;
+    ai_hover_button_ = button;
+    // Only the rows whose highlight changed are redrawn; the list box owns the
+    // row surface, so the parent card is untouched.
+    settings_ai_list::invalidate_row(list, previous);
+    settings_ai_list::invalidate_row(list, row);
+    SetCursor(LoadCursorW(nullptr, button == settings_ai_list::Button::none
+                                        ? IDC_ARROW
+                                        : IDC_HAND));
+}
+
+void SettingsWindow::clear_ai_hover(HWND list) noexcept {
+    if (ai_list_hover_ < 0 && ai_hover_button_ == settings_ai_list::Button::none) {
+        return;
+    }
+    const int previous = ai_list_hover_;
+    ai_list_hover_ = -1;
+    ai_hover_button_ = settings_ai_list::Button::none;
+    if (list && IsWindow(list)) settings_ai_list::invalidate_row(list, previous);
+}
+
+void SettingsWindow::on_ai_list_click(POINT list_point) {
+    const auto& rows = shown_rows();
+    const auto [row, button] =
+        settings_ai_list::hit_test(ai_list_, list_point, dpi_, rows);
+    // The rows are buttons, never a selection. The default list box gives
+    // itself keyboard focus on mouse-down, and a focused owner-drawn
+    // LBS_NOSEL row degenerates into a focus-repaint loop that flickers the
+    // whole row for as long as the window stays open. Hand the focus back to
+    // the page's sidebar entry, the same place show_page() puts it; the
+    // sidebar keeps keyboard navigation and nothing else changes hands.
+    if (GetFocus() == ai_list_) {
+        const HWND navigation =
+            navigation_[navigation_index_for_page(current_page_)];
+        if (navigation) SetFocus(navigation);
+    }
+    if (row < 0 || button == settings_ai_list::Button::none ||
+        static_cast<std::size_t>(row) >= rows.size()) {
+        reset_delete_confirmation();
+        return;
+    }
+    const std::size_t index = static_cast<std::size_t>(row);
+    if (!large_model()) {
+        // The traditional rows only toggle (DeepL opens its key editor first).
+        if (button == settings_ai_list::Button::enable ||
+            button == settings_ai_list::Button::edit) {
+            reset_delete_confirmation();
+            select_traditional(index);
+        }
+        return;
+    }
+    if (button == settings_ai_list::Button::enable) {
+        reset_delete_confirmation();
+        select_ai_profile(index);
+        return;
+    }
+    if (button == settings_ai_list::Button::edit) {
+        reset_delete_confirmation();
+        edit_ai_profile(index);
+        return;
+    }
+    // Deleting an endpoint is irreversible, so the button asks for a second
+    // click before it acts; the caption changes to 「确认?」 until the timer
+    // resets it.
+    const std::wstring name = ai_rows_[index].name;
+    if (pending_delete_ == name &&
+        GetTickCount64() < delete_deadline_) {
+        remove_ai_profile(index);
+        return;
+    }
+    reset_delete_confirmation();
+    pending_delete_ = name;
+    delete_deadline_ = GetTickCount64() + delete_confirm_timeout_ms;
+    SetTimer(window_, delete_confirm_timer, delete_confirm_timeout_ms, nullptr);
+    settings_ai_list::invalidate_row(ai_list_, static_cast<int>(index));
+}
+
+void SettingsWindow::set_translation_class(bool large_model) {
+    ScopedRedrawPause redraw_pause(window_);
+    save_provider_fields();
+    reset_delete_confirmation();
+    clear_ai_hover(ai_list_);
+    loaded_provider_ = large_model ? std::wstring(L"ai")
+                                  : std::wstring(settings_provider::id_at(
+                                        std::max(0, selected_index(provider_))));
+    config_.set_string(L"translator.provider", loaded_provider_);
+    populate_ai_list();
+    refresh_provider_fields();
+    save_values();
+    layout_controls();
+    RedrawWindow(window_, nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
 void SettingsWindow::draw_combo(HWND control, HDC dc) {
     if (!dc) return;
     RECT rect{};
@@ -570,7 +752,7 @@ void SettingsWindow::draw_combo(HWND control, HDC dc) {
     style.background = theme::color_card;
     style.fill = color_input;
     style.border = color_line;
-    style.focus_border = theme::accent;
+    style.focus_border = color_line;
     style.text = color_text;
     style.disabled_text = color_text_faint;
     style.chevron = color_text_dim;
@@ -598,6 +780,30 @@ void SettingsWindow::set_checkbox(HWND control, bool checked) {
     InvalidateRect(control, nullptr, FALSE);
 }
 
+int SettingsWindow::theme_selection() const noexcept {
+    if (theme_mode_ && GetPropW(theme_mode_, L"MiniTranslator.SegmentOn")) return 0;
+    if (theme_segment_[0] && GetPropW(theme_segment_[0], L"MiniTranslator.SegmentOn")) {
+        return 1;
+    }
+    return 2;
+}
+
+void SettingsWindow::set_theme_selection(int index) {
+    const std::array<HWND, 3> chips{
+        theme_mode_, theme_segment_[0], theme_segment_[1],
+    };
+    for (std::size_t chip = 0; chip < chips.size(); ++chip) {
+        if (!chips[chip]) continue;
+        if (static_cast<int>(chip) == index) {
+            SetPropW(chips[chip], L"MiniTranslator.SegmentOn",
+                     reinterpret_cast<HANDLE>(1));
+        } else {
+            RemovePropW(chips[chip], L"MiniTranslator.SegmentOn");
+        }
+        InvalidateRect(chips[chip], nullptr, FALSE);
+    }
+}
+
 void SettingsWindow::show_page(int index) {
     if (!window_) return;
     current_page_ = std::clamp(
@@ -607,10 +813,9 @@ void SettingsWindow::show_page(int index) {
             ShowWindow(control, static_cast<int>(page) == current_page_ ? SW_SHOW : SW_HIDE);
         }
     }
-    if (current_page_ == 1) refresh_provider_fields(false);
+    if (current_page_ == 1) refresh_provider_fields();
     if (current_page_ == 4) refresh_text_translation();
     layout_controls();
-    clear_combo_edit_selection(provider_model_);
     const auto navigation_index = navigation_index_for_page(current_page_);
     if (navigation_[navigation_index]) {
         SetFocus(navigation_[navigation_index]);
@@ -620,11 +825,13 @@ void SettingsWindow::show_page(int index) {
 }
 
 void SettingsWindow::close() {
+    // The endpoint list's debounced save still belongs to this window, so a
+    // pending disk write is flushed before the controls go away.
+    flush_profiles_save();
     if (!save_values()) return;
     if (text_callbacks_.composition_changed) {
         text_callbacks_.composition_changed(false);
     }
-    cancel_model_refresh();
     if (test_thread_.joinable()) test_thread_.request_stop();
     finished_ = true;
     const HWND closing = window_;
@@ -732,15 +939,29 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             align_combo_edit(source, dpi_);
             set_combo_edit_redraw(source, true);
             InvalidateRect(source, nullptr, FALSE);
-            if (source == theme_mode_) {
-                // The theme is applied while the drop-down is still open.
-                // Reapply after it closes so DWM rebuilds the caption instead
-                // of leaving the previous theme's title bar until next focus.
-                theme::apply_window_theme(window_, true, true);
-                RedrawWindow(window_, nullptr, nullptr,
-                             RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN |
-                                 RDW_UPDATENOW);
+        }
+        // The segmented theme row picks the mode on click, the way the
+        // drop-down applied it on selection. save_values() applies the mode
+        // and the settings-changed callback refreshes the other windows; the
+        // DWM caption needs one explicit rebuild afterwards.
+        if (notification == BN_CLICKED && !loading_ &&
+            (source == theme_mode_ || source == theme_segment_[0] ||
+             source == theme_segment_[1])) {
+            const int chosen = source == theme_mode_ ? 0
+                               : source == theme_segment_[0] ? 1 : 2;
+            if (chosen != theme_selection()) {
+                set_theme_selection(chosen);
+                if (save_values()) {
+                    theme::apply_window_theme(window_, true, true);
+                } else {
+                    // The write was rejected; put the row back on the stored
+                    // mode so the chips never disagree with the config.
+                    const auto stored = theme::mode == theme::Mode::light ? 1
+                                        : theme::mode == theme::Mode::dark ? 2 : 0;
+                    set_theme_selection(stored);
+                }
             }
+            return 0;
         }
         if (id == IDCANCEL) { close(); return 0; }
         if (id == id_text_input && notification == EN_CHANGE) {
@@ -749,8 +970,9 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             }
             return 0;
         }
-        // text_source_ shares command id 7024 with translator_class_, so these
-        // two must be told apart by their window handles.
+        // Command ids are shared between pages, so the branch handlers below
+        // key off the control handles whenever an id could belong to two
+        // controls.
         if (source == text_source_ && notification == CBN_SELCHANGE) {
             if (!syncing_text_ && text_callbacks_.source_changed) {
                 text_callbacks_.source_changed(text_source_at(text_source_));
@@ -808,21 +1030,18 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
                          RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
             return 0;
         }
-        if (source == translator_class_ && notification == CBN_SELCHANGE && !loading_) {
-            ScopedRedrawPause redraw_pause(window_);
-            save_provider_fields();
-            cancel_model_refresh(true);
-            refresh_provider_fields(true);
-            save_values();
-            layout_controls();
-            RedrawWindow(window_, nullptr, nullptr,
-                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        if ((id == id_class_traditional || id == id_class_ai) &&
+            notification == BN_CLICKED && !loading_) {
+            set_translation_class(id == id_class_ai);
+            return 0;
+        }
+        if (id == id_ai_add && notification == BN_CLICKED && !loading_) {
+            edit_ai_profile(std::nullopt);
             return 0;
         }
         if (source == provider_ && notification == CBN_SELCHANGE && !loading_) {
             ScopedRedrawPause redraw_pause(window_);
             save_provider_fields();
-            cancel_model_refresh(true);
             // The provider combo lists only the traditional entries, so walking
             // the catalog with the same skip rule keeps the mapping correct
             // even if the AI row ever moves away from the end of the table.
@@ -838,41 +1057,11 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
                 ++seen;
             }
             config_.set_string(L"translator.provider", loaded_provider_);
-            refresh_provider_fields(true);
+            refresh_provider_fields();
             save_values();
             layout_controls();
             RedrawWindow(window_, nullptr, nullptr,
                          RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-            return 0;
-        }
-        if (source == profile_select_ &&
-            (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS) &&
-            !loading_) {
-            ScopedRedrawPause redraw_pause(window_);
-            save_profile_fields();
-            const auto selected = trim(text_of(profile_select_));
-            if (!selected.empty() && selected != loaded_profile_) {
-                loaded_profile_ = selected;
-                config_.set_string(L"translator.ai_selected", loaded_profile_);
-            }
-            cancel_model_refresh(true);
-            refresh_provider_fields(true);
-            save_values();
-            layout_controls();
-            RedrawWindow(window_, nullptr, nullptr,
-                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-            return 0;
-        }
-        if (id == id_ai_protocol && notification == CBN_SELCHANGE && !loading_) {
-            save_values();
-            return 0;
-        }
-        if (id == id_profile_add && notification == BN_CLICKED) {
-            add_profile();
-            return 0;
-        }
-        if (id == id_profile_remove && notification == BN_CLICKED) {
-            remove_profile();
             return 0;
         }
         if (id == id_test && notification == BN_CLICKED) {
@@ -881,13 +1070,8 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             InvalidateRect(test_status_, nullptr, TRUE);
             return 0;
         }
-        if (id == id_refresh_models && notification == BN_CLICKED) {
-            start_model_refresh();
-            return 0;
-        }
         if (id == id_check_updates && notification == BN_CLICKED) {
             if (!save_values()) return 0;
-            cancel_model_refresh();
             // The update used to open its own dialog; progress is reported
             // inline next to the button so the settings window stays put.
             set_update_status(L"检查中...");
@@ -897,40 +1081,46 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         }
         if (id == id_restart && notification == BN_CLICKED) {
             if (save_values() && restart_callback_) {
-                cancel_model_refresh();
                 finished_ = true;
                 ShowWindow(window_, SW_HIDE);
                 restart_callback_();
             }
             return 0;
         }
-        if (!loading_ && (notification == CBN_SELCHANGE || notification == BN_CLICKED ||
-                          notification == EN_KILLFOCUS ||
-                          (source == provider_model_ && notification == CBN_KILLFOCUS))) {
+        // A list-box row notification carries the same number as CBN_SELCHANGE,
+        // and the rows already saved themselves when the click was handled, so
+        // the endpoint list must not fall into this generic save.
+        if (!loading_ && source != ai_list_ &&
+            (notification == CBN_SELCHANGE || notification == BN_CLICKED ||
+             notification == EN_KILLFOCUS)) {
             save_values();
         }
         break;
     }
+    case WM_TIMER:
+        if (static_cast<UINT_PTR>(wparam) == profiles_save_timer) {
+            // Kill first: save_values() can raise a modal error box, and the
+            // timer must not fire again while that box is up.
+            KillTimer(window_, profiles_save_timer);
+            flush_profiles_save();
+            return 0;
+        }
+        if (static_cast<UINT_PTR>(wparam) == delete_confirm_timer) {
+            reset_delete_confirmation();
+            return 0;
+        }
+        if (static_cast<UINT_PTR>(wparam) == profiles_save_timer) {
+            // Kill first: save_values() can raise a modal error box, and the
+            // timer must not fire again while that box is up.
+            KillTimer(window_, profiles_save_timer);
+            flush_profiles_save();
+            return 0;
+        }
+        break;
     case test_completed_message: {
         std::unique_ptr<std::pair<bool, std::wstring>> result(
             reinterpret_cast<std::pair<bool, std::wstring>*>(lparam));
         if (result) finish_connection_test(result->first, std::move(result->second));
-        return 0;
-    }
-    case models_completed_message: {
-        std::unique_ptr<ModelListResult> result(
-            reinterpret_cast<ModelListResult*>(lparam));
-        if (result) finish_model_refresh(std::move(*result));
-        return 0;
-    }
-    case clear_combo_selection_message: {
-        const HWND combo = reinterpret_cast<HWND>(wparam);
-        if (combo && IsWindow(combo)) {
-            clear_combo_edit_selection(combo);
-            align_combo_edit(combo, dpi_);
-            RedrawWindow(window_, nullptr, nullptr,
-                         RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-        }
         return 0;
     }
     case WM_DRAWITEM:
@@ -938,6 +1128,18 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             return draw_item(*item);
         }
         return FALSE;
+    case WM_MEASUREITEM: {
+        // The endpoint rows are owner-drawn with a fixed height, so the list box
+        // is sized from the same metric the rows are painted and hit-tested with.
+        auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
+        if (measure && measure->CtlType == ODT_LISTBOX &&
+            measure->CtlID == id_ai_list) {
+            measure->itemHeight =
+                static_cast<UINT>(px(settings_ai_list::logical_row_height(), dpi_));
+            return TRUE;
+        }
+        break;
+    }
     case WM_CTLCOLOREDIT: {
         const auto dc = reinterpret_cast<HDC>(wparam);
         const auto control = reinterpret_cast<HWND>(lparam);
@@ -951,6 +1153,15 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
     }
     case WM_CTLCOLORLISTBOX: {
         const auto dc = reinterpret_cast<HDC>(wparam);
+        if (reinterpret_cast<HWND>(lparam) == ai_list_) {
+            // Endpoint rows paint themselves on the card surface, so anything
+            // the rows do not cover has to blend into that card rather than the
+            // input well a normal list box would use.
+            SetTextColor(dc, color_text);
+            SetBkColor(dc, color_card);
+            SetBkMode(dc, OPAQUE);
+            return reinterpret_cast<LRESULT>(card_background_);
+        }
         SetTextColor(dc, color_text);
         SetBkColor(dc, color_input);
         SetBkMode(dc, OPAQUE);
@@ -974,12 +1185,12 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
         }
         SetBkMode(dc, TRANSPARENT);
         if (control == status_) {
-            SetTextColor(dc, status_error_ ? color_bad : color_ok);
+            SetTextColor(dc, status_error_ ? color_bad : color_text);
             return reinterpret_cast<LRESULT>(background_);
         }
         if (control == test_status_) {
             SetTextColor(dc, test_pending_ ? color_text_dim
-                              : test_success_ ? color_ok : color_bad);
+                              : test_success_ ? color_text : color_bad);
             return reinterpret_cast<LRESULT>(card_background_);
         }
         if (control == update_status_) {
@@ -1000,7 +1211,14 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
     case WM_NCDESTROY: {
         const HWND destroyed = window_;
         finished_ = true;
-        cancel_model_refresh();
+        KillTimer(destroyed, delete_confirm_timer);
+        KillTimer(destroyed, profiles_save_timer);
+        profiles_save_pending_ = false;
+        delete_deadline_ = 0;
+        pending_delete_.clear();
+        ai_list_tracking_ = false;
+        ai_list_hover_ = -1;
+        ai_hover_button_ = settings_ai_list::Button::none;
         if (test_thread_.joinable()) {
             test_thread_.request_stop();
             test_thread_.join();

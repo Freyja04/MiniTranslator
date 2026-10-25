@@ -1,9 +1,108 @@
 #include "settings_window.hpp"
 #include "settings_window_internal.hpp"
 
+#include "settings_provider.hpp"
+
 namespace minitrans {
 
 using namespace settings_internal;
+
+int SettingsWindow::ai_list_item_count() const noexcept {
+    if (!ai_list_ || !IsWindow(ai_list_)) return 0;
+    return static_cast<int>(SendMessageW(ai_list_, LB_GETCOUNT, 0, 0));
+}
+
+void SettingsWindow::layout_translation_page(int inner_left, int inner_right,
+                                             int field_left, int field_width,
+                                             int control_height) {
+    auto& controls = page_controls_[1];
+    const auto label_for = [&](std::size_t index) {
+        return index < controls.size() ? controls[index] : nullptr;
+    };
+    // Everything below is in physical pixels and handed to the paint pass
+    // unchanged; scaling it twice would move the card away from the controls it
+    // frames.
+    TranslationGeometry geometry;
+    geometry.large_model = large_model();
+    const int row_gap = px(logical_row_gap, dpi_);
+    const int stride = control_height + row_gap;
+    const int card_top = px(logical_content_top, dpi_);
+    const int row_top = px(logical_content_top + logical_card_padding, dpi_);
+    const int label_width =
+        std::max(1, field_left - px(logical_label_gap, dpi_) - inner_left);
+    const auto place_label = [&](HWND label, int top, int width) {
+        if (!label) return;
+        const auto style = GetWindowLongPtrW(label, GWL_STYLE);
+        // The captions keep their style, so a layout pass that does not need to
+        // change it must not write one: a style write repaints the static.
+        const auto wanted = (style & ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
+                            SS_LEFT | SS_CENTERIMAGE;
+        if (style != wanted) SetWindowLongPtrW(label, GWL_STYLE, wanted);
+        MoveWindow(label, inner_left, top, std::max(1, width), control_height, FALSE);
+    };
+    const auto place_field = [&](HWND label, HWND field, int top) {
+        place_label(label, top, label_width);
+        if (!field) return;
+        wchar_t type[24]{};
+        GetClassNameW(field, type, static_cast<int>(std::size(type)));
+        const bool edit = _wcsicmp(type, L"Edit") == 0;
+        const int inset_x = edit ? std::max(1, px(logical_edit_inset_x, dpi_)) : 0;
+        const int inset_top = edit ? std::max(1, px(logical_edit_inset_top, dpi_)) : 0;
+        const int inset_bottom =
+            edit ? std::max(1, px(logical_edit_inset_bottom, dpi_)) : 0;
+        MoveWindow(field, field_left + inset_x, top + inset_top,
+                   std::max(1, field_width - inset_x * 2),
+                   std::max(1, control_height - inset_top - inset_bottom), FALSE);
+    };
+
+    // 类别: two owner-drawn buttons that read as one segmented switch, both
+    // starting at the card's inner edge. 添加 rides to the right of the
+    // large-model half and is only enabled on that branch; the caption label
+    // is gone because the rows explain themselves.
+    const int half = std::max(1, (field_width - px(logical_provider_gap, dpi_)) / 2);
+    MoveWindow(class_traditional_, inner_left, row_top, half, control_height,
+               FALSE);
+    MoveWindow(class_ai_, inner_left + half + px(logical_provider_gap, dpi_),
+               row_top, half, control_height, FALSE);
+    if (HWND stale_label = label_for(translation_index::class_label)) {
+        ShowWindow(stale_label, SW_HIDE);
+    }
+    const int add_width = px(logical_ai_add_width, dpi_);
+    // 添加 hugs the card's right edge so the row toggles below line up with
+    // its circle at the same column.
+    MoveWindow(ai_add_, inner_right - add_width, row_top, add_width,
+               control_height, FALSE);
+    EnableWindow(ai_add_, large_model() ? TRUE : FALSE);
+
+    int next_top = row_top + stride;
+    int bottom = row_top + control_height;
+    // Both branches show the same list control: endpoint rows on the
+    // large-model side, provider rows (toggle, and 编辑 for DeepL) on the
+    // traditional side.
+    ShowWindow(ai_list_caption_, SW_HIDE);
+    geometry.separators[geometry.separator_count++] = next_top - row_gap / 2;
+
+    const int rows = ai_list_item_count();
+    const int visible = std::min(rows, logical_ai_list_max_rows);
+    const int row_height = px(settings_ai_list::logical_row_height(), dpi_);
+    const int band_height = std::max(1, visible) * row_height;
+    ShowWindow(ai_list_, rows > 0 ? SW_SHOW : SW_HIDE);
+    if (rows > 0) {
+        MoveWindow(ai_list_, inner_left, next_top,
+                   std::max(1, inner_right - inner_left), band_height, FALSE);
+        bottom = next_top + band_height;
+    } else {
+        // With no rows the list is hidden and one empty row is kept so the
+        // page does not jump when the first entry appears.
+        bottom = next_top + control_height;
+    }
+
+    geometry.card_top = card_top;
+    // The row buttons say everything, so the card ends with the last row
+    // instead of an empty hint band on either branch.
+    geometry.card_bottom = bottom + px(logical_card_padding, dpi_);
+    translation_ = geometry;
+}
 
 void SettingsWindow::layout_controls() {
     if (!window_) return;
@@ -48,14 +147,12 @@ void SettingsWindow::layout_controls() {
         collect_label(page_controls_[0][hotkey_index::toggle_label]);
     } else if (current_page_ == 1) {
         const auto& controls = page_controls_[1];
+        // The endpoint-list caption spans the card instead of driving the label
+        // column, so only the row captions size the caption column.
         for (const std::size_t index :
              {translation_index::class_label,
               translation_index::provider_label,
-              translation_index::profile_label,
-              translation_index::protocol_label,
-              translation_index::key_label,
-              translation_index::endpoint_label,
-              translation_index::model_label}) {
+              translation_index::key_label}) {
             if (index < controls.size()) collect_label(controls[index]);
         }
     } else if (current_page_ == 2) {
@@ -158,72 +255,8 @@ void SettingsWindow::layout_controls() {
                          first_top + stride * 2);
         }
     } else if (current_page_ == 1) {
-        auto& c = page_controls_[1];
-        const bool large_model = selected_index(translator_class_) == 1;
-        int y = logical_content_top + logical_card_padding;
-        if (!c.empty()) place(c[translation_index::class_label], translator_class_, y);
-        y += logical_setting_row_height;
-        if (large_model) {
-            place(c[translation_index::profile_label], profile_select_, y);
-            const int gap = px(6, dpi_);
-            const int button_width = px(56, dpi_);
-            const int select_width = std::max(
-                px(110, dpi_),
-                field_width - gap * 2 - button_width * 2);
-            MoveWindow(profile_select_, field_left, px(y, dpi_),
-                       select_width, px(260, dpi_), FALSE);
-            MoveWindow(profile_add_, field_left + select_width + gap,
-                       px(y, dpi_), button_width, control_height, FALSE);
-            MoveWindow(profile_remove_,
-                       field_left + select_width + gap * 2 + button_width,
-                       px(y, dpi_), button_width, control_height, FALSE);
-            y += logical_setting_row_height;
-            place(c[translation_index::protocol_label], ai_protocol_, y);
-            y += logical_setting_row_height;
-        } else {
-            place(c[translation_index::provider_label], provider_, y);
-            y += logical_setting_row_height;
-        }
-        const auto place_row = [&](HWND label, HWND field, int top) {
-            place(label, field, top);
-            y = top + logical_setting_row_height;
-        };
-        const auto chosen = std::find_if(
-            providers.begin(), providers.end(),
-            [&](const ProviderInfo& value) { return value.id == loaded_provider_; });
-        const bool has_key = large_model ||
-            (chosen != providers.end() && chosen->kind != ProviderInfo::Kind::free);
-        if (has_key) place_row(provider_key_label_, provider_key_, y);
-        if (large_model) {
-            place_row(provider_endpoint_label_, provider_endpoint_, y);
-            place_row(provider_model_label_, provider_model_, y);
-        }
-        // 「获取模型」sits on its own row next to 「测试连接」 so that the model
-        // combo keeps the full width of the field column.
-        const int gap = px(6, dpi_);
-        const int button_width = px(84, dpi_);
-        if (large_model) {
-            MoveWindow(model_refresh_, field_left, px(y, dpi_),
-                       button_width, control_height, FALSE);
-            MoveWindow(test_button_, field_left + button_width + gap,
-                       px(y, dpi_), button_width, control_height, FALSE);
-            MoveWindow(test_status_, field_left + (button_width + gap) * 2,
-                       px(y, dpi_),
-                       std::max(1, inner_right - field_left -
-                                       (button_width + gap) * 2),
-                       control_height, FALSE);
-        } else {
-            MoveWindow(test_button_, field_left, px(y, dpi_),
-                       button_width, control_height, FALSE);
-            MoveWindow(test_status_, field_left + button_width + gap,
-                       px(y, dpi_),
-                       std::max(1, inner_right - field_left - button_width - gap),
-                       control_height, FALSE);
-        }
-        y += logical_setting_row_height;
-        const int hint_top = y - logical_row_gap + logical_hint_gap;
-        MoveWindow(provider_hint_, field_left, px(hint_top, dpi_),
-                   field_width, px(34, dpi_), FALSE);
+        layout_translation_page(inner_left, inner_right, field_left, field_width,
+                                control_height);
     } else if (current_page_ == 2) {
         auto& c = page_controls_[2];
         if (c.size() > ocr_index::upscale_checkbox) {
@@ -247,7 +280,47 @@ void SettingsWindow::layout_controls() {
             const int separator_top =
                 autostart_top + logical_control_height + logical_row_gap;
             const int actions_top = separator_top + logical_row_gap;
-            place(c[other_index::theme_label], theme_mode_, first_top);
+            // 主题 is one segmented row: measure the three captions, then lay
+            // the chips edge to edge inside the field column.
+            if (c[other_index::theme_label]) {
+                const auto label_style =
+                    GetWindowLongPtrW(c[other_index::theme_label], GWL_STYLE);
+                SetWindowLongPtrW(c[other_index::theme_label], GWL_STYLE,
+                                  (label_style &
+                                   ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
+                                      SS_LEFT | SS_CENTERIMAGE);
+                MoveWindow(c[other_index::theme_label], inner_left,
+                           px(first_top, dpi_), label_width, control_height,
+                           FALSE);
+            }
+            {
+                // The chips sit in the field column with a breathing gap and a
+                // floor width, so short captions like 主题 never crowd them.
+                const std::array<std::wstring_view, 3> captions{
+                    theme_modes[0], theme_modes[1], theme_modes[2],
+                };
+                std::vector<int> widths;
+                if (HDC dc = GetDC(window_)) {
+                    widths = segment_widths(dc, font_, captions, dpi_);
+                    ReleaseDC(window_, dc);
+                }
+                if (widths.size() == 3) {
+                    const int gap = px(8, dpi_);
+                    const int min_width = px(96, dpi_);
+                    for (int& chip_width : widths) {
+                        chip_width = std::max(chip_width, min_width);
+                    }
+                    int x = field_left;
+                    const HWND chips[3]{
+                        theme_mode_, theme_segment_[0], theme_segment_[1],
+                    };
+                    for (int chip = 0; chip < 3; ++chip) {
+                        MoveWindow(chips[chip], x, px(first_top, dpi_),
+                                   widths[chip], control_height, FALSE);
+                        x += widths[chip] + gap;
+                    }
+                }
+            }
             MoveWindow(autostart_, inner_left, px(autostart_top, dpi_),
                        px(230, dpi_), control_height, FALSE);
             MoveWindow(restart_, inner_left, px(actions_top, dpi_),

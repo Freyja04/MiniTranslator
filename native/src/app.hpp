@@ -113,6 +113,7 @@ private:
     ResultAppearance result_appearance() const;
 
     HINSTANCE instance_{};
+    std::uint64_t applied_visual_revision_{};
     HWND window_{};
     UINT taskbar_created_message_{};
     NOTIFYICONDATAW tray_{};

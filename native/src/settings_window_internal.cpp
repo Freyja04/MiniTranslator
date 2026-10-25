@@ -2,6 +2,8 @@
 
 #include "ui_controls.hpp"
 
+#include <algorithm>
+
 namespace minitrans::settings_internal {
 
 void align_combo_edit(HWND combo, int dpi) noexcept {
@@ -141,6 +143,44 @@ void fill_round_rect(HDC dc, const RECT& rect, int radius,
 }
 
 using ui_draw::draw_text;
+
+void draw_segment_option(HDC dc, const RECT& bounds, std::wstring_view caption,
+                         HFONT font, int dpi, bool active, bool hot, bool focused,
+                         HBRUSH surface) {
+    FillRect(dc, &bounds, surface);
+    if (active) {
+        // The raised chip keeps the input fill with a hairline border; focus
+        // does not recolour it.
+        fill_round_rect(dc, bounds, px(7, dpi), color_input,
+                        focused || hot ? color_line_high : color_line);
+    } else {
+        // The inactive caption keeps the field colour so the row reads as one
+        // pill; hot brightens it like the other quiet buttons.
+        fill_round_rect(dc, bounds, px(7, dpi),
+                        hot ? theme::color_hover : color_input, color_input);
+    }
+    draw_text(dc, caption, bounds, font,
+              active ? theme::color_text : color_text_dim,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+std::vector<int> segment_widths(HDC dc, HFONT font,
+                                std::span<const std::wstring_view> captions,
+                                int dpi) {
+    std::vector<int> widths;
+    widths.reserve(captions.size());
+    const HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
+    for (const auto caption : captions) {
+        SIZE measured{};
+        if (!GetTextExtentPoint32W(dc, caption.data(),
+                                   static_cast<int>(caption.size()), &measured)) {
+            measured.cx = 0;
+        }
+        widths.push_back(measured.cx + px(28, dpi));
+    }
+    if (font) SelectObject(dc, previous);
+    return widths;
+}
 
 void draw_settings_nav_icon(HDC dc, int page, const RECT& bounds,
                             COLORREF color, HFONT icon_font) {
@@ -295,14 +335,11 @@ void select_combo(HWND combo, int index) {
 
 void populate_text_targets(HWND combo) {
     SendMessageW(combo, CB_RESETCONTENT, 0, 0);
-    SendMessageW(combo, CB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>(L"自动选择"));
     for (const auto target : text_translation_targets()) {
         const auto label = target_display_name(target);
         SendMessageW(combo, CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(label.c_str()));
     }
-    select_combo(combo, 0);
 }
 
 void populate_text_sources(HWND combo) {
@@ -312,7 +349,6 @@ void populate_text_sources(HWND combo) {
         SendMessageW(combo, CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(label.c_str()));
     }
-    select_combo(combo, 0);
 }
 
 int text_source_index(std::wstring_view source) {
@@ -347,11 +383,8 @@ std::wstring text_target_at(HWND combo) {
 }
 
 std::wstring text_target_selector(const TextTranslationSession& session) {
-    if (!session.target().empty()) return target_display_name(session.target());
-    if (session.input().find_first_not_of(L" \t\r\n") == std::wstring::npos) {
-        return L"自动选择";
-    }
-    return L"自动 · " + target_display_name(session.effective_target());
+    // The target is always a concrete language now; the auto picker is gone.
+    return target_display_name(session.effective_target());
 }
 
 std::wstring text_translation_status(const TextTranslationSession& session) {
@@ -359,7 +392,7 @@ std::wstring text_translation_status(const TextTranslationSession& session) {
     case TextTranslationState::idle:
         return L"等待输入中...";
     case TextTranslationState::waiting:
-        return L"将在停止输入 500 毫秒后翻译";
+        return L"等待输入完成…";
     case TextTranslationState::translating:
         return L"正在翻译为" + target_display_name(session.effective_target()) + L"…";
     case TextTranslationState::ready:

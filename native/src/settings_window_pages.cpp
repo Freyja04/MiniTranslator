@@ -9,7 +9,6 @@ void SettingsWindow::create_controls() {
     create_theme_resources();
     test_success_ = false;
     test_pending_ = false;
-    model_refreshing_ = false;
     for (auto& controls : page_controls_) controls.clear();
     navigation_.fill(nullptr);
     for (std::size_t index = 0; index < navigation_.size(); ++index) {
@@ -61,15 +60,15 @@ void SettingsWindow::create_hotkey_page() {
 }
 
 void SettingsWindow::create_translation_page() {
-    add_label(1, L"接口类别");
-    translator_class_ = add_control(1, 0, L"COMBOBOX", L"",
-                                    CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
-                                    WS_VSCROLL | WS_TABSTOP,
-                                    id_translator_class);
-    SendMessageW(translator_class_, CB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>(L"传统翻译 API"));
-    SendMessageW(translator_class_, CB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>(L"大模型翻译 API"));
+    // 类别 is a two-button switch instead of a drop-down: the two branches
+    // are that different, and the list branch hides most of the form anyway.
+    add_label(1, L"类别");
+    class_traditional_ = add_control(1, 0, L"BUTTON", L"传统翻译",
+                                     BS_OWNERDRAW | BS_NOTIFY | WS_TABSTOP,
+                                     id_class_traditional);
+    class_ai_ = add_control(1, 0, L"BUTTON", L"大模型翻译",
+                            BS_OWNERDRAW | BS_NOTIFY | WS_TABSTOP,
+                            id_class_ai);
     provider_label_ = add_label(1, L"接口");
     provider_ = add_control(1, 0, L"COMBOBOX", L"",
                             CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
@@ -80,42 +79,29 @@ void SettingsWindow::create_translation_page() {
         SendMessageW(provider_, CB_ADDSTRING, 0,
                      reinterpret_cast<LPARAM>(provider.label.data()));
     }
-    profile_label_ = add_label(1, L"接口名称");
-    profile_select_ = add_control(1, 0, L"COMBOBOX", L"",
-                                  CBS_DROPDOWN | CBS_AUTOHSCROLL |
-                                      CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
-                                      WS_VSCROLL | WS_TABSTOP);
-    profile_add_ = add_control(1, 0, L"BUTTON", L"新增",
-                               BS_OWNERDRAW | WS_TABSTOP, id_profile_add);
-    profile_remove_ = add_control(1, 0, L"BUTTON", L"删除",
-                                  BS_OWNERDRAW | WS_TABSTOP, id_profile_remove);
-    protocol_label_ = add_label(1, L"接口协议");
-    ai_protocol_ = add_control(1, 0, L"COMBOBOX", L"",
-                               CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
-                               WS_VSCROLL | WS_TABSTOP,
-                               id_ai_protocol);
-    for (const auto& [id, label] : ai_protocols) {
-        SendMessageW(ai_protocol_, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(label.data()));
-    }
+    // The large-model branch is a list of endpoints: the name on the left and
+    // 启用 / 编辑 / 删除 on the right, added and edited through a dialog.
+    // Rows are action targets, never a selection, so the list box must not grow
+    // a selection band that would repaint the row behind the buttons.
+    ai_list_caption_ = add_label(1, L"列表");
+    ai_list_ = add_control(
+        1, 0, L"LISTBOX", L"",
+        LBS_NOTIFY | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS |
+            LBS_NOINTEGRALHEIGHT | LBS_NOSEL | WS_VSCROLL | WS_TABSTOP, id_ai_list);
+    SetWindowSubclass(ai_list_, &SettingsWindow::list_proc, list_subclass_id,
+                      reinterpret_cast<DWORD_PTR>(this));
+    // This key field belongs to the traditional branch; the large-model key
+    // lives in the endpoint dialog with the rest of that endpoint's fields.
     provider_key_label_ = add_label(1, L"API Key");
     provider_key_ = add_control(1, 0, L"EDIT", L"",
                                 ES_AUTOHSCROLL | ES_PASSWORD | WS_BORDER | WS_TABSTOP);
-    provider_endpoint_label_ = add_label(1, L"Base URL");
-    provider_endpoint_ = add_control(1, 0, L"EDIT", L"",
-                                     ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP);
-    provider_model_label_ = add_label(1, L"模型");
-    provider_model_ = add_control(1, 0, L"COMBOBOX", L"",
-                                  CBS_DROPDOWN | CBS_AUTOHSCROLL |
-                                      CBS_OWNERDRAWFIXED | CBS_HASSTRINGS |
-                                      WS_VSCROLL | WS_TABSTOP);
-    model_refresh_ = add_control(1, 0, L"BUTTON", L"获取模型",
-                                 BS_OWNERDRAW | WS_TABSTOP, id_refresh_models);
     test_button_ = add_control(1, 0, L"BUTTON", L"测试连接",
-                               BS_OWNERDRAW | WS_TABSTOP, id_test);
+                               BS_OWNERDRAW | BS_NOTIFY | WS_TABSTOP, id_test);
     test_status_ = add_control(1, 0, L"STATIC", L"",
                                SS_LEFT | SS_CENTERIMAGE, 0);
     set_font(test_status_, small_font_);
+    ai_add_ = add_control(1, 0, L"BUTTON", L"添加",
+                          BS_OWNERDRAW | BS_NOTIFY | WS_TABSTOP, id_ai_add);
     provider_hint_ = add_label(1, L"");
     set_font(provider_hint_, small_font_);
 }
@@ -172,15 +158,18 @@ void SettingsWindow::create_ocr_page() {
 
 void SettingsWindow::create_other_page() {
     // The theme switch moved here when the 显示 page went away; it opens the
-    // page, followed by the startup option and the maintenance buttons.
+    // page, followed by the startup option and the maintenance buttons. The
+    // choice itself is one segmented row of three owner-drawn chips instead of
+    // a drop-down, matching the class switch on the translation page.
     add_label(3, L"主题");
-    theme_mode_ = add_control(3, 0, L"COMBOBOX", L"",
-                              CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED |
-                                  CBS_HASSTRINGS | WS_VSCROLL | WS_TABSTOP,
+    theme_mode_ = add_control(3, 0, L"BUTTON", theme_modes[0].data(),
+                              BS_OWNERDRAW | BS_NOTIFY | WS_TABSTOP,
                               id_theme_mode);
-    for (const auto mode : theme_modes) {
-        SendMessageW(theme_mode_, CB_ADDSTRING, 0,
-                     reinterpret_cast<LPARAM>(mode.data()));
+    for (std::size_t index = 1; index < theme_modes.size(); ++index) {
+        theme_segment_[index - 1] = add_control(
+            3, 0, L"BUTTON", theme_modes[index].data(),
+            BS_OWNERDRAW | BS_NOTIFY | WS_TABSTOP,
+            index == 1 ? id_theme_light : id_theme_dark);
     }
     autostart_ = add_control(3, 0, L"BUTTON", L"开机自动启动",
                              BS_OWNERDRAW | WS_TABSTOP);

@@ -9,5 +9,6 @@ inline constexpr wchar_t text_translation = static_cast<wchar_t>(0xE8D2);
 inline constexpr wchar_t capture_translation = static_cast<wchar_t>(0xE7A8);
 inline constexpr wchar_t copy = static_cast<wchar_t>(0xE8C8);
 inline constexpr wchar_t delete_glyph = static_cast<wchar_t>(0xE74D);
+inline constexpr wchar_t add_glyph = static_cast<wchar_t>(0xE710);
 
 }  // namespace minitrans::ui_icons

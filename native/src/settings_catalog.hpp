@@ -33,4 +33,12 @@ inline constexpr std::array<std::pair<std::wstring_view, std::wstring_view>, 3> 
     {L"anthropic_messages", L"Anthropic Messages"},
 }};
 
+// Short captions for the same table when it is drawn as one segmented row:
+// the full labels would not fit three chips across the endpoint dialog card.
+inline constexpr std::array<std::wstring_view, 3> ai_protocol_segments{{
+    L"Chat Completions", L"Responses", L"Anthropic",
+}};
+
+static_assert(ai_protocol_segments.size() == ai_protocols.size());
+
 }  // namespace minitrans::settings_internal

@@ -50,6 +50,8 @@ add_executable(MiniTranslator WIN32
     src/ocr.hpp
     src/pipeline.cpp
     src/pipeline.hpp
+    src/provider_key_dialog.cpp
+    src/provider_key_dialog.hpp
     src/resource.h
     src/result_renderer.cpp
     src/result_renderer.hpp
@@ -62,6 +64,10 @@ add_executable(MiniTranslator WIN32
     src/selection_overlay.cpp
     src/selection_overlay.hpp
     src/settings_catalog.hpp
+    src/settings_ai_dialog.cpp
+    src/settings_ai_dialog.hpp
+    src/settings_ai_list.cpp
+    src/settings_ai_list.hpp
     src/settings_ocr.cpp
     src/settings_ocr.hpp
     src/settings_profiles.cpp

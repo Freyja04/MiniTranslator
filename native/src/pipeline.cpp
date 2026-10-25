@@ -39,16 +39,26 @@ std::wstring json_string(const JsonObject& object, std::wstring_view name) {
     return {};
 }
 
-bool ai_profile_configured(const JsonObject& profile) {
-    return profile &&
-           !trim(json_string(profile, L"base_url")).empty() &&
-           !trim(json_string(profile, L"model")).empty();
-}
-
 TranslationEndpoint resolve_endpoint(std::wstring_view requested_provider,
                                      const JsonObject& requested_options,
-                                     const JsonArray& ai_profiles,
-                                     std::wstring_view selected_profile) {
+                                     const JsonArray& ai_profiles) {
+    // A large-model endpoint is usable only when the user enabled it and it
+    // carries the address and model a request needs.
+    const auto usable_profile = [](const JsonObject& profile) {
+        if (!profile) return false;
+        bool enabled = false;
+        try {
+            if (profile.HasKey(L"enabled")) {
+                const auto value = profile.Lookup(L"enabled");
+                if (value && value.ValueType() == JsonValueType::Boolean) {
+                    enabled = value.GetBoolean();
+                }
+            }
+        } catch (...) {
+        }
+        return enabled && !trim(json_string(profile, L"base_url")).empty() &&
+               !trim(json_string(profile, L"model")).empty();
+    };
     const auto fallback = [] {
         return TranslationEndpoint{std::wstring(traditional_fallback_order.front()),
                                    L"{}"};
@@ -71,31 +81,14 @@ TranslationEndpoint resolve_endpoint(std::wstring_view requested_provider,
     }
     if (requested_provider != L"ai") return fallback();
 
-    bool selected_exists = false;
+    // The settings page guarantees at most one enabled endpoint, so the
+    // pipeline only has to find that row; a disabled or incomplete list never
+    // silently promotes another endpoint behind the user's back.
     for (const auto& item : ai_profiles) {
-        if (item.ValueType() != JsonValueType::Object) continue;
+        if (!item || item.ValueType() != JsonValueType::Object) continue;
         const auto profile = item.GetObject();
-        if (!selected_profile.empty() &&
-            json_string(profile, L"name") == selected_profile) {
-            selected_exists = true;
-            if (ai_profile_configured(profile)) {
-                return TranslationEndpoint{
-                    L"ai", profile.Stringify().c_str(),
-                };
-            }
-            break;
-        }
-    }
-    if (!selected_exists) {
-        for (const auto& item : ai_profiles) {
-            if (item.ValueType() != JsonValueType::Object) continue;
-            const auto profile = item.GetObject();
-            if (ai_profile_configured(profile)) {
-                return TranslationEndpoint{
-                    L"ai", profile.Stringify().c_str(),
-                };
-            }
-        }
+        if (!usable_profile(profile)) continue;
+        return TranslationEndpoint{L"ai", profile.Stringify().c_str()};
     }
     return fallback();
 }
@@ -108,8 +101,7 @@ TranslationEndpoint resolve_translation_endpoint(const ConfigStore& config) {
     return resolve_endpoint(
         configured_provider,
         config.object(L"translator." + configured_provider),
-        config.array(L"translator.ai_profiles"),
-        config.string(L"translator.ai_selected"));
+        config.array(L"translator.ai_profiles"));
 }
 
 PipelineOptions PipelineOptions::from_config(const ConfigStore& config) {
@@ -251,17 +243,17 @@ void PipelineController::self_test() {
     const auto empty_options = JsonObject::Parse(L"{}");
     const auto empty_profiles = JsonArray::Parse(L"[]");
     const auto unconfigured_deepl = resolve_endpoint(
-        L"deepl", JsonObject::Parse(L"{\"key\":\"\"}"), empty_profiles, L"");
+        L"deepl", JsonObject::Parse(L"{\"key\":\"\"}"), empty_profiles);
     if (unconfigured_deepl.provider != L"tencent_free") {
         throw AppError("pipeline self-test did not fall back from an empty DeepL key");
     }
     const auto configured_deepl = resolve_endpoint(
-        L"deepl", JsonObject::Parse(L"{\"key\":\"secret\"}"), empty_profiles, L"");
+        L"deepl", JsonObject::Parse(L"{\"key\":\"secret\"}"), empty_profiles);
     if (configured_deepl.provider != L"deepl" ||
         configured_deepl.options_json.find(L"secret") == std::wstring::npos) {
         throw AppError("pipeline self-test replaced a configured DeepL endpoint");
     }
-    const auto missing_ai = resolve_endpoint(L"ai", empty_options, empty_profiles, L"");
+    const auto missing_ai = resolve_endpoint(L"ai", empty_options, empty_profiles);
     if (missing_ai.provider != L"tencent_free") {
         throw AppError("pipeline self-test did not fall back from an empty AI profile");
     }
@@ -269,14 +261,42 @@ void PipelineController::self_test() {
         L"ai", empty_options,
         JsonArray::Parse(
             L"[{\"name\":\"work\",\"base_url\":\"https://example.test/v1\","
-            L"\"model\":\"test-model\"}]"),
-        L"work");
+            L"\"model\":\"test-model\",\"enabled\":true}]"));
     if (configured_ai.provider != L"ai" ||
         configured_ai.options_json.find(L"test-model") == std::wstring::npos) {
         throw AppError("pipeline self-test replaced a configured AI endpoint");
     }
+    // Only the endpoint the user enabled may serve requests: a complete but
+    // disabled row, an incomplete enabled row and a second enabled row must all
+    // leave the configured single endpoint in charge.
+    const auto disabled_ai = resolve_endpoint(
+        L"ai", empty_options,
+        JsonArray::Parse(
+            L"[{\"name\":\"work\",\"base_url\":\"https://example.test/v1\","
+            L"\"model\":\"test-model\",\"enabled\":false}]"));
+    if (disabled_ai.provider != L"tencent_free") {
+        throw AppError("pipeline self-test used a disabled AI endpoint");
+    }
+    const auto incomplete_ai = resolve_endpoint(
+        L"ai", empty_options,
+        JsonArray::Parse(
+            L"[{\"name\":\"work\",\"base_url\":\"https://example.test/v1\","
+            L"\"model\":\"\",\"enabled\":true}]"));
+    if (incomplete_ai.provider != L"tencent_free") {
+        throw AppError("pipeline self-test used an incomplete AI endpoint");
+    }
+    const auto first_enabled = resolve_endpoint(
+        L"ai", empty_options,
+        JsonArray::Parse(
+            L"[{\"name\":\"one\",\"base_url\":\"https://one.test/v1\","
+            L"\"model\":\"one-model\",\"enabled\":true},"
+            L"{\"name\":\"two\",\"base_url\":\"https://two.test/v1\","
+            L"\"model\":\"two-model\",\"enabled\":true}]"));
+    if (first_enabled.options_json.find(L"one-model") == std::wstring::npos) {
+        throw AppError("pipeline self-test did not keep the first enabled endpoint");
+    }
     const auto explicit_free = resolve_endpoint(
-        L"microsoft_free", empty_options, empty_profiles, L"");
+        L"microsoft_free", empty_options, empty_profiles);
     if (explicit_free.provider != L"microsoft_free") {
         throw AppError("pipeline self-test replaced an explicit free provider");
     }

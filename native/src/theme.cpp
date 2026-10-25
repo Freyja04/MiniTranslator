@@ -17,6 +17,10 @@ constexpr DWORD caption_color = 35;
 constexpr DWORD caption_text_color = 36;
 constexpr DWORD window_corner_preference = 33;
 
+// Counts the palette rewrites that windows cache against: fonts, brushes and
+// owner-drawn frames are only stale once these values actually moved.
+std::uint64_t visual_revision_counter = 0;
+
 std::wstring system_ui_font_family() {
     NONCLIENTMETRICSW metrics{sizeof(metrics)};
     if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics),
@@ -127,6 +131,10 @@ Mode parse_mode(std::wstring_view value) noexcept {
     return Mode::system;
 }
 
+std::uint64_t visual_revision() noexcept {
+    return visual_revision_counter;
+}
+
 void initialize(const ConfigStore& config) {
     mode = parse_mode(config.string(L"appearance.theme", L"system"));
     font_family = system_ui_font_family();
@@ -134,10 +142,14 @@ void initialize(const ConfigStore& config) {
 }
 
 void refresh_system_ui_font() {
-    font_family = system_ui_font_family();
+    const std::wstring updated = system_ui_font_family();
+    if (updated == font_family) return;
+    font_family = updated;
+    ++visual_revision_counter;
 }
 
 void apply_mode(Mode value) noexcept {
+    const bool was_dark = dark;
     mode = value;
     dark = value == Mode::dark ||
            (value == Mode::system && system_uses_dark_mode());
@@ -147,6 +159,7 @@ void apply_mode(Mode value) noexcept {
         apply_light_palette();
     }
     update_aliases();
+    if (dark != was_dark) ++visual_revision_counter;
 }
 
 void refresh_system_mode() noexcept {
