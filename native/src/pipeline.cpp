@@ -1,5 +1,6 @@
 #include "pipeline.hpp"
 
+#include "diagnostics.hpp"
 #include "language.hpp"
 #include "layout.hpp"
 #include "ocr.hpp"
@@ -524,6 +525,8 @@ void PipelineController::worker_failed() noexcept {
     try {
         std::lock_guard lock(mutex_);
         ++failed_workers_;
+        diagnostics::record(L"pipeline worker failed (" +
+                            std::to_wstring(failed_workers_) + L"/2)");
         if (failed_workers_ != 2 || shutting_down_) return;
         std::array<bool, 2> affected{};
         for (const auto& request : pending_) affected[lane_index(request->lane)] = true;

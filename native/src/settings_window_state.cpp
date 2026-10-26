@@ -1,6 +1,7 @@
 #include "settings_window.hpp"
 #include "settings_window_internal.hpp"
 
+#include "diagnostics.hpp"
 #include "settings_ai_dialog.hpp"
 #include "provider_key_dialog.hpp"
 #include "settings_provider.hpp"
@@ -233,22 +234,16 @@ void SettingsWindow::select_traditional(std::size_t index) {
 
 void SettingsWindow::schedule_profiles_save() {
     // The in-memory config is already written by write_profiles(), so the
-    // pipeline sees the new endpoint at once. Only the disk write and the
-    // settings-changed fan-out (tray RPC included) move to a short debounce:
-    // a click then repaints its row without waiting, and a burst of clicks
-    // collapses into one save instead of replaying blocked repaints for
-    // seconds afterwards.
-    profiles_save_pending_ = true;
-    if (window_ && IsWindow(window_)) {
-        SetTimer(window_, profiles_save_timer, profiles_save_debounce_ms, nullptr);
-    }
+    // pipeline sees the new endpoint at once. The disk write itself moves
+    // through the shared config_save_timer when save_values() next runs; this
+    // call only fans the settings-changed notification out so dependent views
+    // refresh at once.
+    if (settings_changed_callback_) settings_changed_callback_();
 }
 
 void SettingsWindow::flush_profiles_save() {
-    if (!profiles_save_pending_) return;
-    profiles_save_pending_ = false;
-    if (window_ && IsWindow(window_)) KillTimer(window_, profiles_save_timer);
-    save_values();
+    // Legacy entry point kept for the close/restart paths: persist now.
+    flush_config_save();
 }
 
 void SettingsWindow::select_ai_profile(std::size_t index) {
@@ -480,7 +475,15 @@ bool SettingsWindow::save_values() {
                                     config_.root().Stringify().c_str() != before;
         if (config_changed) {
             profile_write_dirty_ = false;
-            config_.save();
+            // The DPAPI round trip and disk write move to a short debounce:
+            // the in-memory config already serves the pipeline and callbacks,
+            // so a burst of interactions costs one write instead of one per
+            // control. flush_config_save() covers the paths that must not
+            // wait (close, restart, update).
+            config_save_pending_ = true;
+            if (window_ && IsWindow(window_)) {
+                SetTimer(window_, config_save_timer, config_save_debounce_ms, nullptr);
+            }
         }
         if (theme_changed) theme::apply_mode(static_cast<theme::Mode>(theme_choice));
         if (config_changed && settings_changed_callback_) settings_changed_callback_();
@@ -499,6 +502,31 @@ bool SettingsWindow::save_values() {
         const auto message = utf8_to_wide(error.what());
         set_status(message, true);
         return false;
+    }
+}
+
+void SettingsWindow::flush_config_save() {
+    if (!config_save_pending_) return;
+    config_save_pending_ = false;
+    if (window_ && IsWindow(window_)) KillTimer(window_, config_save_timer);
+    config_.save();
+}
+
+void SettingsWindow::open_diagnostics_folder() {
+    // The report doubles as the proof a failure happened: exporting and then
+    // revealing the file keeps the user one click away from sending it over.
+    const auto path = diagnostics::export_report();
+    if (path.empty()) {
+        set_status(L"诊断信息导出失败", true);
+        return;
+    }
+    set_status(L"");
+    const std::wstring arguments = L"/select,\"" + path + L"\"";
+    const INT_PTR result = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(window_, L"open", L"explorer.exe", arguments.c_str(),
+                      nullptr, SW_SHOWNORMAL));
+    if (result <= 32) {
+        set_status(L"无法打开诊断信息所在目录", true);
     }
 }
 

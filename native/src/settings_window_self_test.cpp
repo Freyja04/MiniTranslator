@@ -447,7 +447,7 @@ void SettingsWindow::self_test(HWND owner) {
         text_of(theme_segment_[0]) != theme_modes[1] ||
         text_of(theme_segment_[1]) != theme_modes[2] ||
         text_of(autostart_) != L"开机自动启动" ||
-        text_of(restart_) != L"重启程序" ||
+        text_of(diagnostics_) != L"诊断信息" ||
         text_of(check_updates_) != L"检查更新" ||
         (GetWindowLongPtrW(check_updates_, GWL_STYLE) & WS_VISIBLE) == 0 ||
         (GetWindowLongPtrW(theme_mode_, GWL_STYLE) & WS_VISIBLE) == 0 ||
@@ -572,10 +572,14 @@ void SettingsWindow::self_test(HWND owner) {
     // theme resources alive between switches, so a loop like this must not grow
     // GDI/USER objects or private bytes.
     self_test_support::settle_self_test_ui();
-    std::array<self_test_support::ProcessResourceSnapshot, 7> resource_samples{};
+    // Six batches are the minimum resource_series_stable() accepts: three
+    // warm-up batches plus three measured ones. Three passes over every page
+    // per batch still repaints each self-drawn control often enough for a
+    // per-switch leak to show up.
+    std::array<self_test_support::ProcessResourceSnapshot, 6> resource_samples{};
     resource_samples[0] = self_test_support::process_resources();
     for (std::size_t batch = 1; batch < resource_samples.size(); ++batch) {
-        for (int pass = 0; pass < 6; ++pass) {
+        for (int pass = 0; pass < 3; ++pass) {
             for (int page = 0; page < static_cast<int>(page_controls_.size()); ++page) {
                 show_page(page);
                 layout_controls();

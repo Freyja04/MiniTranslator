@@ -323,7 +323,7 @@ void SettingsWindow::layout_controls() {
             }
             MoveWindow(autostart_, inner_left, px(autostart_top, dpi_),
                        px(230, dpi_), control_height, FALSE);
-            MoveWindow(restart_, inner_left, px(actions_top, dpi_),
+            MoveWindow(diagnostics_, inner_left, px(actions_top, dpi_),
                        px(84, dpi_), control_height, FALSE);
             MoveWindow(check_updates_, inner_left + px(84, dpi_) + px(10, dpi_),
                        px(actions_top, dpi_), px(84, dpi_), control_height, FALSE);

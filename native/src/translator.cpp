@@ -727,6 +727,39 @@ std::vector<std::wstring> TranslatorService::translate_ai(
     if (texts.empty()) {
         return {};
     }
+    try {
+        return translate_ai_inner(options, texts, target, stop);
+    } catch (const HttpError& error) {
+        // Raw status codes say nothing about what to do next; map the common
+        // ones onto the fix the user actually needs.
+        std::wstring advice;
+        switch (error.status()) {
+        case 401:
+        case 403:
+            advice = L"密钥无效或没有权限，检查 API Key";
+            break;
+        case 404:
+            advice = L"接口地址或模型名不存在，检查 Base URL 并点「获取模型」刷新";
+            break;
+        case 429:
+            advice = L"请求太频繁或超出配额，稍等片刻再试";
+            break;
+        default:
+            if (error.status() >= 500) {
+                advice = L"接口服务暂时不可用，稍后重试";
+            } else {
+                advice = L"检查接口地址、密钥与模型设置";
+            }
+            break;
+        }
+        throw TranslateError(wide_to_utf8(advice + L"（" +
+                                         utf8_to_wide(error.what()) + L"）"));
+    }
+}
+
+std::vector<std::wstring> TranslatorService::translate_ai_inner(
+    const JsonObject& options, const std::vector<std::wstring>& texts,
+    std::wstring_view target, std::stop_token stop) {
     auto call = [&](const std::vector<std::wstring>& input, bool retry) {
         return ai_call(options, ai_system_prompt(target, retry),
                        make_string_array(input).Stringify().c_str(), stop);

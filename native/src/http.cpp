@@ -1,4 +1,5 @@
 #include "http.hpp"
+#include "diagnostics.hpp"
 #include "version.hpp"
 
 #include <algorithm>
@@ -138,7 +139,9 @@ HttpClient::~HttpClient() {
 }
 
 namespace {
-constexpr DWORD network_retry_delay_ms = 250;
+constexpr DWORD network_retry_delay_ms = 500;
+constexpr DWORD http_retry_status_low = 429;
+constexpr DWORD http_retry_status_high = 599;
 }  // namespace
 
 bool HttpError::retryable() const noexcept {
@@ -149,20 +152,32 @@ bool HttpError::retryable() const noexcept {
     case ERROR_WINHTTP_CONNECTION_ERROR:
         return true;
     default:
-        return false;
+        break;
     }
+    // Rate limits and server-side hiccups answer with a status but no
+    // translation; a backing-off retry turns a blip into a success without
+    // duplicating any side effect the endpoint already performed.
+    return status_ >= http_retry_status_low && status_ <= http_retry_status_high;
 }
 
 HttpResponse HttpClient::send(const HttpRequest& request, std::stop_token stop) const {
-    try {
-        return send_once(request, stop);
-    } catch (const HttpError& error) {
-        // One extra attempt, and only for failures where no response arrived:
-        // a retry cannot duplicate work the endpoint already performed.
-        if (!error.retryable() || stop.stop_requested()) throw;
-        Sleep(network_retry_delay_ms);
-        if (stop.stop_requested()) throw;
-        return send_once(request, stop);
+    // Transient failures (dropped connections, DNS hiccups, timeouts, 429/5xx)
+    // get up to two backing-off retries. Every attempt is cancellable, so a
+    // user-initiated stop never waits out the back-off sleep.
+    for (int attempt = 0;; ++attempt) {
+        try {
+            return send_once(request, stop);
+        } catch (const HttpError& error) {
+            if (attempt >= 2 || !error.retryable() || stop.stop_requested()) {
+                throw;
+            }
+            diagnostics::record(L"HTTP retry " +
+                                std::to_wstring(attempt + 1) + L" (status " +
+                                std::to_wstring(error.status()) + L"): " +
+                                utf8_to_wide(error.what()));
+            Sleep(network_retry_delay_ms << attempt);
+            if (stop.stop_requested()) throw;
+        }
     }
 }
 

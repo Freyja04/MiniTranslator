@@ -1,7 +1,9 @@
 #include "app.hpp"
+#include "diagnostics.hpp"
 #include "core_self_test.hpp"
 #include "result_renderer.hpp"
 #include "resource.h"
+#include "self_test_layers.hpp"
 #include "updater.hpp"
 #include "util.hpp"
 
@@ -38,6 +40,29 @@ bool has_argument(std::wstring_view expected) {
     }
     LocalFree(arguments);
     return found;
+}
+
+// Matches both "--self-test" and "--self-test=settings,quick". The value is
+// copied because the argv block is freed before the caller reads it.
+std::optional<std::wstring> argument_value(std::wstring_view name) {
+    int count = 0;
+    LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (!arguments) return std::nullopt;
+    std::optional<std::wstring> value;
+    for (int index = 1; index < count; ++index) {
+        const std::wstring_view argument = arguments[index];
+        if (argument == name) {
+            value = std::wstring{};
+            break;
+        }
+        if (argument.size() > name.size() && argument.starts_with(name) &&
+            argument[name.size()] == L'=') {
+            value = std::wstring(argument.substr(name.size() + 1));
+            break;
+        }
+    }
+    LocalFree(arguments);
+    return value;
 }
 
 void report_self_test_error(std::string_view message) noexcept {
@@ -103,15 +128,27 @@ void signal_existing_instance(bool text_translation) noexcept {
 int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
                     _In_ PWSTR, _In_ int) {
     initialize_dpi_awareness();
-    const bool self_test =
-        has_argument(L"--self-test") || has_argument(L"--selftest");
+    auto requested_layers = argument_value(L"--self-test");
+    if (!requested_layers) requested_layers = argument_value(L"--selftest");
+    const bool self_test = requested_layers.has_value();
     const bool update_self_test = has_argument(L"--update-self-test");
     const bool text_translation = has_argument(L"--text-translation");
+    minitrans::SelfTestLayer layers = minitrans::SelfTestLayer::all;
+    if (self_test && !requested_layers->empty()) {
+        const auto parsed = minitrans::parse_self_test_layers(*requested_layers);
+        if (!parsed) {
+            report_self_test_error(
+                "unknown --self-test layer; use all, headless, settings, "
+                "quick, editor or tray");
+            return EXIT_FAILURE;
+        }
+        layers = *parsed;
+    }
     bool update_helper = false;
     try {
         update_helper = minitrans::is_update_helper_request();
         if (update_helper) return minitrans::run_update_helper();
-        if (self_test) {
+        if (self_test && minitrans::has_layer(layers, minitrans::SelfTestLayer::headless)) {
             minitrans::core_self_test();
             minitrans::util_self_test();
             minitrans::config_self_test();
@@ -151,12 +188,17 @@ int WINAPI wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE,
                     config_path /= L"config.json";
                     std::filesystem::remove(config_path, error);
                 }
-                minitrans::AppHost app(instance, std::move(config_path));
-                result = app.run(self_test, update_self_test, text_translation);
+                minitrans::AppHost app(instance, std::move(config_path), layers);
+                result = app.run(self_test, update_self_test, text_translation,
+                                 layers);
             }
         }
         return result;
     } catch (const std::exception& error) {
+        if (update_helper && !update_self_test) {
+            minitrans::diagnostics::record(L"update helper failed: " +
+                                           minitrans::utf8_to_wide(error.what()));
+        }
         if (self_test || update_self_test) {
             report_self_test_error(error.what());
             return EXIT_FAILURE;

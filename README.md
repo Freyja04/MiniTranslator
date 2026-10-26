@@ -54,6 +54,8 @@ MiniTranslator 是一个 Windows 屏幕翻译工具：框选屏幕区域后，�
 
 配置文件位于 `%APPDATA%\MiniTranslator\config.json`。
 
+便携版把配置放在 exe 同目录：在该目录放一个名为 `MiniTranslator.portable` 的空文件，或让 `config.json` 就放在 exe 旁边，程序便就地读写，不再写 `%APPDATA%`。两者都没有时按普通安装版处理。整个文件夹连同配置一起拷走即可迁移。
+
 API 密钥使用当前 Windows 账户的 DPAPI 加密，磁盘中的值以 `dpapi:v1:` 开头；换到其他账户或电脑后无法解密。DPAPI 可以降低误传配置文件的泄露风险，但同一 Windows 账户下运行的其他程序仍可能解密。
 
 翻译文字会发送给当前选择的网络翻译服务。处理敏感内容时应关闭「译文自动复制到剪贴板」和 Windows 剪贴板历史，并避免把配置文件、日志或带密钥的截图提交到仓库。

@@ -32,6 +32,9 @@ constexpr UINT_PTR recapture_timer = 2;
 constexpr UINT_PTR update_timer = 3;
 constexpr UINT_PTR text_translate_timer = 4;
 constexpr UINT_PTR copy_toast_timer = 5;
+// Long enough that the tray icon, hotkeys and the first user interaction all
+// happen before a network check starts competing for the same thread pool.
+constexpr UINT update_check_delay_ms = 4000;
 constexpr int hotkey_capture = 1;
 constexpr int hotkey_toggle = 2;
 constexpr int hotkey_text_translate = 3;
@@ -44,10 +47,10 @@ constexpr UINT tray_icon_id = 1;
 
 }  // namespace
 
-AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
+AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path,
+                 SelfTestLayer self_test_layers)
     : instance_(instance),
-      config_(config_path.empty() ? app_data_directory() / L"config.json"
-                                  : std::move(config_path)),
+      config_(config_path.empty() ? default_config_path() : std::move(config_path)),
       settings_(instance, config_),
       overlay_(instance), result_(instance) {
     theme::initialize(config_);
@@ -59,7 +62,13 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
     text_session_ = std::make_unique<TextTranslationSession>(config_, *pipeline_);
     text_session_->set_source(config_.string(L"text.source", L"zh-Hans"));
     text_session_->set_target(config_.string(L"text.target", L"en"));
-    quick_window_ = std::make_unique<QuickTranslateWindow>(instance_, *text_session_);
+    // A run narrowed past the quick layer never shows that window; skipping it
+    // here keeps the layer's cost out of every other layer's run. Normal runs
+    // use the default (all) layer set, so nothing changes for them. Settings
+    // and the block editor already create their windows lazily.
+    if (has_layer(self_test_layers, SelfTestLayer::quick)) {
+        quick_window_ = std::make_unique<QuickTranslateWindow>(instance_, *text_session_);
+    }
     TextTranslationCallbacks text_callbacks;
     text_callbacks.input_changed = [this](std::wstring value) {
         on_text_input_changed(std::move(value));
@@ -116,7 +125,7 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
     };
     settings_.attach_text_translation(*text_session_, text_callbacks);
     settings_.set_capture_callback([this] { start_capture_from_settings(); });
-    quick_window_->set_callbacks(std::move(text_callbacks));
+    if (quick_window_) quick_window_->set_callbacks(std::move(text_callbacks));
     text_session_->set_changed_callback([this] { refresh_text_translation_views(); });
     result_.set_copy_callback([this](std::wstring_view text) { copy_to_clipboard(text); });
     result_.set_retry_callback([this] { retry_translation(); });
@@ -134,7 +143,6 @@ AppHost::AppHost(HINSTANCE instance, std::filesystem::path config_path)
     });
     result_.set_recapture_callback([this](const RECT& rect) { request_recapture(rect); });
     settings_.set_hotkeys_changed_callback([this] { return apply_hotkeys(true); });
-    settings_.set_restart_callback([this] { restart(); });
     settings_.set_update_check_callback([this] { start_update_check(); });
     settings_.set_settings_changed_callback([this] {
         refresh_pipeline_options();
@@ -937,7 +945,10 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
                        L"已启动，左键打开快速翻译，右键菜单可进入设置；按 " +
                        config_.string(L"hotkey", L"Ctrl+Alt+Q") + L" 截图翻译");
             }
-            SetTimer(window_, update_timer, 1500, nullptr);
+            // The silent update check is pure background work: give the
+            // window its first frame and the user's first click a clear field
+            // before it starts, instead of racing them at a fixed 1.5s.
+            SetTimer(window_, update_timer, update_check_delay_ms, nullptr);
         } catch (const std::exception& error) {
             const auto message_text = std::wstring(MINITRANS_DISPLAY_NAME) +
                                       L" 无法初始化通知区域图标。\n\n" +
@@ -1070,7 +1081,7 @@ LRESULT AppHost::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
 }
 
 int AppHost::run(bool self_test, bool update_self_test,
-                 bool text_translation_on_start) {
+                 bool text_translation_on_start, SelfTestLayer self_test_layers) {
     self_test_mode_ = self_test || update_self_test;
     update_self_test_mode_ = update_self_test;
     text_translation_on_start_ = text_translation_on_start;
@@ -1078,16 +1089,32 @@ int AppHost::run(bool self_test, bool update_self_test,
         start_silent_update_check();
     }
     if (self_test) {
-        PipelineController::self_test();
-        if (text_session_) text_session_->self_test();
-        tray_menu::layout_self_test();
-        HICON brand_icon = tray_menu::load_app_icon(instance_);
-        if (!brand_icon) throw AppError("application icon self-test failed");
-        DestroyIcon(brand_icon);
-        BlockEditor::self_test(instance_, window_);
-        settings_.self_test(window_);
-        updater_self_test();
-        if (quick_window_) quick_window_->self_test(window_);
+        // The window-independent checks run in wWinMain before any window
+        // exists; only the session's own rules need this object.
+        if (has_layer(self_test_layers, SelfTestLayer::headless)) {
+            SelfTestTimer timer(SelfTestLayer::headless);
+            PipelineController::self_test();
+            if (text_session_) text_session_->self_test();
+        }
+        if (has_layer(self_test_layers, SelfTestLayer::tray)) {
+            SelfTestTimer timer(SelfTestLayer::tray);
+            tray_menu::layout_self_test();
+            HICON brand_icon = tray_menu::load_app_icon(instance_);
+            if (!brand_icon) throw AppError("application icon self-test failed");
+            DestroyIcon(brand_icon);
+        }
+        if (has_layer(self_test_layers, SelfTestLayer::editor)) {
+            SelfTestTimer timer(SelfTestLayer::editor);
+            BlockEditor::self_test(instance_, window_);
+        }
+        if (has_layer(self_test_layers, SelfTestLayer::settings)) {
+            SelfTestTimer timer(SelfTestLayer::settings);
+            settings_.self_test(window_);
+        }
+        if (has_layer(self_test_layers, SelfTestLayer::quick)) {
+            SelfTestTimer timer(SelfTestLayer::quick);
+            if (quick_window_) quick_window_->self_test(window_);
+        }
         if (!PostMessageW(window_, WM_CLOSE, 0, 0)) {
             throw_last_error("queue self-test shutdown");
         }

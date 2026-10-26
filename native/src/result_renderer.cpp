@@ -677,6 +677,11 @@ PreparedResultRender prepare_result_render(
 
     std::vector<RECT> placed;
     std::vector<float> placed_heights;
+    // Regions whose translation came back empty or identical to the source:
+    // they keep the original pixels, and a faint tint marks them as
+    // "machine could not translate this" so the user knows a double click
+    // opens the proofreader.
+    std::vector<RECT> untranslated;
     placed.reserve(translations.size());
     placed_heights.reserve(translations.size());
     for (std::size_t index = 0; index < translations.size(); ++index) {
@@ -687,6 +692,7 @@ PreparedResultRender prepare_result_render(
             || trim(translated.translated) == trim(translated.block.text())) {
             placed.push_back(original);
             placed_heights.push_back(line_height);
+            untranslated.push_back(original);
             continue;
         }
         const int original_width = static_cast<int>(original.right - original.left);
@@ -794,6 +800,24 @@ PreparedResultRender prepare_result_render(
     if (!draw_translated_text(translated, output.layers, translations, output.font_family)) {
         // A partial draw must not reach the screen; restore the repaired pixels.
         translated = output.background;
+    }
+    // Faint amber wash over the untranslated regions: visible on close look,
+    // quiet at a glance, and gone once the user fixes the block in the editor.
+    for (const RECT& region : untranslated) {
+        const int inset = 2;
+        for (int y = std::max(0L, region.top + inset);
+             y < std::min(static_cast<LONG>(translated.height),
+                          region.bottom - inset); ++y) {
+            BYTE* row = translated.bgra.data() +
+                static_cast<std::size_t>(y) * translated.stride;
+            for (int x = std::max(0L, region.left + inset);
+                 x < std::min(static_cast<LONG>(translated.width),
+                              region.right - inset); ++x) {
+                BYTE* px = row + static_cast<std::size_t>(x) * 4;
+                px[2] = static_cast<BYTE>(std::min(255, px[2] + 18));  // +red
+                px[1] = static_cast<BYTE>(std::min(255, px[1] + 10));  // +green
+            }
+        }
     }
     output.translated = std::move(translated);
     DeleteDC(metrics_dc);

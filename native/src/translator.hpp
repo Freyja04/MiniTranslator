@@ -46,6 +46,10 @@ private:
         std::wstring_view system,
         std::wstring_view user,
         std::stop_token stop);
+    std::vector<std::wstring> translate_ai_inner(
+        const winrt::Windows::Data::Json::JsonObject& options,
+        const std::vector<std::wstring>& texts,
+        std::wstring_view target, std::stop_token stop);
     std::vector<std::wstring> translate_ai(
         const winrt::Windows::Data::Json::JsonObject& options,
         const std::vector<std::wstring>& texts,

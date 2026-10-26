@@ -49,6 +49,8 @@ add_executable(MiniTranslator WIN32
     src/core_self_test.hpp
     src/crypto.cpp
     src/crypto.hpp
+    src/diagnostics.cpp
+    src/diagnostics.hpp
     src/dpapi.cpp
     src/dpapi.hpp
     src/image_codec.cpp
@@ -95,14 +97,17 @@ add_executable(MiniTranslator WIN32
     src/settings_window_internal.cpp
     src/settings_window_internal.hpp
     src/settings_window_layout.cpp
+    src/settings_window_messages.cpp
     src/settings_window_pages.cpp
     src/settings_window_paint.cpp
     src/settings_window_self_test.cpp
     src/settings_window_state.cpp
+    src/self_test_layers.hpp
     src/text_translation_session.cpp
     src/text_translation_session.hpp
     src/text_translation_window.cpp
     src/text_translation_window.hpp
+    src/text_translation_window_messages.cpp
     src/theme.cpp
     src/theme.hpp
     src/tray_menu.cpp

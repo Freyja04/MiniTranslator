@@ -4,6 +4,7 @@
 #include "pipeline.hpp"
 #include "result_window.hpp"
 #include "selection_overlay.hpp"
+#include "self_test_layers.hpp"
 #include "settings_window.hpp"
 #include "text_translation_window.hpp"
 #include "updater.hpp"
@@ -26,15 +27,21 @@ class BlockEditor;
 
 class AppHost {
 public:
+    // self_test_layers only matters when the host is later run in self-test
+    // mode: layers that are not selected skip the windows they own.
     explicit AppHost(HINSTANCE instance,
-                     std::filesystem::path config_path = {});
+                     std::filesystem::path config_path = {},
+                     SelfTestLayer self_test_layers = SelfTestLayer::all);
     ~AppHost();
 
     AppHost(const AppHost&) = delete;
     AppHost& operator=(const AppHost&) = delete;
 
+    // self_test_layers narrows --self-test to the named layers; the default
+    // keeps the full sweep CI runs.
     int run(bool self_test = false, bool update_self_test = false,
-            bool text_translation_on_start = false);
+            bool text_translation_on_start = false,
+            SelfTestLayer self_test_layers = SelfTestLayer::all);
     [[nodiscard]] HWND handle() const noexcept { return window_; }
     static constexpr const wchar_t* window_class_name() noexcept {
         return L"MiniTranslator.Native.MessageWindow.v1";
@@ -108,7 +115,6 @@ private:
     void start_silent_update_check();
     std::optional<UpdateInfo> process_silent_update_check();
     void handle_update_available(const UpdateInfo& update);
-    void restart();
     void quit();
     ResultAppearance result_appearance() const;
 

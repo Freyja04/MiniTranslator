@@ -42,9 +42,6 @@ public:
     void set_hotkeys_changed_callback(std::function<bool()> callback) {
         hotkeys_changed_callback_ = std::move(callback);
     }
-    void set_restart_callback(std::function<void()> callback) {
-        restart_callback_ = std::move(callback);
-    }
     void set_settings_changed_callback(std::function<void()> callback) {
         settings_changed_callback_ = std::move(callback);
     }
@@ -91,6 +88,10 @@ private:
     // debounce, so a click repaints immediately and never waits on the save.
     static constexpr UINT_PTR profiles_save_timer = 21;
     static constexpr UINT profiles_save_debounce_ms = 150;
+    // Every settings write lands on disk through this debounce; the flushes
+    // at close/restart/update bypass it.
+    static constexpr UINT_PTR config_save_timer = 22;
+    static constexpr UINT config_save_debounce_ms = 150;
 
     static LRESULT CALLBACK window_proc(HWND window, UINT message,
                                         WPARAM wparam, LPARAM lparam);
@@ -155,6 +156,9 @@ private:
     // flush_profiles_save() runs it on the timer or before the window closes.
     void schedule_profiles_save();
     void flush_profiles_save();
+    // The single disk-write debounce for all settings; flushes immediately
+    // when callers must not wait (close, restart, update install).
+    void flush_config_save();
     // The shared tail of every endpoint-list write: repopulate, queue the
     // save, re-layout, and repaint the parent-drawn card.
     void finish_ai_list_change();
@@ -183,6 +187,8 @@ private:
     void clear_ai_hover(HWND list) noexcept;
     void set_status(std::wstring_view message, bool error = false);
     void close();
+    // Exports the diagnostics report and opens its folder in Explorer.
+    void open_diagnostics_folder();
 
     HINSTANCE instance_{};
     ConfigStore& config_;
@@ -216,7 +222,7 @@ private:
     std::array<HWND, 2> theme_segment_{};
     HWND auto_copy_{};
     HWND autostart_{};
-    HWND restart_{};
+    HWND diagnostics_{};
     HWND check_updates_{};
     HWND update_status_{};
     HWND text_capture_{};
@@ -250,6 +256,7 @@ private:
     // invalidates the rows whose dot or caption actually changed.
     std::vector<settings_ai_list::Row> ai_rows_shown_;
     bool profiles_save_pending_{};
+    bool config_save_pending_{};
     // Set when a list write changed the in-memory config, so the debounced
     // save knows the root differs from what the last snapshot recorded.
     bool profile_write_dirty_{};
@@ -273,7 +280,6 @@ private:
     bool update_status_error_{};
     std::jthread test_thread_;
     std::function<bool()> hotkeys_changed_callback_;
-    std::function<void()> restart_callback_;
     std::function<void()> settings_changed_callback_;
     std::function<void()> update_check_callback_;
     std::function<void()> capture_callback_;

@@ -84,6 +84,16 @@ std::wstring trim(std::wstring value);
 std::wstring lower_ascii(std::wstring value);
 std::filesystem::path executable_path();
 std::filesystem::path app_data_directory();
+// True when the executable's own folder should hold the configuration instead
+// of %APPDATA%: either a MiniTranslator.portable marker sits next to it, or a
+// config.json already does (a copied portable build the user has edited).
+bool portable_data_directory(std::filesystem::path& directory);
+// The decision itself, split out so the self-test can check it against
+// throwaway folders instead of wherever the test binary happens to live.
+bool folder_opts_into_portable(const std::filesystem::path& folder) noexcept;
+// %APPDATA%\MiniTranslator\config.json, or the executable's own folder when
+// portable_data_directory() opts in.
+std::filesystem::path default_config_path();
 COLORREF parse_rgb_color(std::wstring_view text,
                          COLORREF fallback = RGB(40, 199, 111)) noexcept;
 COLORREF adjust_rgb(COLORREF color, int amount) noexcept;

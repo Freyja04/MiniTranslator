@@ -124,24 +124,4 @@ void AppHost::handle_update_available(const UpdateInfo& update) {
                L" 已发布，打开设置窗口后点「检查更新」即可更新。");
 }
 
-void AppHost::restart() {
-    try {
-        const auto executable = executable_path();
-        std::wstring command_line = L"\"" + executable.wstring() + L"\" --restart-wait-pid " +
-                                    std::to_wstring(GetCurrentProcessId());
-        STARTUPINFOW startup{};
-        startup.cb = sizeof(startup);
-        PROCESS_INFORMATION process{};
-        if (!CreateProcessW(executable.c_str(), command_line.data(), nullptr, nullptr, FALSE, 0,
-                            nullptr, nullptr, &startup, &process)) {
-            throw_last_error("start replacement process");
-        }
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        quit();
-    } catch (const std::exception& error) {
-        notify(MINITRANS_DISPLAY_NAME, L"重启失败：" + utf8_to_wide(error.what()));
-    }
-}
-
 }  // namespace minitrans

@@ -207,10 +207,7 @@ std::filesystem::path preserve_config(const std::filesystem::path& path, bool mo
 
 }  // namespace
 
-ConfigStore::ConfigStore()
-    : path_(app_data_directory() / L"config.json"), root_(defaults()) {
-    load();
-}
+ConfigStore::ConfigStore() : ConfigStore(default_config_path()) {}
 
 ConfigStore::ConfigStore(const std::filesystem::path& path)
     : path_(path), root_(defaults()) {

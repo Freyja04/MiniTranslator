@@ -348,14 +348,21 @@ void check_http_retry() {
     const HttpError unresolved("unresolved", 0, ERROR_WINHTTP_NAME_NOT_RESOLVED);
     const HttpError dropped("dropped", 0, ERROR_WINHTTP_CONNECTION_ERROR);
     const HttpError certificate("certificate", 0, ERROR_WINHTTP_SECURE_FAILURE);
-    const HttpError status("bad status", 500);
+    const HttpError server("server error", 503);
+    const HttpError rate_limited("rate limited", 429);
+    const HttpError client("bad request", 400);
     check(timeout.retryable() && refused.retryable() && unresolved.retryable() &&
               dropped.retryable(),
           "the HTTP retry policy stopped covering transient network failures");
-    check(!certificate.retryable() && !status.retryable() &&
+    // Rate limits and server-side failures answer with a status but performed
+    // no translation, so backing off and retrying them is safe; 4xx client
+    // errors would fail identically on every attempt.
+    check(rate_limited.retryable() && server.retryable(),
+          "the HTTP retry policy stopped covering 429/5xx responses");
+    check(!certificate.retryable() && !client.retryable() &&
               !HttpError("plain").retryable(),
-          "the HTTP retry policy would repeat a request that already reached the endpoint");
-    check(timeout.status() == 0 && status.status() == 500,
+          "the HTTP retry policy would repeat a request that already failed on our side");
+    check(timeout.status() == 0 && server.status() == 503,
           "the HTTP error status changed");
     const std::string described = describe_win32_error("probe", ERROR_WINHTTP_TIMEOUT);
     check(described.rfind("probe: ", 0) == 0 && described.size() > 8,

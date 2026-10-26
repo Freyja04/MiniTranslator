@@ -149,10 +149,10 @@ void draw_segment_option(HDC dc, const RECT& bounds, std::wstring_view caption,
                          HBRUSH surface) {
     FillRect(dc, &bounds, surface);
     if (active) {
-        // The raised chip keeps the input fill with a hairline border; focus
-        // does not recolour it.
-        fill_round_rect(dc, bounds, px(7, dpi), color_input,
-                        focused || hot ? color_line_high : color_line);
+        // One selected look everywhere: a raised nav-active block with the
+        // bright caption, the same treatment as the 类别 switch.
+        fill_round_rect(dc, bounds, px(7, dpi), color_nav_active,
+                        focused || hot ? color_line_high : color_nav_active);
     } else {
         // The inactive caption keeps the field colour so the row reads as one
         // pill; hot brightens it like the other quiet buttons.

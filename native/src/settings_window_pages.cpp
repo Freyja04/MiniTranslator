@@ -173,8 +173,8 @@ void SettingsWindow::create_other_page() {
     }
     autostart_ = add_control(3, 0, L"BUTTON", L"开机自动启动",
                              BS_OWNERDRAW | WS_TABSTOP);
-    restart_ = add_control(3, 0, L"BUTTON", L"重启程序",
-                           BS_OWNERDRAW | WS_TABSTOP, id_restart);
+    diagnostics_ = add_control(3, 0, L"BUTTON", L"诊断信息",
+                           BS_OWNERDRAW | WS_TABSTOP, id_diagnostics);
     check_updates_ = add_control(3, 0, L"BUTTON", L"检查更新",
                                  BS_OWNERDRAW | WS_TABSTOP, id_check_updates);
     // Inline progress/outcome for the update check, shown right of the button.

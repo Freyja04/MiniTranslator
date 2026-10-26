@@ -115,6 +115,37 @@ std::filesystem::path app_data_directory() {
     return std::filesystem::path(value) / L"MiniTranslator";
 }
 
+std::filesystem::path default_config_path() {
+    std::filesystem::path portable;
+    const auto folder = portable_data_directory(portable)
+                            ? std::move(portable) : app_data_directory();
+    return folder / L"config.json";
+}
+
+bool folder_opts_into_portable(const std::filesystem::path& folder) noexcept {
+    if (folder.empty()) return false;
+    // A marker file opts in explicitly; an existing config.json next to the
+    // executable also counts, so unzipping a copy and running it keeps working
+    // once the user has edited that file. Both checks are cheap and run before
+    // anything reads APPDATA.
+    std::error_code error;
+    if (std::filesystem::exists(folder / L"MiniTranslator.portable", error)) {
+        return true;
+    }
+    error.clear();
+    return std::filesystem::exists(folder / L"config.json", error);
+}
+
+bool portable_data_directory(std::filesystem::path& directory) {
+    std::error_code error;
+    const auto executable = executable_path();
+    if (executable.empty() || error) return false;
+    auto folder = executable.parent_path();
+    if (!folder_opts_into_portable(folder)) return false;
+    directory = std::move(folder);
+    return true;
+}
+
 COLORREF parse_rgb_color(std::wstring_view text, COLORREF fallback) noexcept {
     if (text.size() != 7 || text.front() != L'#') return fallback;
     unsigned value = 0;
@@ -279,6 +310,38 @@ void util_self_test() {
     if (path.empty() || !std::filesystem::is_regular_file(path, error) || error) {
         throw AppError("Win32 utility executable path self-test failed");
     }
+
+    // Portable opt-in: a marker file wins, an existing config.json next to the
+    // executable also counts, and an empty folder stays on %APPDATA%.
+    auto folder = std::filesystem::temp_directory_path(error);
+    if (error) folder = std::filesystem::current_path(error);
+    if (error) throw AppError("portable self-test cannot find a working directory");
+    folder /= L"MiniTranslator-portable-self-test";
+    std::filesystem::remove_all(folder, error);
+    std::filesystem::create_directories(folder, error);
+    if (error) throw AppError("portable self-test cannot create its folder");
+    if (folder_opts_into_portable(folder)) {
+        std::filesystem::remove_all(folder, error);
+        throw AppError("portable self-test treated an empty folder as portable");
+    }
+    {
+        std::ofstream marker(folder / L"MiniTranslator.portable");
+        marker << "portable\n";
+    }
+    if (!folder_opts_into_portable(folder)) {
+        std::filesystem::remove_all(folder, error);
+        throw AppError("portable self-test ignored the marker file");
+    }
+    std::filesystem::remove(folder / L"MiniTranslator.portable", error);
+    {
+        std::ofstream config(folder / L"config.json");
+        config << "{}\n";
+    }
+    if (!folder_opts_into_portable(folder)) {
+        std::filesystem::remove_all(folder, error);
+        throw AppError("portable self-test ignored an existing config.json");
+    }
+    std::filesystem::remove_all(folder, error);
 }
 
 }  // namespace minitrans

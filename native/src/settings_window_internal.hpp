@@ -44,7 +44,7 @@ constexpr int id_nav_first = 7001;
 constexpr int id_nav_last = id_nav_first + 4;
 constexpr int id_provider = 7010;
 constexpr int id_test = 7013;
-constexpr int id_restart = 7015;
+constexpr int id_diagnostics = 7015;
 // The segmented 主题 row: three consecutive ids after the page's other
 // controls, clear of the 7018+ text-translation range below.
 constexpr int id_theme_mode = 7140;
@@ -250,7 +250,7 @@ namespace other_index {
 constexpr std::size_t theme_label = 0;
 constexpr std::size_t theme_combo = 1;
 constexpr std::size_t autostart_checkbox = 2;
-constexpr std::size_t restart = 3;
+constexpr std::size_t diagnostics = 3;
 constexpr std::size_t check_updates = 4;
 }  // namespace other_index
 

@@ -198,17 +198,22 @@ std::vector<OcrLine> recognize_windows_ocr(
         throw OcrError("Windows has no OCR language pack installed");
     }
 
+    // Stretch the contrast first: the OCR engine reads crisp black-on-white
+    // far better than a washed-out screenshot, and the histogram stretch is
+    // cheap relative to recognition itself.
+    const PixelBuffer normalized = normalize_contrast_bgra(image);
+
     double scale = 1.0;
-    const int longest = std::max(image.width, image.height);
+    const int longest = std::max(normalized.width, normalized.height);
     if (upscale && longest < 1600) {
         scale = std::min(3.0, std::max(1.0, 1400.0 / std::max(1, longest)));
     }
     PixelBuffer resized;
-    const PixelBuffer* work = &image;
+    const PixelBuffer* work = &normalized;
     if (scale > 1.05) {
-        resized = resize_bgra(image,
-                              std::max(1, static_cast<int>(image.width * scale)),
-                              std::max(1, static_cast<int>(image.height * scale)));
+        resized = resize_bgra(normalized,
+                              std::max(1, static_cast<int>(normalized.width * scale)),
+                              std::max(1, static_cast<int>(normalized.height * scale)));
         work = &resized;
     } else {
         scale = 1.0;
