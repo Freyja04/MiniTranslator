@@ -146,19 +146,6 @@ bool portable_data_directory(std::filesystem::path& directory) {
     return true;
 }
 
-COLORREF parse_rgb_color(std::wstring_view text, COLORREF fallback) noexcept {
-    if (text.size() != 7 || text.front() != L'#') return fallback;
-    unsigned value = 0;
-    for (const wchar_t character : text.substr(1)) {
-        value <<= 4;
-        if (character >= L'0' && character <= L'9') value += character - L'0';
-        else if (character >= L'a' && character <= L'f') value += character - L'a' + 10;
-        else if (character >= L'A' && character <= L'F') value += character - L'A' + 10;
-        else return fallback;
-    }
-    return RGB((value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF);
-}
-
 COLORREF adjust_rgb(COLORREF color, int amount) noexcept {
     const auto channel = [amount](BYTE value) {
         return static_cast<BYTE>(std::clamp(static_cast<int>(value) + amount, 0, 255));
@@ -298,10 +285,7 @@ bool copy_text_to_clipboard(HWND owner, std::wstring_view text) noexcept {
 }
 
 void util_self_test() {
-    constexpr COLORREF fallback = RGB(9, 8, 7);
-    if (parse_rgb_color(L"#123456", fallback) != RGB(0x12, 0x34, 0x56) ||
-        parse_rgb_color(L"#12xx56", fallback) != fallback ||
-        adjust_rgb(RGB(250, 4, 100), 10) != RGB(255, 14, 110) ||
+    if (adjust_rgb(RGB(250, 4, 100), 10) != RGB(255, 14, 110) ||
         adjust_rgb(RGB(5, 30, 0), -10) != RGB(0, 20, 0)) {
         throw AppError("Win32 utility color self-test failed");
     }

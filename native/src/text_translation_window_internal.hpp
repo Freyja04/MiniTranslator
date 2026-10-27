@@ -12,6 +12,7 @@
 #include "resource.h"
 #include "theme.hpp"
 #include "ui_controls.hpp"
+#include "ui_draw.hpp"
 #include "ui_icons.hpp"
 #include "util.hpp"
 
@@ -65,15 +66,15 @@ using self_test_support::resource_series_stable;
 using self_test_support::settle_self_test_ui;
 
 
-HMENU control_id(int id) noexcept {
+inline HMENU control_id(int id) noexcept {
     return reinterpret_cast<HMENU>(static_cast<INT_PTR>(id));
 }
 
-int scaled(int value, int dpi) noexcept {
+inline int scaled(int value, int dpi) noexcept {
     return MulDiv(value, dpi, 96);
 }
 
-std::wstring window_text(HWND control) {
+inline std::wstring window_text(HWND control) {
     if (!control) return {};
     const int length = GetWindowTextLengthW(control);
     if (length <= 0) return {};
@@ -83,7 +84,7 @@ std::wstring window_text(HWND control) {
     return value;
 }
 
-void register_window_class(HINSTANCE instance, const wchar_t* name, WNDPROC procedure) {
+inline void register_window_class(HINSTANCE instance, const wchar_t* name, WNDPROC procedure) {
     WNDCLASSEXW description{};
     description.cbSize = sizeof(description);
     description.style = CS_HREDRAW | CS_VREDRAW;
@@ -97,24 +98,24 @@ void register_window_class(HINSTANCE instance, const wchar_t* name, WNDPROC proc
     }
 }
 
-void apply_dark_frame(HWND window, bool quick) {
+inline void apply_dark_frame(HWND window, bool quick) {
     theme::apply_window_theme(window, true, !quick);
 }
 
-HFONT create_font(int dpi, int logical_pixels, int weight,
+inline HFONT create_font(int dpi, int logical_pixels, int weight,
                   const std::wstring& family) {
     return CreateFontW(-scaled(logical_pixels, dpi), 0, 0, 0, weight, FALSE, FALSE,
                        FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, family.c_str());
 }
 
-int CALLBACK find_icon_font_family(const LOGFONTW*, const TEXTMETRICW*, DWORD,
-                                   LPARAM data) {
+inline int CALLBACK find_icon_font_family(const LOGFONTW*, const TEXTMETRICW*, DWORD,
+                                          LPARAM data) {
     *reinterpret_cast<bool*>(data) = true;
     return 0;
 }
 
-bool icon_font_family_available(HDC dc, const wchar_t* face) {
+inline bool icon_font_family_available(HDC dc, const wchar_t* face) {
     LOGFONTW query{};
     query.lfCharSet = DEFAULT_CHARSET;
     if (wcsncpy_s(query.lfFaceName, LF_FACESIZE, face, _TRUNCATE) != 0) {
@@ -126,7 +127,7 @@ bool icon_font_family_available(HDC dc, const wchar_t* face) {
     return found;
 }
 
-HFONT create_icon_font(int dpi, int logical_pixels) {
+inline HFONT create_icon_font(int dpi, int logical_pixels) {
     // Segoe Fluent Icons only ships with newer Windows builds. Fall back to
     // Segoe MDL2 Assets so the icon buttons also render on Windows 10.
     constexpr std::array<const wchar_t*, 3> faces{
@@ -143,11 +144,11 @@ HFONT create_icon_font(int dpi, int logical_pixels) {
     return nullptr;
 }
 
-void set_control_font(HWND control, HFONT font) {
+inline void set_control_font(HWND control, HFONT font) {
     if (control && font) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
 }
 
-void add_tooltip(HWND owner, HWND control, const wchar_t* text) {
+inline void add_tooltip(HWND owner, HWND control, const wchar_t* text) {
     HWND tooltip = CreateWindowExW(
         WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
         WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
@@ -168,7 +169,7 @@ void add_tooltip(HWND owner, HWND control, const wchar_t* text) {
     }
 }
 
-void populate_targets(HWND combo, bool include_auto) {
+inline void populate_targets(HWND combo, bool include_auto) {
     SendMessageW(combo, CB_RESETCONTENT, 0, 0);
     if (include_auto) {
         SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"自动选择"));
@@ -180,7 +181,7 @@ void populate_targets(HWND combo, bool include_auto) {
     SendMessageW(combo, CB_SETCURSEL, 0, 0);
 }
 
-int target_index(std::wstring_view target, bool include_auto) {
+inline int target_index(std::wstring_view target, bool include_auto) {
     const int offset = include_auto ? 1 : 0;
     if (target.empty()) return include_auto ? 0 : -1;
     const auto& targets = text_translation_targets();
@@ -190,7 +191,7 @@ int target_index(std::wstring_view target, bool include_auto) {
                : static_cast<int>(std::distance(targets.begin(), found)) + offset;
 }
 
-std::wstring target_at(HWND combo, bool include_auto) {
+inline std::wstring target_at(HWND combo, bool include_auto) {
     const LRESULT selected = SendMessageW(combo, CB_GETCURSEL, 0, 0);
     const int offset = include_auto ? 1 : 0;
     if (selected < offset) return {};
@@ -199,7 +200,7 @@ std::wstring target_at(HWND combo, bool include_auto) {
     return index < targets.size() ? std::wstring(targets[index]) : std::wstring{};
 }
 
-std::wstring session_status(const TextTranslationSession& session) {
+inline std::wstring session_status(const TextTranslationSession& session) {
     switch (session.state()) {
     case TextTranslationState::idle:
         return L"等待输入中...";
@@ -217,30 +218,22 @@ std::wstring session_status(const TextTranslationSession& session) {
     return {};
 }
 
-bool message_for(HWND window, const MSG& message) noexcept {
+inline bool message_for(HWND window, const MSG& message) noexcept {
     return window && (message.hwnd == window || IsChild(window, message.hwnd));
 }
 
-void fill_rect(HDC dc, const RECT& rect, COLORREF color) {
+inline void fill_rect(HDC dc, const RECT& rect, COLORREF color) {
     HBRUSH brush = CreateSolidBrush(color);
     FillRect(dc, &rect, brush);
     DeleteObject(brush);
 }
 
-void draw_rounded_control(HDC dc, RECT bounds, COLORREF fill, COLORREF border,
+inline void draw_rounded_control(HDC dc, RECT bounds, COLORREF fill, COLORREF border,
                           int radius) {
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    const HGDIOBJ old_brush = SelectObject(dc, brush);
-    const HGDIOBJ old_pen = SelectObject(dc, pen);
-    RoundRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom, radius, radius);
-    SelectObject(dc, old_pen);
-    SelectObject(dc, old_brush);
-    DeleteObject(pen);
-    DeleteObject(brush);
+    ui_draw::rounded_rect(dc, bounds, radius, fill, border);
 }
 
-void draw_label(HDC dc, std::wstring_view text, RECT bounds, HFONT font,
+inline void draw_label(HDC dc, std::wstring_view text, RECT bounds, HFONT font,
                 COLORREF color, UINT format) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, color);
@@ -250,7 +243,7 @@ void draw_label(HDC dc, std::wstring_view text, RECT bounds, HFONT font,
     if (previous) SelectObject(dc, previous);
 }
 
-int measure_label_width(HWND window, HFONT font, std::wstring_view text) {
+inline int measure_label_width(HWND window, HFONT font, std::wstring_view text) {
     HDC dc = GetDC(window);
     if (!dc) return 0;
     const HGDIOBJ previous = font ? SelectObject(dc, font) : nullptr;
@@ -261,7 +254,7 @@ int measure_label_width(HWND window, HFONT font, std::wstring_view text) {
     return extent.cx;
 }
 
-std::wstring target_selector_text(const TextTranslationSession& session,
+inline std::wstring target_selector_text(const TextTranslationSession& session,
                                   bool compact = false) {
     // The target is always a concrete language now; the auto picker is gone.
     auto target = target_display_name(session.effective_target());
@@ -272,17 +265,17 @@ std::wstring target_selector_text(const TextTranslationSession& session,
     return target;
 }
 
-std::wstring source_selector_text(const TextTranslationSession& session) {
+inline std::wstring source_selector_text(const TextTranslationSession& session) {
     return session.source().empty() ? std::wstring(L"自动识别")
                                     : target_display_name(session.source());
 }
 
-void quick_round_rect(HDC dc, const RECT& bounds, int radius, COLORREF fill,
+inline void quick_round_rect(HDC dc, const RECT& bounds, int radius, COLORREF fill,
                       COLORREF border) {
     draw_rounded_control(dc, bounds, fill, border, radius);
 }
 
-void draw_target_selector(HWND combo, HDC dc, HFONT font, int dpi,
+inline void draw_target_selector(HWND combo, HDC dc, HFONT font, int dpi,
                           COLORREF accent, std::wstring_view value) {
     if (!combo || !dc) return;
     RECT bounds{};
@@ -301,7 +294,7 @@ void draw_target_selector(HWND combo, HDC dc, HFONT font, int dpi,
     ui_controls::draw_field(dc, bounds, value, style, quick_round_rect);
 }
 
-void style_target_popup(HWND combo, int dpi, bool update_selection_height = true) {
+inline void style_target_popup(HWND combo, int dpi, bool update_selection_height = true) {
     if (!combo) return;
     if (update_selection_height) {
         SendMessageW(combo, CB_SETITEMHEIGHT, static_cast<WPARAM>(-1), scaled(30, dpi));
@@ -374,13 +367,13 @@ void style_target_popup(HWND combo, int dpi, bool update_selection_height = true
                  SWP_NOACTIVATE);
 }
 
-bool point_in_window(HWND control, POINT screen_point) noexcept {
+inline bool point_in_window(HWND control, POINT screen_point) noexcept {
     RECT bounds{};
     return control && GetWindowRect(control, &bounds) &&
            PtInRect(&bounds, screen_point) != FALSE;
 }
 
-LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
+inline LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
                         HFONT icon_font, HFONT action_icon_font,
                         HFONT close_icon_font) {
     if (item.CtlType == ODT_BUTTON) {
@@ -470,7 +463,7 @@ LRESULT draw_owner_item(const DRAWITEMSTRUCT& item, HFONT font, COLORREF accent,
     return FALSE;
 }
 
-void position_near_anchor(HWND window, POINT anchor) {
+inline void position_near_anchor(HWND window, POINT anchor) {
     const HMONITOR monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info{sizeof(info)};
     GetMonitorInfoW(monitor, &info);
@@ -521,7 +514,7 @@ constexpr UINT_PTR output_editor_subclass_id = 1;
 
 // The translation output is a display-only editor: focus attempts are sent to
 // the source editor so the output never shows a caret or a selection frame.
-LRESULT CALLBACK keep_editor_unfocused(HWND control, UINT message, WPARAM wparam,
+inline LRESULT CALLBACK keep_editor_unfocused(HWND control, UINT message, WPARAM wparam,
                                        LPARAM lparam, UINT_PTR, DWORD_PTR reference) {
     if (message == WM_SETFOCUS || message == WM_LBUTTONDOWN ||
         message == WM_LBUTTONDBLCLK) {

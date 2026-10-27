@@ -94,8 +94,6 @@ bool folder_opts_into_portable(const std::filesystem::path& folder) noexcept;
 // %APPDATA%\MiniTranslator\config.json, or the executable's own folder when
 // portable_data_directory() opts in.
 std::filesystem::path default_config_path();
-COLORREF parse_rgb_color(std::wstring_view text,
-                         COLORREF fallback = RGB(40, 199, 111)) noexcept;
 COLORREF adjust_rgb(COLORREF color, int amount) noexcept;
 std::string read_utf8_file(const std::filesystem::path& path);
 void write_utf8_file_atomic(const std::filesystem::path& path, std::string_view content);

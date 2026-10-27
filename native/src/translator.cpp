@@ -1,6 +1,7 @@
 #include "translator.hpp"
 
 #include "crypto.hpp"
+#include "json_field.hpp"
 #include "language.hpp"
 
 #include <winrt/Windows.Foundation.h>
@@ -21,33 +22,6 @@ namespace {
 constexpr wchar_t browser_user_agent[] =
     L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     L"AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
-
-std::wstring json_string(const JsonObject& object, std::wstring_view name,
-                         std::wstring_view fallback = {}) {
-    try {
-        if (object && object.HasKey(name)) {
-            const auto value = object.Lookup(name);
-            if (value && value.ValueType() == JsonValueType::String) {
-                return value.GetString().c_str();
-            }
-        }
-    } catch (...) {
-    }
-    return std::wstring(fallback);
-}
-
-bool json_bool(const JsonObject& object, std::wstring_view name, bool fallback) {
-    try {
-        if (object && object.HasKey(name)) {
-            const auto value = object.Lookup(name);
-            if (value && value.ValueType() == JsonValueType::Boolean) {
-                return value.GetBoolean();
-            }
-        }
-    } catch (...) {
-    }
-    return fallback;
-}
 
 JsonObject parse_object(const HttpResponse& response, std::wstring_view label) {
     try {
@@ -97,7 +71,7 @@ std::pair<std::size_t, std::size_t> limits(std::wstring_view provider) {
 // three variants differ only in the wire format of a single request, so the
 // translation prompts stay shared.
 std::wstring ai_protocol(const JsonObject& options) {
-    const auto value = trim(json_string(options, L"protocol"));
+    const auto value = trim(json_field::string(options, L"protocol"));
     if (value == L"openai_responses" || value == L"anthropic_messages") {
         return value;
     }
@@ -137,11 +111,11 @@ std::vector<std::wstring> deepl_translate(
     HttpClient& http, const JsonObject& options, const std::vector<std::wstring>& texts,
     std::wstring_view target, const std::optional<std::wstring>& source,
     std::stop_token stop) {
-    const auto key = trim(json_string(options, L"key"));
+    const auto key = trim(json_field::string(options, L"key"));
     if (key.empty()) {
         throw TranslateError("尚未填写 DeepL 密钥");
     }
-    const bool free = json_bool(options, L"free_plan", true) || key.ends_with(L":fx");
+    const bool free = json_field::boolean(options, L"free_plan", true) || key.ends_with(L":fx");
     const std::wstring host = free ? L"https://api-free.deepl.com" : L"https://api.deepl.com";
     constexpr std::array codes{
         std::pair{std::wstring_view(L"zh-Hans"), std::wstring_view(L"ZH")},
@@ -594,13 +568,13 @@ std::vector<std::wstring> TranslatorService::translate_batch(
 std::wstring TranslatorService::ai_call(
     const JsonObject& options, std::wstring_view system, std::wstring_view user,
     std::stop_token stop) {
-    const auto key = trim(json_string(options, L"key"));
+    const auto key = trim(json_field::string(options, L"key"));
     const auto protocol = ai_protocol(options);
-    const auto model = trim(json_string(options, L"model"));
+    const auto model = trim(json_field::string(options, L"model"));
     if (model.empty()) {
         throw TranslateError("尚未选择模型，请先获取模型列表");
     }
-    auto base = normalize_ai_root(json_string(options, L"base_url"));
+    auto base = normalize_ai_root(json_field::string(options, L"base_url"));
     if (base.empty()) {
         throw TranslateError("尚未填写接口地址（Base URL）");
     }
@@ -814,9 +788,9 @@ std::vector<std::wstring> TranslatorService::translate_ai_inner(
 
 std::vector<std::wstring> TranslatorService::list_models(
     const JsonObject& options, std::stop_token stop) {
-    const auto key = trim(json_string(options, L"key"));
+    const auto key = trim(json_field::string(options, L"key"));
     const auto protocol = ai_protocol(options);
-    auto base = normalize_ai_root(json_string(options, L"base_url"));
+    auto base = normalize_ai_root(json_field::string(options, L"base_url"));
     if (base.empty()) throw TranslateError("尚未填写接口地址（Base URL）");
     base = validate_api_base_url(base, L"接口地址", !key.empty(), true);
     const auto secrets = key.empty() ? std::span<const std::wstring>()

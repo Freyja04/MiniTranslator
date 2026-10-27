@@ -62,6 +62,28 @@ public:
     };
 
 private:
+    // Identifiers the message handlers in app_messages.cpp share with the
+    // constructor and the tray helpers in app.cpp.
+    static constexpr UINT tray_message = WM_APP + 2;
+    static constexpr UINT initialize_message = WM_APP + 3;
+    static constexpr UINT_PTR capture_timer = 1;
+    static constexpr UINT_PTR recapture_timer = 2;
+    static constexpr UINT_PTR update_timer = 3;
+    static constexpr UINT_PTR text_translate_timer = 4;
+    static constexpr UINT_PTR copy_toast_timer = 5;
+    // Long enough that the tray icon, hotkeys and the first user interaction
+    // all happen before a network check starts competing for the same thread
+    // pool.
+    static constexpr UINT update_check_delay_ms = 4000;
+    static constexpr int hotkey_capture = 1;
+    static constexpr int hotkey_toggle = 2;
+    static constexpr int hotkey_text_translate = 3;
+    static constexpr UINT command_capture = 3001;
+    static constexpr UINT command_restore = 3002;
+    static constexpr UINT command_settings = 3003;
+    static constexpr UINT command_exit = 3006;
+    static constexpr UINT command_text_translate = 3007;
+    static constexpr UINT tray_icon_id = 1;
     static LRESULT CALLBACK window_proc(HWND window, UINT message,
                                         WPARAM wparam, LPARAM lparam);
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam);

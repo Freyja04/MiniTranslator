@@ -38,6 +38,7 @@ endif()
 add_executable(MiniTranslator WIN32
     src/app.cpp
     src/app.hpp
+    src/app_messages.cpp
     src/app_update.cpp
     src/block_editor.cpp
     src/block_editor.hpp
@@ -61,6 +62,7 @@ add_executable(MiniTranslator WIN32
     src/hotkey.hpp
     src/language.cpp
     src/language.hpp
+    src/json_field.hpp
     src/language_catalog.hpp
     src/layout.cpp
     src/layout.hpp
@@ -81,6 +83,7 @@ add_executable(MiniTranslator WIN32
     src/result_window_render.cpp
     src/MiniTranslator.rc
     src/selection_overlay.cpp
+    src/self_test_support.hpp
     src/selection_overlay.hpp
     src/settings_catalog.hpp
     src/settings_ai_dialog.cpp
@@ -106,6 +109,7 @@ add_executable(MiniTranslator WIN32
     src/text_translation_session.cpp
     src/text_translation_session.hpp
     src/text_translation_window.cpp
+    src/text_translation_window_internal.hpp
     src/text_translation_window.hpp
     src/text_translation_window_messages.cpp
     src/theme.cpp

@@ -1,6 +1,7 @@
 #include "settings_window_internal.hpp"
 
 #include "ui_controls.hpp"
+#include "ui_draw.hpp"
 
 #include <algorithm>
 
@@ -82,64 +83,7 @@ void set_rounded_control_region(HWND control, int radius) noexcept {
 
 void fill_round_rect(HDC dc, const RECT& rect, int radius,
                      COLORREF fill, COLORREF border) {
-    static ID2D1Factory* factory = [] {
-        ID2D1Factory* value = nullptr;
-        D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &value);
-        return value;
-    }();
-    ID2D1DCRenderTarget* target = nullptr;
-    if (factory && rect.right > rect.left && rect.bottom > rect.top) {
-        D2D1_RENDER_TARGET_PROPERTIES properties{};
-        properties.type = D2D1_RENDER_TARGET_TYPE_DEFAULT;
-        properties.pixelFormat.format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        properties.pixelFormat.alphaMode = D2D1_ALPHA_MODE_IGNORE;
-        properties.usage = D2D1_RENDER_TARGET_USAGE_NONE;
-        properties.minLevel = D2D1_FEATURE_LEVEL_DEFAULT;
-        if (SUCCEEDED(factory->CreateDCRenderTarget(&properties, &target)) &&
-            SUCCEEDED(target->BindDC(dc, &rect))) {
-            ID2D1SolidColorBrush* fill_brush = nullptr;
-            ID2D1SolidColorBrush* border_brush = nullptr;
-            target->CreateSolidColorBrush(
-                D2D1::ColorF(GetRValue(fill) / 255.0F, GetGValue(fill) / 255.0F,
-                             GetBValue(fill) / 255.0F),
-                &fill_brush);
-            target->CreateSolidColorBrush(
-                D2D1::ColorF(GetRValue(border) / 255.0F, GetGValue(border) / 255.0F,
-                             GetBValue(border) / 255.0F),
-                &border_brush);
-            target->BeginDraw();
-            target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            const auto rounded = D2D1::RoundedRect(
-                D2D1::RectF(0.5F, 0.5F,
-                            static_cast<float>(rect.right - rect.left) - 0.5F,
-                            static_cast<float>(rect.bottom - rect.top) - 0.5F),
-                static_cast<float>(radius), static_cast<float>(radius));
-            if (fill_brush) target->FillRoundedRectangle(rounded, fill_brush);
-            if (border_brush) target->DrawRoundedRectangle(rounded, border_brush, 1.0F);
-            const HRESULT drawn = target->EndDraw();
-            if (fill_brush) fill_brush->Release();
-            if (border_brush) border_brush->Release();
-            target->Release();
-            if (SUCCEEDED(drawn)) return;
-            target = nullptr;
-        }
-    }
-    if (target) target->Release();
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    if (!brush || !pen) {
-        if (pen) DeleteObject(pen);
-        if (brush) DeleteObject(brush);
-        return;
-    }
-    const auto old_brush = SelectObject(dc, brush);
-    const auto old_pen = SelectObject(dc, pen);
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom,
-              radius * 2, radius * 2);
-    SelectObject(dc, old_pen);
-    SelectObject(dc, old_brush);
-    DeleteObject(pen);
-    DeleteObject(brush);
+    ui_draw::rounded_rect(dc, rect, radius, fill, border);
 }
 
 using ui_draw::draw_text;

@@ -2,6 +2,7 @@
 #include "result_window_internal.hpp"
 
 #include "theme.hpp"
+#include "ui_draw.hpp"
 
 #include <algorithm>
 #include <array>
@@ -139,12 +140,9 @@ SizeBadge make_size_badge(HWND window, int width, int height) {
 namespace result_window_internal {
 
 ID2D1Factory* d2d_factory() noexcept {
-    static ID2D1Factory* factory = [] {
-        ID2D1Factory* value = nullptr;
-        D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &value);
-        return value;
-    }();
-    return factory;
+    // The result window's own rendering and the shared rounded-rect helper
+    // both draw through one factory.
+    return ui_draw::d2d_factory();
 }
 
 ID2D1StrokeStyle* round_stroke_style() noexcept {

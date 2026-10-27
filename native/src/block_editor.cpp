@@ -87,23 +87,11 @@ std::wstring preview(std::wstring_view value, std::size_t limit = 32,
 
 using ui_draw::set_font;
 
+// The editor's cards and fields share the app-wide D2D rounded rect so the
+// corners stay antialiased like the settings and quick windows.
 void fill_round_rect(HDC dc, const RECT& rect, int radius,
                      COLORREF fill, COLORREF border) {
-    HBRUSH brush = CreateSolidBrush(fill);
-    HPEN pen = CreatePen(PS_SOLID, 1, border);
-    if (!brush || !pen) {
-        if (pen) DeleteObject(pen);
-        if (brush) DeleteObject(brush);
-        return;
-    }
-    const auto old_brush = SelectObject(dc, brush);
-    const auto old_pen = SelectObject(dc, pen);
-    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom,
-              radius * 2, radius * 2);
-    SelectObject(dc, old_pen);
-    SelectObject(dc, old_brush);
-    DeleteObject(pen);
-    DeleteObject(brush);
+    ui_draw::rounded_rect(dc, rect, radius, fill, border);
 }
 
 using ui_draw::draw_text;

@@ -1,5 +1,6 @@
 #include "settings_profiles.hpp"
 
+#include "json_field.hpp"
 #include "util.hpp"
 
 #include <algorithm>
@@ -21,32 +22,14 @@ constexpr std::wstring_view field_key = L"key";
 constexpr std::wstring_view field_model = L"model";
 constexpr std::wstring_view field_enabled = L"enabled";
 
-std::wstring string_field(const winrt::Windows::Data::Json::JsonObject& option,
-                          std::wstring_view name) {
-    try {
-        if (!option || !option.HasKey(name)) return {};
-        const auto value = option.Lookup(name);
-        if (value &&
-            value.ValueType() == winrt::Windows::Data::Json::JsonValueType::String) {
-            return value.GetString().c_str();
-        }
-    } catch (...) {
-    }
-    return {};
+auto string_field(const winrt::Windows::Data::Json::JsonObject& option,
+                  std::wstring_view name) {
+    return json_field::string(option, name);
 }
 
-bool flag_field(const winrt::Windows::Data::Json::JsonObject& option,
+auto flag_field(const winrt::Windows::Data::Json::JsonObject& option,
                 std::wstring_view name, bool fallback) {
-    try {
-        if (!option || !option.HasKey(name)) return fallback;
-        const auto value = option.Lookup(name);
-        if (value &&
-            value.ValueType() == winrt::Windows::Data::Json::JsonValueType::Boolean) {
-            return value.GetBoolean();
-        }
-    } catch (...) {
-    }
-    return fallback;
+    return json_field::boolean(option, name, fallback);
 }
 
 }  // namespace

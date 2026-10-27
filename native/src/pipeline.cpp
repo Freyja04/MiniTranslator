@@ -1,6 +1,7 @@
 #include "pipeline.hpp"
 
 #include "diagnostics.hpp"
+#include "json_field.hpp"
 #include "language.hpp"
 #include "layout.hpp"
 #include "ocr.hpp"
@@ -29,15 +30,7 @@ constexpr std::array<std::wstring_view, 4> traditional_fallback_order{
 };
 
 std::wstring json_string(const JsonObject& object, std::wstring_view name) {
-    try {
-        if (!object || !object.HasKey(name)) return {};
-        const auto value = object.Lookup(name);
-        if (value && value.ValueType() == JsonValueType::String) {
-            return value.GetString().c_str();
-        }
-    } catch (...) {
-    }
-    return {};
+    return json_field::string(object, name);
 }
 
 TranslationEndpoint resolve_endpoint(std::wstring_view requested_provider,
