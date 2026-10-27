@@ -225,6 +225,8 @@ private:
     HWND diagnostics_{};
     HWND check_updates_{};
     HWND update_status_{};
+    // 版本 line under the settings card; its text comes from version.hpp.
+    HWND version_label_{};
     HWND text_capture_{};
     HWND text_source_{};
     HWND text_swap_{};

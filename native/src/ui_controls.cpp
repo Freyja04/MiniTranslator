@@ -1,5 +1,8 @@
 #include "ui_controls.hpp"
 
+#include "theme.hpp"
+#include "ui_draw.hpp"
+
 #include <algorithm>
 
 namespace minitrans::ui_controls {
@@ -172,6 +175,89 @@ void draw_icon_button(HDC dc, const RECT& bounds, wchar_t glyph, HFONT font,
     DrawTextW(dc, &glyph, 1, &text_bounds,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     SelectObject(dc, previous);
+}
+
+FieldStyle field_style(HFONT font, int dpi, bool enabled, bool focused) {
+    FieldStyle style;
+    style.background = theme::color_card;
+    style.fill = theme::color_input;
+    style.border = theme::color_line;
+    style.focus_border = theme::color_line;
+    style.text = theme::color_text;
+    style.disabled_text = theme::color_text_faint;
+    style.chevron = theme::color_text_dim;
+    style.font = font;
+    style.dpi = dpi;
+    style.enabled = enabled;
+    style.focused = focused;
+    return style;
+}
+
+FieldItemStyle field_item_style(HFONT font, int dpi, bool selected,
+                                bool disabled) {
+    FieldItemStyle style;
+    style.background = theme::color_input;
+    style.text = theme::color_text;
+    style.disabled_text = theme::color_text_faint;
+    // The selected drop-down row reads through a neutral tint instead of the
+    // accent, which is reserved for persistent state.
+    style.accent = theme::color_line_high;
+    style.font = font;
+    style.dpi = dpi;
+    style.selected = selected;
+    style.disabled = disabled;
+    return style;
+}
+
+namespace {
+
+// The text of one combo box item; -1 is the edit control's own line.
+std::wstring combo_item_text(const DRAWITEMSTRUCT& item) {
+    if (item.itemID != static_cast<UINT>(-1)) {
+        std::wstring value;
+        const LRESULT length =
+            SendMessageW(item.hwndItem, CB_GETLBTEXTLEN, item.itemID, 0);
+        if (length >= 0) {
+            value.resize(static_cast<std::size_t>(length) + 1);
+            SendMessageW(item.hwndItem, CB_GETLBTEXT, item.itemID,
+                         reinterpret_cast<LPARAM>(value.data()));
+            value.resize(static_cast<std::size_t>(length));
+        }
+        return value;
+    }
+    return ui_draw::text_of(item.hwndItem);
+}
+
+}  // namespace
+
+void draw_combo_field(HWND control, HDC dc, std::wstring_view text, HFONT font,
+                      int dpi, RoundRectPainter painter) {
+    if (!dc || !control) return;
+    RECT rect{};
+    GetClientRect(control, &rect);
+    draw_field(dc, rect, text,
+               field_style(font, dpi, IsWindowEnabled(control) != FALSE,
+                           GetFocus() == control || IsChild(control, GetFocus())),
+               painter);
+}
+
+void draw_combo_item(const DRAWITEMSTRUCT& item, HFONT font, int dpi,
+                     COLORREF field_background, RoundRectPainter painter) {
+    if (item.CtlType != ODT_COMBOBOX) return;
+    const bool disabled = (item.itemState & ODS_DISABLED) != 0;
+    const std::wstring value = combo_item_text(item);
+    if ((item.itemState & ODS_COMBOBOXEDIT) == 0) {
+        draw_field_item(item.hDC, item.rcItem, value,
+                        field_item_style(font, dpi,
+                                         (item.itemState & ODS_SELECTED) != 0,
+                                         disabled),
+                        painter);
+        return;
+    }
+    FieldStyle style = field_style(font, dpi, !disabled,
+                                   (item.itemState & ODS_FOCUS) != 0);
+    style.background = field_background;
+    draw_field(item.hDC, item.rcItem, value, style, painter);
 }
 
 }  // namespace minitrans::ui_controls

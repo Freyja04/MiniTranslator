@@ -365,6 +365,11 @@ LRESULT SettingsWindow::handle_message(UINT message, WPARAM wparam, LPARAM lpara
             SetTextColor(dc, update_status_error_ ? color_bad : color_text_dim);
             return reinterpret_cast<LRESULT>(card_background_);
         }
+        if (control == version_label_) {
+            // The version line sits below the card, on the page background.
+            SetTextColor(dc, color_text_faint);
+            return reinterpret_cast<LRESULT>(background_);
+        }
         const auto control_font = reinterpret_cast<HFONT>(
             SendMessageW(control, WM_GETFONT, 0, 0));
         SetTextColor(dc, control_font == small_font_ ? color_text_dim : color_text);

@@ -1,8 +1,10 @@
 #include "settings_window.hpp"
 #include "settings_window_internal.hpp"
 
+#include "provider_key_dialog.hpp"
 #include "settings_ai_dialog.hpp"
 #include "self_test_support.hpp"
+#include "version.hpp"
 
 namespace minitrans {
 
@@ -357,6 +359,7 @@ void SettingsWindow::self_test(HWND owner) {
         throw AppError("settings self-test translation geometry lost its branch");
     }
     SettingsAiDialog::self_test(instance_, window_);
+    ProviderKeyDialog::self_test(instance_, window_);
     // The traditional branch is the same list control now: one toggle per
     // key-free provider, and DeepL with 编辑 that opens the key dialog.
     set_translation_class(false);
@@ -440,7 +443,7 @@ void SettingsWindow::self_test(HWND owner) {
     layout_controls();
     // 主题 is one segmented row of three chips now; the rest of the page keeps
     // its rows and buttons.
-    if (page_controls_[3].size() != other_index::check_updates + 4 ||
+    if (page_controls_[3].size() != other_index::version_label + 1 ||
         text_of(page_controls_[3][other_index::theme_label]) != L"主题" ||
         !theme_mode_ || !theme_segment_[0] || !theme_segment_[1] || !autostart_ ||
         text_of(theme_mode_) != theme_modes[0] ||
@@ -453,6 +456,12 @@ void SettingsWindow::self_test(HWND owner) {
         (GetWindowLongPtrW(theme_mode_, GWL_STYLE) & WS_VISIBLE) == 0 ||
         (GetWindowLongPtrW(theme_segment_[1], GWL_STYLE) & WS_VISIBLE) == 0) {
         throw AppError("settings self-test other page rows are missing");
+    }
+    // The version line must carry the build's own number, not a literal.
+    if (!version_label_ ||
+        text_of(version_label_) != L"版本 " + std::wstring(native_version) ||
+        (GetWindowLongPtrW(version_label_, GWL_STYLE) & WS_VISIBLE) == 0) {
+        throw AppError("settings self-test version line is missing or stale");
     }
     {
         // The three chips sit edge to edge at the same height, right of the

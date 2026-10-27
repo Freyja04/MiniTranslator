@@ -740,8 +740,6 @@ void SettingsWindow::set_translation_class(bool large_model) {
 
 void SettingsWindow::draw_combo(HWND control, HDC dc) {
     if (!dc) return;
-    RECT rect{};
-    GetClientRect(control, &rect);
     std::wstring value = text_of(control);
     if (text_session_) {
         if (control == text_target_) {
@@ -750,20 +748,8 @@ void SettingsWindow::draw_combo(HWND control, HDC dc) {
             value = target_display_name(text_session_->source());
         }
     }
-    ui_controls::FieldStyle style;
-    style.background = theme::color_card;
-    style.fill = color_input;
-    style.border = color_line;
-    style.focus_border = color_line;
-    style.text = color_text;
-    style.disabled_text = color_text_faint;
-    style.chevron = color_text_dim;
-    style.font = font_;
-    style.dpi = dpi_;
-    style.enabled = IsWindowEnabled(control) != FALSE;
-    style.focused = GetFocus() == control || IsChild(control, GetFocus());
-    ui_controls::draw_field(dc, rect, value, style,
-                            &settings_internal::fill_round_rect);
+    ui_controls::draw_combo_field(control, dc, value, font_, dpi_,
+                                  &settings_internal::fill_round_rect);
 }
 
 bool SettingsWindow::is_checkbox(HWND control) const noexcept {

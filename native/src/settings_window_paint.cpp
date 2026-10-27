@@ -401,47 +401,8 @@ LRESULT SettingsWindow::draw_item(const DRAWITEMSTRUCT& item) {
     }
 
     if (item.CtlType == ODT_COMBOBOX) {
-        const bool list_item = (item.itemState & ODS_COMBOBOXEDIT) == 0;
-        std::wstring value;
-        if (item.itemID != static_cast<UINT>(-1)) {
-            const LRESULT length = SendMessageW(item.hwndItem, CB_GETLBTEXTLEN, item.itemID, 0);
-            if (length >= 0) {
-                value.resize(static_cast<std::size_t>(length) + 1);
-                SendMessageW(item.hwndItem, CB_GETLBTEXT, item.itemID,
-                             reinterpret_cast<LPARAM>(value.data()));
-                value.resize(static_cast<std::size_t>(length));
-            }
-        } else {
-            value = text_of(item.hwndItem);
-        }
-        if (list_item) {
-            ui_controls::FieldItemStyle style;
-            style.background = color_input;
-            style.text = color_text;
-            style.disabled_text = color_text_faint;
-            // The selected drop-down row reads through a neutral tint instead
-            // of the accent, which is reserved for persistent state.
-            style.accent = color_line_high;
-            style.font = font_;
-            style.dpi = dpi_;
-            style.selected = (item.itemState & ODS_SELECTED) != 0;
-            style.disabled = disabled;
-            ui_controls::draw_field_item(dc, rect, value, style,
-                                         &settings_internal::fill_round_rect);
-        } else {
-            ui_controls::FieldStyle style;
-            style.background = color_input;
-            style.fill = color_input;
-            style.border = color_line;
-            style.focus_border = color_line;
-            style.text = color_text;
-            style.disabled_text = color_text_faint;
-            style.chevron = color_text_dim;
-            style.font = font_;
-            style.dpi = dpi_;
-            ui_controls::draw_field(dc, rect, value, style,
-                                    &settings_internal::fill_round_rect);
-        }
+        ui_controls::draw_combo_item(item, font_, dpi_, color_input,
+                                     &settings_internal::fill_round_rect);
         return TRUE;
     }
 

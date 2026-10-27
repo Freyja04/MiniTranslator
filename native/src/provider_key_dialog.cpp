@@ -1,9 +1,8 @@
 #include "provider_key_dialog.hpp"
 
-#include "http.hpp"
+#include "connection_test.hpp"
 #include "settings_window_internal.hpp"
 #include "theme.hpp"
-#include "translator.hpp"
 #include "ui_draw.hpp"
 #include "util.hpp"
 
@@ -45,105 +44,61 @@ ProviderKeyDialog::Result ProviderKeyDialog::edit(HINSTANCE instance, HWND owner
                                                   std::wstring_view title,
                                                   std::wstring_view current_key) {
     ProviderKeyDialog dialog(instance, owner, title, current_key);
-    dialog.create_window();
+    dialog.create_popup(key_dialog_class, L"接口密钥", logical_width,
+                        logical_height);
     if (!dialog.window_) throw AppError("无法打开密钥编辑窗口");
     dialog.create_controls();
-    ShowWindow(dialog.window_, SW_SHOW);
-    SetForegroundWindow(dialog.window_);
-    SetFocus(dialog.field_);
-
-    MSG message{};
-    while (!dialog.closed_ && GetMessageW(&message, nullptr, 0, 0) > 0) {
-        if (message.message == WM_QUIT) {
-            dialog.close(false);
-            break;
-        }
-        // Esc closes this dialog and nothing else: swallow both the keydown
-        // and the WM_CHAR it produces so no leftover keystroke reaches the
-        // settings window after the dialog closes.
-        if ((message.message == WM_KEYDOWN &&
-             static_cast<UINT>(message.wParam) == VK_ESCAPE) ||
-            (message.message == WM_CHAR &&
-             static_cast<wchar_t>(message.wParam) == 0x1B)) {
-            dialog.close(false);
-            continue;
-        }
-        const HWND window = dialog.window_;
-        if (window && IsWindow(window) && IsWindowVisible(window) &&
-            IsDialogMessageW(window, &message)) {
-            continue;
-        }
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
-    }
+    dialog.run_modal();
     return dialog.result_;
+}
+
+void ProviderKeyDialog::self_test(HINSTANCE instance, HWND owner) {
+    ProviderKeyDialog dialog(instance, owner, L"DeepL", L"");
+    dialog.create_popup(key_dialog_class, L"接口密钥", logical_width,
+                        logical_height);
+    if (!dialog.window_) throw AppError("key dialog self-test window failed");
+    dialog.create_controls();
+    if (!dialog.field_ || !dialog.test_ || !dialog.save_ || !dialog.cancel_) {
+        throw AppError("key dialog self-test did not create required controls");
+    }
+    if (dialog.dpi_ != static_cast<int>(GetDpiForWindow(dialog.window_))) {
+        throw AppError("key dialog self-test DPI mismatch");
+    }
+    // The card ends after the status line, and the button row stays inside it.
+    if (dialog.card_.bottom <= dialog.status_rect_.bottom ||
+        dialog.save_rect_.right > dialog.card_.right ||
+        dialog.test_rect_.right > dialog.save_rect_.left ||
+        dialog.save_rect_.top < dialog.field_rect_.bottom) {
+        throw AppError("key dialog self-test layout is misplaced");
+    }
+    // The edit carries the rounded region layout() applies, so a click on its
+    // corner still reaches the field instead of the parent.
+    {
+        HRGN region = CreateRectRgn(0, 0, 0, 0);
+        const int type = region ? GetWindowRgn(dialog.field_, region) : ERROR;
+        if (region) DeleteObject(region);
+        if (type == ERROR) {
+            throw AppError("key dialog self-test field has no rounded region");
+        }
+    }
+    DestroyWindow(dialog.window_);
+    dialog.window_ = nullptr;
 }
 
 ProviderKeyDialog::ProviderKeyDialog(HINSTANCE instance, HWND owner,
                                      std::wstring_view title,
                                      std::wstring_view current_key)
-    : instance_(instance), owner_(owner), title_(title), key_(current_key) {}
+    : ModalDialog(instance, owner), title_(title), key_(current_key) {}
 
 ProviderKeyDialog::~ProviderKeyDialog() {
     if (test_thread_.joinable()) {
         test_thread_.request_stop();
         test_thread_.join();
     }
-    if (window_ && IsWindow(window_)) DestroyWindow(window_);
-    if (font_) DeleteObject(font_);
-    if (background_) DeleteObject(background_);
-    if (card_background_) DeleteObject(card_background_);
-    if (input_background_) DeleteObject(input_background_);
-}
-
-void ProviderKeyDialog::create_window() {
-    WNDCLASSEXW description{};
-    description.cbSize = sizeof(description);
-    description.lpfnWndProc = &ProviderKeyDialog::window_proc;
-    description.hInstance = instance_;
-    description.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    description.lpszClassName = key_dialog_class;
-    if (!RegisterClassExW(&description) &&
-        GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        throw_last_error("register key dialog");
-    }
-    dpi_ = owner_ && IsWindow(owner_)
-        ? static_cast<int>(GetDpiForWindow(owner_)) : 96;
-    // Borderless popup like the endpoint dialog: the card carries the title,
-    // the system caption has nothing to add.
-    const DWORD style = WS_POPUP;
-    constexpr DWORD popup_ex_style = WS_EX_TOOLWINDOW | WS_EX_COMPOSITED;
-    RECT desired{0, 0, px(logical_width, dpi_), px(logical_height, dpi_)};
-    AdjustWindowRectExForDpi(&desired, style, FALSE, popup_ex_style,
-                             static_cast<UINT>(dpi_));
-    RECT anchor{};
-    if (owner_ && IsWindow(owner_) && GetWindowRect(owner_, &anchor)) {
-        // Nothing to do: anchor holds the owner rect.
-    }
-    const int width = desired.right - desired.left;
-    const int height = desired.bottom - desired.top;
-    const int x = anchor.left +
-        std::max(0L, (anchor.right - anchor.left - width) / 2);
-    const int y = anchor.top +
-        std::max(0L, (anchor.bottom - anchor.top - height) / 2);
-    window_ = CreateWindowExW(popup_ex_style, key_dialog_class, L"接口密钥", style,
-                              x, y, width, height, owner_, nullptr, instance_,
-                              this);
-    if (!window_) {
-        if (!window_error_.empty()) throw AppError(window_error_);
-        throw_last_error("create key dialog");
-    }
-    theme::apply_window_theme(window_, true, true);
 }
 
 void ProviderKeyDialog::create_controls() {
-    font_ = CreateFontW(-px(theme::font_size_body, dpi_), 0, 0, 0, FW_NORMAL,
-                        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                        CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
-                        theme::font_family.c_str());
-    background_ = CreateSolidBrush(color_page);
-    card_background_ = CreateSolidBrush(color_card);
-    input_background_ = CreateSolidBrush(color_input);
+    create_theme_resources();
     field_ = CreateWindowExW(0, L"EDIT", key_.c_str(),
                              WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL |
                                  ES_PASSWORD | WS_TABSTOP,
@@ -255,11 +210,9 @@ void ProviderKeyDialog::layout() {
     InvalidateRect(window_, nullptr, TRUE);
 }
 
-LRESULT ProviderKeyDialog::handle_message(UINT message, WPARAM wparam,
-                                          LPARAM lparam) {
+LRESULT ProviderKeyDialog::handle_dialog_message(UINT message, WPARAM wparam,
+                                                 LPARAM lparam) {
     switch (message) {
-    case WM_CREATE:
-        return 0;
     case WM_PAINT: {
         PAINTSTRUCT state{};
         HDC target = BeginPaint(window_, &state);
@@ -285,15 +238,6 @@ LRESULT ProviderKeyDialog::handle_message(UINT message, WPARAM wparam,
             EndPaint(window_, &state);
         }
         return 0;
-    }
-    case WM_ERASEBKGND:
-        return 1;
-    case WM_CTLCOLOREDIT: {
-        const auto dc = reinterpret_cast<HDC>(wparam);
-        SetTextColor(dc, color_text);
-        SetBkColor(dc, color_input);
-        SetBkMode(dc, OPAQUE);
-        return reinterpret_cast<LRESULT>(input_background_);
     }
     case WM_DRAWITEM: {
         const auto* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lparam);
@@ -321,10 +265,6 @@ LRESULT ProviderKeyDialog::handle_message(UINT message, WPARAM wparam,
     case WM_COMMAND: {
         const int id = LOWORD(wparam);
         const int notification = HIWORD(wparam);
-        if (id == IDCANCEL) {
-            close(false);
-            return 0;
-        }
         if (id == key_dialog_id_test && notification == BN_CLICKED) {
             start_connection_test();
             return 0;
@@ -334,16 +274,6 @@ LRESULT ProviderKeyDialog::handle_message(UINT message, WPARAM wparam,
             return 0;
         }
         break;
-    }
-    case WM_CLOSE:
-        close(false);
-        return 0;
-    case WM_NCDESTROY: {
-        const HWND destroyed = window_;
-        closed_ = true;
-        SetWindowLongPtrW(destroyed, GWLP_USERDATA, 0);
-        window_ = nullptr;
-        return DefWindowProcW(destroyed, message, wparam, lparam);
     }
     default:
         break;
@@ -365,39 +295,13 @@ void ProviderKeyDialog::start_connection_test() {
     status_text_ = L"测试中…";
     EnableWindow(test_, FALSE);
     InvalidateRect(window_, nullptr, TRUE);
-    const HWND target = window_;
-    const std::wstring title = title_;
-    test_thread_ = std::jthread(
-        [target, key, title](std::stop_token stop) noexcept {
-            auto* raw = new (std::nothrow) std::pair<bool, std::wstring>();
-            if (!raw) return;
-            try {
-                winrt::Windows::Data::Json::JsonObject options;
-                options.SetNamedValue(
-                    L"key",
-                    winrt::Windows::Data::Json::JsonValue::CreateStringValue(key));
-                options.SetNamedValue(
-                    L"free_plan",
-                    winrt::Windows::Data::Json::JsonValue::CreateBooleanValue(true));
-                WinrtApartment apartment(winrt::apartment_type::multi_threaded);
-                TranslatorService service;
-                const auto translated = service.translate(
-                    L"deepl", options, {L"Hello"}, L"zh-Hans", std::nullopt, stop);
-                raw->first = translated.size() == 1 && !translated.front().empty();
-                raw->second = raw->first ? L"连接正常" : L"接口没有返回译文";
-            } catch (const std::exception& error) {
-                raw->first = false;
-                raw->second = redact_sensitive(utf8_to_wide(error.what()));
-            } catch (...) {
-                raw->first = false;
-                raw->second = L"连接测试遇到未知错误";
-            }
-            if (!PostMessageW(target, ProviderKeyDialog::test_completed_message,
-                              raw->first ? 1 : 0,
-                              reinterpret_cast<LPARAM>(raw))) {
-                delete raw;
-            }
-        });
+    winrt::Windows::Data::Json::JsonObject options;
+    options.SetNamedValue(
+        L"key", winrt::Windows::Data::Json::JsonValue::CreateStringValue(key));
+    options.SetNamedValue(
+        L"free_plan", winrt::Windows::Data::Json::JsonValue::CreateBooleanValue(true));
+    test_thread_ = connection_test::run(window_, test_completed_message, L"deepl",
+                                        std::move(options));
 }
 
 void ProviderKeyDialog::finish_connection_test(bool success,
@@ -418,31 +322,6 @@ void ProviderKeyDialog::close(bool saved) {
     const HWND window = window_;
     if (window && IsWindow(window)) DestroyWindow(window);
     window_ = nullptr;
-}
-
-LRESULT CALLBACK ProviderKeyDialog::window_proc(HWND window, UINT message,
-                                                WPARAM wparam, LPARAM lparam) {
-    auto* self = reinterpret_cast<ProviderKeyDialog*>(
-        GetWindowLongPtrW(window, GWLP_USERDATA));
-    if (message == WM_NCCREATE) {
-        const auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
-        self = static_cast<ProviderKeyDialog*>(create->lpCreateParams);
-        self->window_ = window;
-        SetWindowLongPtrW(window, GWLP_USERDATA,
-                          reinterpret_cast<LONG_PTR>(self));
-    }
-    if (!self) return DefWindowProcW(window, message, wparam, lparam);
-    try {
-        return self->handle_message(message, wparam, lparam);
-    } catch (const std::exception& error) {
-        self->window_error_ = error.what();
-    } catch (...) {
-        self->window_error_ = "unexpected key dialog error";
-    }
-    if (message == WM_NCCREATE) return FALSE;
-    if (message == WM_CREATE) return -1;
-    self->close(false);
-    return 0;
 }
 
 }  // namespace minitrans

@@ -274,7 +274,7 @@ void SettingsWindow::layout_controls() {
         }
     } else if (current_page_ == 3) {
         auto& c = page_controls_[3];
-        if (c.size() > other_index::check_updates) {
+        if (c.size() > other_index::version_label) {
             const int first_top = logical_content_top + logical_card_padding;
             const int autostart_top = first_top + logical_setting_row_height;
             const int separator_top =
@@ -331,6 +331,12 @@ void SettingsWindow::layout_controls() {
                                     px(84, dpi_) + px(12, dpi_);
             MoveWindow(update_status_, status_left, px(actions_top, dpi_),
                        std::max(1, inner_right - status_left), control_height, FALSE);
+            // The version line clears the card's bottom padding and reads on
+            // the page background, like a footer.
+            const int version_top = actions_top + logical_control_height +
+                                    logical_card_padding + 12;
+            MoveWindow(version_label_, inner_left, px(version_top, dpi_),
+                       available_width, px(18, dpi_), FALSE);
         }
     } else if (current_page_ == 4) {
         // The language row takes the left edge and the capture button moves to

@@ -197,6 +197,57 @@ $configureArguments = @(
 )
 Invoke-NativeCommand -Executable $cmake -Arguments $configureArguments
 
+$executable = Join-Path $BuildDirectory "$Configuration\MiniTranslator.exe"
+
+# The tray process keeps its own executable open, so the linker cannot replace
+# it. Close that copy first (WM_CLOSE lets it flush the debounced config), then
+# force it only if it refuses to exit.
+function Stop-BlockingExecutable {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $target = [System.IO.Path]::GetFullPath($Path)
+    $blocking = @(
+        Get-Process -Name 'MiniTranslator' -ErrorAction SilentlyContinue |
+            Where-Object {
+                try {
+                    $_.Path -and
+                        [string]::Equals([System.IO.Path]::GetFullPath($_.Path),
+                                         $target, [StringComparison]::OrdinalIgnoreCase)
+                } catch {
+                    $false
+                }
+            }
+    )
+    if ($blocking.Count -eq 0) { return }
+
+    Write-Host "Closing the running $target so the linker can replace it..."
+    if (-not ('MiniTranslatorBuildNative' -as [type])) {
+        Add-Type -Namespace '' -Name 'MiniTranslatorBuildNative' -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern System.IntPtr FindWindowW(string className, string windowName);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool PostMessageW(System.IntPtr window, uint message, System.IntPtr wparam, System.IntPtr lparam);
+'@
+    }
+    foreach ($process in $blocking) {
+        # [NullString]::Value marshals a real NULL; plain $null becomes an
+        # empty string and then has to match the window title exactly.
+        $window = [MiniTranslatorBuildNative]::FindWindowW(
+            'MiniTranslator.Native.MessageWindow.v1', [NullString]::Value)
+        if ($window -ne [System.IntPtr]::Zero) {
+            [MiniTranslatorBuildNative]::PostMessageW(
+                $window, 0x0010, [System.IntPtr]::Zero, [System.IntPtr]::Zero) | Out-Null
+        }
+        if (-not $process.WaitForExit(5000)) {
+            Write-Host "  $($process.Id) did not exit; stopping it."
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            $null = $process.WaitForExit(5000)
+        }
+    }
+}
+
+Stop-BlockingExecutable -Path $executable
+
 Write-Host "Building $Configuration..."
 $buildArguments = @(
     '--build', $BuildDirectory,
@@ -212,7 +263,6 @@ if ($sourceSnapshot -ne (Get-NativeSourceSnapshot)) {
     throw 'Native sources changed while compilation was running. Discard this build and run the command again.'
 }
 
-$executable = Join-Path $BuildDirectory "$Configuration\MiniTranslator.exe"
 if (-not (Test-Path -LiteralPath $executable)) {
     throw "The expected executable was not produced: $executable"
 }

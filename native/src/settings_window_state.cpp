@@ -1,6 +1,7 @@
 #include "settings_window.hpp"
 #include "settings_window_internal.hpp"
 
+#include "connection_test.hpp"
 #include "diagnostics.hpp"
 #include "settings_ai_dialog.hpp"
 #include "provider_key_dialog.hpp"
@@ -543,34 +544,8 @@ void SettingsWindow::start_connection_test() {
     EnableWindow(test_button_, FALSE);
     test_pending_ = true;
     SetWindowTextW(test_status_, L"测试中…");
-    const HWND target = window_;
-    test_thread_ = std::jthread([target, provider, options](std::stop_token stop) noexcept {
-        try {
-            auto result = std::make_unique<std::pair<bool, std::wstring>>();
-            try {
-                WinrtApartment apartment(winrt::apartment_type::multi_threaded);
-                TranslatorService service;
-                const auto translated = service.translate(
-                    provider, winrt::Windows::Data::Json::JsonObject::Parse(options),
-                    {L"Hello"}, L"zh-Hans", std::nullopt, stop);
-                result->first = translated.size() == 1 && !translated.front().empty();
-                result->second = result->first ? L"连接正常" : L"接口没有返回译文";
-            } catch (const std::exception& error) {
-                result->first = false;
-                result->second = redact_sensitive(utf8_to_wide(error.what()));
-            } catch (...) {
-                result->first = false;
-                result->second = L"连接测试遇到未知错误";
-            }
-            auto* raw = result.release();
-            if (!PostMessageW(target, SettingsWindow::test_completed_message, 0,
-                              reinterpret_cast<LPARAM>(raw))) {
-                delete raw;
-            }
-        } catch (...) {
-            // A background failure must never terminate the tray process.
-        }
-    });
+    test_thread_ = connection_test::run(window_, test_completed_message, provider,
+                                        options);
 }
 
 void SettingsWindow::finish_connection_test(bool success, std::wstring message) {
@@ -584,13 +559,7 @@ void SettingsWindow::finish_connection_test(bool success, std::wstring message) 
 }
 
 void SettingsWindow::discard_connection_test_results(HWND target) noexcept {
-    if (!target) target = window_;
-    if (!target) return;
-    MSG pending{};
-    while (PeekMessageW(&pending, target, test_completed_message,
-                        test_completed_message, PM_REMOVE)) {
-        delete reinterpret_cast<std::pair<bool, std::wstring>*>(pending.lParam);
-    }
+    connection_test::discard(target ? target : window_, test_completed_message);
 }
 
 void SettingsWindow::set_status(std::wstring_view message, bool error) {

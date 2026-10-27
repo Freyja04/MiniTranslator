@@ -90,6 +90,26 @@ struct CheckboxStyle {
 [[nodiscard]] COLORREF mix_color(COLORREF base, COLORREF tint,
                                  int tint_percent) noexcept;
 
+// The palette every text field and combo box shares. Windows used to fill
+// these in by hand, which is how one dialog drifted from the settings page.
+[[nodiscard]] FieldStyle field_style(HFONT font, int dpi, bool enabled,
+                                     bool focused);
+
+// The palette of one row in an open combo box list.
+[[nodiscard]] FieldItemStyle field_item_style(HFONT font, int dpi,
+                                              bool selected, bool disabled);
+
+// Closed combo box painted from `text`; the caller may substitute the value,
+// for example the text translation page shows its session's language.
+void draw_combo_field(HWND control, HDC dc, std::wstring_view text, HFONT font,
+                      int dpi, RoundRectPainter painter);
+
+// One ODT_COMBOBOX DRAWITEMSTRUCT: the closed field or a row of the open list,
+// with the text read from the control. `field_background` is painted behind
+// the rounded field; it matches the surface the combo sits on.
+void draw_combo_item(const DRAWITEMSTRUCT& item, HFONT font, int dpi,
+                     COLORREF field_background, RoundRectPainter painter);
+
 // Closed combo box: rounded field, one line of text and the chevron.
 void draw_field(HDC dc, const RECT& bounds, std::wstring_view text,
                 const FieldStyle& style, RoundRectPainter painter);

@@ -1,5 +1,6 @@
 #include "settings_ai_dialog.hpp"
 
+#include "connection_test.hpp"
 #include "settings_catalog.hpp"
 #include "settings_window_internal.hpp"
 #include "theme.hpp"
@@ -61,11 +62,11 @@ constexpr std::array<const wchar_t*, 5> field_labels{
 
 }  // namespace
 
-SettingsAiDialog::SettingsAiDialog(HINSTANCE instance,
+SettingsAiDialog::SettingsAiDialog(HINSTANCE instance, HWND owner,
                                    const settings_profiles::Profile& current,
                                    std::wstring_view original_name,
                                    std::wstring_view suggested_name)
-    : instance_(instance),
+    : ModalDialog(instance, owner),
       original_(current),
       original_name_(original_name.empty() ? std::wstring(suggested_name)
                                            : std::wstring(original_name)) {
@@ -81,45 +82,21 @@ SettingsAiDialog::~SettingsAiDialog() {
     }
     discard_connection_test_results(window_);
     discard_model_refresh_results(window_);
-    if (window_ && IsWindow(window_)) DestroyWindow(window_);
-    for (auto** font : {&font_, &small_font_}) {
-        if (*font) DeleteObject(*font);
-    }
-    for (auto** brush : {&background_, &card_background_, &input_background_}) {
-        if (*brush) DeleteObject(*brush);
-    }
+    if (small_font_) DeleteObject(small_font_);
 }
 
 SettingsAiDialog::Result SettingsAiDialog::edit(
     HINSTANCE instance, HWND owner, const settings_profiles::Profile& current,
     std::wstring_view original_name, std::wstring_view suggested_name) {
-    SettingsAiDialog dialog(instance, current, original_name, suggested_name);
-    dialog.create_window(owner);
+    SettingsAiDialog dialog(instance, owner, current, original_name,
+                            suggested_name);
+    dialog.create_popup(dlg_class_name, L"大模型翻译接口", logical_width,
+                        logical_height);
     if (!dialog.window_) throw AppError("无法打开大模型接口编辑窗口");
     dialog.create_controls();
-    ShowWindow(dialog.window_, SW_SHOW);
-    SetWindowPos(dialog.window_, HWND_TOP, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-    SetForegroundWindow(dialog.window_);
-    SetFocus(dialog.name_);
-
     // Modal without disabling the owner: the settings window keeps painting
     // while input is consumed here until the dialog closes.
-    MSG message{};
-    while (!dialog.closed_ && GetMessageW(&message, nullptr, 0, 0) > 0) {
-        if (message.message == WM_QUIT) {
-            dialog.close(false);
-            break;
-        }
-        const HWND dialog_window = dialog.window_;
-        if (dialog_window && IsWindow(dialog_window) &&
-            IsWindowVisible(dialog_window) &&
-            IsDialogMessageW(dialog_window, &message)) {
-            continue;
-        }
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
-    }
+    dialog.run_modal();
     return dialog.result_;
 }
 
@@ -129,8 +106,9 @@ void SettingsAiDialog::self_test(HINSTANCE instance, HWND owner) {
     profile.protocol = L"openai_chat";
     profile.base_url = L"https://example.test/v1";
     profile.model = L"self-test-model";
-    SettingsAiDialog dialog(instance, profile, profile.name, L"");
-    dialog.create_window(owner);
+    SettingsAiDialog dialog(instance, owner, profile, profile.name, L"");
+    dialog.create_popup(dlg_class_name, L"大模型翻译接口", logical_width,
+                        logical_height);
     if (!dialog.window_) throw AppError("endpoint dialog self-test window failed");
     dialog.create_controls();
     if (!dialog.name_ || !dialog.endpoint_ || !dialog.key_ ||
@@ -194,56 +172,6 @@ void SettingsAiDialog::self_test(HINSTANCE instance, HWND owner) {
     dialog.window_ = nullptr;
 }
 
-void SettingsAiDialog::create_window(HWND owner) {
-    WNDCLASSEXW description{};
-    description.cbSize = sizeof(description);
-    description.lpfnWndProc = &SettingsAiDialog::window_proc;
-    description.hInstance = instance_;
-    description.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    description.lpszClassName = dlg_class_name;
-    if (!RegisterClassExW(&description) &&
-        GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-        throw_last_error("register endpoint dialog");
-    }
-    HMONITOR monitor = owner && IsWindow(owner)
-        ? MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST)
-        : MonitorFromPoint(POINT{}, MONITOR_DEFAULTTOPRIMARY);
-    UINT dpi_x = 96;
-    UINT dpi_y = 96;
-    if (!monitor || FAILED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y))) {
-        dpi_x = GetDpiForSystem();
-    }
-    dpi_ = owner && IsWindow(owner) ? static_cast<int>(GetDpiForWindow(owner))
-                                    : static_cast<int>(dpi_x);
-    // A borderless popup: the card carries the title, so the system caption
-    // bar and its close button are not wanted here.
-    const DWORD style = WS_POPUP;
-    constexpr DWORD popup_ex_style = WS_EX_TOOLWINDOW | WS_EX_COMPOSITED;
-    RECT desired{0, 0, px(logical_width, dpi_), px(logical_height, dpi_)};
-    AdjustWindowRectExForDpi(&desired, style, FALSE, popup_ex_style,
-                             static_cast<UINT>(dpi_));
-    const int width = desired.right - desired.left;
-    const int height = desired.bottom - desired.top;
-    RECT anchor{};
-    MONITORINFO info{sizeof(info)};
-    if (owner && IsWindow(owner)) {
-        GetWindowRect(owner, &anchor);
-    } else if (GetMonitorInfoW(monitor, &info)) {
-        anchor = info.rcWork;
-    } else {
-        anchor = {0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
-    }
-    const int x = anchor.left + std::max(0L, (anchor.right - anchor.left - width) / 2);
-    const int y = anchor.top + std::max(0L, (anchor.bottom - anchor.top - height) / 2);
-    window_ = CreateWindowExW(
-        popup_ex_style, dlg_class_name, L"大模型翻译接口", style,
-        x, y, width, height, owner, nullptr, instance_, this);
-    if (!window_) {
-        if (!window_error_.empty()) throw AppError(window_error_);
-        throw_last_error("create endpoint dialog");
-    }
-    theme::apply_window_theme(window_, true, true);
-}
 
 void SettingsAiDialog::create_controls() {
     create_theme_resources();
@@ -352,25 +280,15 @@ void SettingsAiDialog::create_controls() {
 }
 
 void SettingsAiDialog::create_theme_resources() {
-    for (auto** font : {&font_, &small_font_}) {
-        if (*font) DeleteObject(*font);
-        *font = nullptr;
-    }
-    for (auto** brush : {&background_, &card_background_, &input_background_}) {
-        if (*brush) DeleteObject(*brush);
-        *brush = nullptr;
-    }
-    const auto make_font = [&](int pixels) {
-        return CreateFontW(-px(pixels, dpi_), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
-                           FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                           CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
-                           theme::font_family.c_str());
-    };
-    font_ = make_font(theme::font_size_body);
-    small_font_ = make_font(theme::font_size_small);
-    background_ = CreateSolidBrush(color_page);
-    card_background_ = CreateSolidBrush(color_card);
-    input_background_ = CreateSolidBrush(color_input);
+    ModalDialog::create_theme_resources();
+    // The footer status and the protocol hints use a smaller face than the
+    // fields, so this dialog keeps one extra font next to the shared set.
+    if (small_font_) DeleteObject(small_font_);
+    small_font_ = CreateFontW(-px(theme::font_size_small, dpi_), 0, 0, 0, FW_NORMAL,
+                              FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                              CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                              theme::font_family.c_str());
 }
 
 SettingsAiDialog::Placement SettingsAiDialog::place() const noexcept {
@@ -662,29 +580,8 @@ void SettingsAiDialog::start_connection_test() {
     test_pending_ = true;
     test_success_ = false;
     set_status(L"测试中…", false);
-    const HWND target = window_;
-    test_thread_ = std::jthread([target, options](std::stop_token stop) noexcept {
-        auto* raw = new (std::nothrow) std::pair<bool, std::wstring>();
-        if (!raw) return;
-        try {
-            WinrtApartment apartment(winrt::apartment_type::multi_threaded);
-            TranslatorService service;
-            const auto translated = service.translate(
-                L"ai", options, {L"Hello"}, L"zh-Hans", std::nullopt, stop);
-            raw->first = translated.size() == 1 && !translated.front().empty();
-            raw->second = raw->first ? L"连接正常" : L"接口没有返回译文";
-        } catch (const std::exception& error) {
-            raw->first = false;
-            raw->second = redact_sensitive(utf8_to_wide(error.what()));
-        } catch (...) {
-            raw->first = false;
-            raw->second = L"连接测试遇到未知错误";
-        }
-        if (!PostMessageW(target, SettingsAiDialog::test_completed_message,
-                          raw->first ? 1 : 0, reinterpret_cast<LPARAM>(raw))) {
-            delete raw;
-        }
-    });
+    test_thread_ = connection_test::run(window_, test_completed_message, L"ai",
+                                        options);
 }
 
 void SettingsAiDialog::finish_connection_test(bool success, std::wstring message) {
@@ -696,12 +593,7 @@ void SettingsAiDialog::finish_connection_test(bool success, std::wstring message
 }
 
 void SettingsAiDialog::discard_connection_test_results(HWND target) noexcept {
-    if (!target) return;
-    MSG pending{};
-    while (PeekMessageW(&pending, target, test_completed_message,
-                        test_completed_message, PM_REMOVE)) {
-        delete reinterpret_cast<std::pair<bool, std::wstring>*>(pending.lParam);
-    }
+    connection_test::discard(target, test_completed_message);
 }
 
 void SettingsAiDialog::close(bool saved) {
@@ -782,23 +674,8 @@ void SettingsAiDialog::paint() {
 }
 
 void SettingsAiDialog::draw_combo(HWND control, HDC dc) {
-    if (!dc || !control) return;
-    RECT rect{};
-    GetClientRect(control, &rect);
-    ui_controls::FieldStyle style;
-    style.background = color_card;
-    style.fill = color_input;
-    style.border = color_line;
-    style.focus_border = color_line;
-    style.text = color_text;
-    style.disabled_text = color_text_faint;
-    style.chevron = color_text_dim;
-    style.font = font_;
-    style.dpi = dpi_;
-    style.enabled = IsWindowEnabled(control) != FALSE;
-    style.focused = GetFocus() == control || IsChild(control, GetFocus());
-    ui_controls::draw_field(dc, rect, text_of(control), style,
-                            &settings_internal::fill_round_rect);
+    ui_controls::draw_combo_field(control, dc, text_of(control), font_, dpi_,
+                                  &settings_internal::fill_round_rect);
 }
 
 LRESULT SettingsAiDialog::draw_item(const DRAWITEMSTRUCT& item) {
@@ -807,51 +684,10 @@ LRESULT SettingsAiDialog::draw_item(const DRAWITEMSTRUCT& item) {
     const bool disabled = (item.itemState & ODS_DISABLED) != 0;
     const bool pressed = (item.itemState & ODS_SELECTED) != 0;
     const bool hot = (item.itemState & ODS_HOTLIGHT) != 0;
-    const bool focused = (item.itemState & ODS_FOCUS) != 0;
 
     if (item.CtlType == ODT_COMBOBOX) {
-        const bool list_item = (item.itemState & ODS_COMBOBOXEDIT) == 0;
-        std::wstring value;
-        if (item.itemID != static_cast<UINT>(-1)) {
-            const LRESULT length = SendMessageW(item.hwndItem, CB_GETLBTEXTLEN,
-                                                item.itemID, 0);
-            if (length >= 0) {
-                value.resize(static_cast<std::size_t>(length) + 1);
-                SendMessageW(item.hwndItem, CB_GETLBTEXT, item.itemID,
-                             reinterpret_cast<LPARAM>(value.data()));
-                value.resize(static_cast<std::size_t>(length));
-            }
-        } else {
-            value = text_of(item.hwndItem);
-        }
-        if (list_item) {
-            ui_controls::FieldItemStyle style;
-            style.background = color_input;
-            style.text = color_text;
-            style.disabled_text = color_text_faint;
-            style.accent = color_line_high;
-            style.font = font_;
-            style.dpi = dpi_;
-            style.selected = pressed;
-            style.disabled = disabled;
-            ui_controls::draw_field_item(dc, rect, value, style,
-                                         &settings_internal::fill_round_rect);
-            return TRUE;
-        }
-        ui_controls::FieldStyle style;
-        style.background = color_card;
-        style.fill = color_input;
-        style.border = color_line;
-        style.focus_border = color_line;
-        style.text = color_text;
-        style.disabled_text = color_text_faint;
-        style.chevron = color_text_dim;
-        style.font = font_;
-        style.dpi = dpi_;
-        style.enabled = !disabled;
-        style.focused = focused;
-        ui_controls::draw_field(dc, rect, value, style,
-                                &settings_internal::fill_round_rect);
+        ui_controls::draw_combo_item(item, font_, dpi_, color_card,
+                                     &settings_internal::fill_round_rect);
         return TRUE;
     }
 
@@ -1038,36 +874,9 @@ LRESULT CALLBACK SettingsAiDialog::combo_edit_proc(HWND control, UINT message,
     return DefSubclassProc(control, message, wparam, lparam);
 }
 
-LRESULT CALLBACK SettingsAiDialog::window_proc(HWND window, UINT message,
-                                               WPARAM wparam, LPARAM lparam) {
-    auto* self = reinterpret_cast<SettingsAiDialog*>(
-        GetWindowLongPtrW(window, GWLP_USERDATA));
-    if (message == WM_NCCREATE) {
-        const auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
-        self = static_cast<SettingsAiDialog*>(create->lpCreateParams);
-        self->window_ = window;
-        SetWindowLongPtrW(window, GWLP_USERDATA,
-                          reinterpret_cast<LONG_PTR>(self));
-    }
-    if (!self) return DefWindowProcW(window, message, wparam, lparam);
-    try {
-        return self->handle_message(message, wparam, lparam);
-    } catch (const std::exception& error) {
-        self->window_error_ = error.what();
-    } catch (...) {
-        self->window_error_ = "unexpected endpoint dialog error";
-    }
-    if (message == WM_NCCREATE) return FALSE;
-    if (message == WM_CREATE) return -1;
-    self->close(false);
-    return 0;
-}
-
-LRESULT SettingsAiDialog::handle_message(UINT message, WPARAM wparam,
-                                         LPARAM lparam) {
+LRESULT SettingsAiDialog::handle_dialog_message(UINT message, WPARAM wparam,
+                                                LPARAM lparam) {
     switch (message) {
-    case WM_CREATE:
-        return 0;
     case WM_SIZE:
         layout_controls();
         return 0;
@@ -1106,8 +915,6 @@ LRESULT SettingsAiDialog::handle_message(UINT message, WPARAM wparam,
                      RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_ERASE | RDW_UPDATENOW);
         return 0;
     }
-    case WM_NCACTIVATE:
-        return DefWindowProcW(window_, message, TRUE, lparam);
     case WM_MEASUREITEM: {
         auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
         if (measure->CtlType == ODT_COMBOBOX) {
@@ -1118,25 +925,9 @@ LRESULT SettingsAiDialog::handle_message(UINT message, WPARAM wparam,
     }
     case WM_DRAWITEM:
         return draw_item(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam));
-    case WM_CTLCOLOREDIT: {
-        const auto dc = reinterpret_cast<HDC>(wparam);
-        SetTextColor(dc, color_text);
-        SetBkColor(dc, color_input);
-        SetBkMode(dc, OPAQUE);
-        return reinterpret_cast<LRESULT>(input_background_);
-    }
-    case WM_CTLCOLORLISTBOX: {
-        const auto dc = reinterpret_cast<HDC>(wparam);
-        SetTextColor(dc, color_text);
-        SetBkColor(dc, color_input);
-        SetBkMode(dc, OPAQUE);
-        return reinterpret_cast<LRESULT>(input_background_);
-    }
     case WM_PAINT:
         paint();
         return 0;
-    case WM_ERASEBKGND:
-        return 1;
     case models_completed_message: {
         std::unique_ptr<ModelListResult> result(
             reinterpret_cast<ModelListResult*>(lparam));
@@ -1206,16 +997,6 @@ LRESULT SettingsAiDialog::handle_message(UINT message, WPARAM wparam,
             return 0;
         }
         break;
-    }
-    case WM_CLOSE:
-        close(false);
-        return 0;
-    case WM_NCDESTROY: {
-        const HWND destroyed = window_;
-        closed_ = true;
-        SetWindowLongPtrW(destroyed, GWLP_USERDATA, 0);
-        window_ = nullptr;
-        return DefWindowProcW(destroyed, message, wparam, lparam);
     }
     default:
         break;

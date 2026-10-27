@@ -247,11 +247,16 @@ constexpr std::size_t upscale_checkbox = 7;
 }  // namespace ocr_index
 
 namespace other_index {
+// Creation order in create_other_page(): the caption, the three theme chips,
+// the startup toggle, the two maintenance buttons, the inline update status
+// and finally the version line.
 constexpr std::size_t theme_label = 0;
-constexpr std::size_t theme_combo = 1;
-constexpr std::size_t autostart_checkbox = 2;
-constexpr std::size_t diagnostics = 3;
-constexpr std::size_t check_updates = 4;
+constexpr std::size_t theme_chip_first = 1;
+constexpr std::size_t autostart = 4;
+constexpr std::size_t diagnostics = 5;
+constexpr std::size_t check_updates = 6;
+constexpr std::size_t update_status = 7;
+constexpr std::size_t version_label = 8;
 }  // namespace other_index
 
 namespace text_translation_index {

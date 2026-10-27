@@ -1,6 +1,8 @@
 #include "settings_window.hpp"
 #include "settings_window_internal.hpp"
 
+#include "version.hpp"
+
 namespace minitrans {
 
 using namespace settings_internal;
@@ -184,6 +186,16 @@ void SettingsWindow::create_other_page() {
                        ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
                           SS_LEFT | SS_CENTERIMAGE);
     set_font(update_status_, small_font_);
+    // The version line sits under the card and reads from the same build-time
+    // define the updater compares against, so a new release shows its own
+    // number without a second place to edit.
+    const std::wstring version = L"版本 " + std::wstring(native_version);
+    version_label_ = add_label(3, version.c_str());
+    SetWindowLongPtrW(version_label_, GWL_STYLE,
+                      (GetWindowLongPtrW(version_label_, GWL_STYLE) &
+                       ~static_cast<LONG_PTR>(SS_TYPEMASK)) |
+                          SS_LEFT | SS_CENTERIMAGE);
+    set_font(version_label_, small_font_);
 }
 
 void SettingsWindow::create_text_translation_page() {

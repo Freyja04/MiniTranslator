@@ -1,5 +1,6 @@
 #pragma once
 
+#include "modal_dialog.hpp"
 #include "settings_profiles.hpp"
 
 #include <windows.h>
@@ -17,7 +18,7 @@ namespace minitrans {
 // Modal add/edit window for one user-defined large-model endpoint. The page
 // lists the endpoints, this window owns the fields: name, protocol, base URL,
 // API key and model, plus the model list fetch and the connection test.
-class SettingsAiDialog {
+class SettingsAiDialog : public ModalDialog {
 public:
     struct Result {
         bool saved{};
@@ -45,15 +46,14 @@ private:
     static constexpr UINT test_completed_message = WM_APP + 72;
     static constexpr UINT clear_selection_message = WM_APP + 73;
 
-    SettingsAiDialog(HINSTANCE instance, const settings_profiles::Profile& current,
+    SettingsAiDialog(HINSTANCE instance, HWND owner,
+                     const settings_profiles::Profile& current,
                      std::wstring_view original_name, std::wstring_view suggested_name);
-    ~SettingsAiDialog();
+    ~SettingsAiDialog() override;
 
     SettingsAiDialog(const SettingsAiDialog&) = delete;
     SettingsAiDialog& operator=(const SettingsAiDialog&) = delete;
 
-    static LRESULT CALLBACK window_proc(HWND window, UINT message,
-                                        WPARAM wparam, LPARAM lparam);
     static LRESULT CALLBACK edit_proc(HWND control, UINT message, WPARAM wparam,
                                       LPARAM lparam, UINT_PTR subclass_id,
                                       DWORD_PTR reference);
@@ -63,10 +63,10 @@ private:
     static LRESULT CALLBACK combo_edit_proc(HWND control, UINT message, WPARAM wparam,
                                             LPARAM lparam, UINT_PTR subclass_id,
                                             DWORD_PTR reference);
-    LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam);
-    void create_window(HWND owner);
-    void create_controls();
-    void create_theme_resources();
+    void create_controls() override;
+    LRESULT handle_dialog_message(UINT message, WPARAM wparam,
+                                  LPARAM lparam) override;
+    void create_theme_resources() override;
     void layout_controls();
     void paint();
     void draw_combo(HWND control, HDC dc);
@@ -89,12 +89,11 @@ private:
     void start_connection_test();
     void finish_connection_test(bool success, std::wstring message);
     void discard_connection_test_results(HWND target) noexcept;
-    void close(bool saved);
+    void close(bool saved) override;
+    [[nodiscard]] HWND initial_focus() const noexcept override { return name_; }
 
-    HINSTANCE instance_{};
     settings_profiles::Profile original_;
     std::wstring original_name_;
-    HWND window_{};
     HWND name_{};
     // 协议 is one segmented row of three owner-drawn chips, one per entry of
     // settings_internal::ai_protocols.
@@ -106,11 +105,7 @@ private:
     HWND test_{};
     HWND status_{};
     HWND save_{};
-    HFONT font_{};
     HFONT small_font_{};
-    HBRUSH background_{};
-    HBRUSH card_background_{};
-    HBRUSH input_background_{};
     // The frame of every field and the card behind them are painted by this
     // window, so the layout stores the rectangles the paint pass needs.
     struct Placement {
@@ -127,14 +122,11 @@ private:
     [[nodiscard]] Placement place() const noexcept;
     Placement placement_{};
     std::wstring status_text_;
-    std::string window_error_;
-    int dpi_{96};
     bool loading_{};
     bool status_error_{};
     bool test_success_{};
     bool test_pending_{};
     bool model_refreshing_{};
-    bool closed_{};
     Result result_;
     std::jthread model_thread_;
     std::jthread test_thread_;

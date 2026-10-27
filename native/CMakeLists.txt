@@ -4,6 +4,11 @@ cmake_minimum_required(VERSION 3.25)
 # both the .rc version resource and this project() call, so a release only
 # ever edits one file.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/resource.h" MINITRANS_RESOURCE_HEADER)
+# Re-run configure when the version header changes; otherwise an incremental
+# build keeps the previous MINITRANS_VERSION_WIDE and the about line (and the
+# updater's own version comparison) would report a stale number.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/resource.h")
 foreach(component MAJOR MINOR PATCH)
     string(REGEX MATCH
         "#define MINITRANS_VERSION_${component}[ \\t]+([0-9]+)"
@@ -46,6 +51,8 @@ add_executable(MiniTranslator WIN32
     src/capture.hpp
     src/config.cpp
     src/config.hpp
+    src/connection_test.cpp
+    src/connection_test.hpp
     src/core_self_test.cpp
     src/core_self_test.hpp
     src/crypto.cpp
@@ -67,6 +74,8 @@ add_executable(MiniTranslator WIN32
     src/layout.cpp
     src/layout.hpp
     src/main.cpp
+    src/modal_dialog.cpp
+    src/modal_dialog.hpp
     src/ocr.cpp
     src/ocr.hpp
     src/pipeline.cpp
